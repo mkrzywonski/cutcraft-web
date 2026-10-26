@@ -1,12 +1,13 @@
 # CutCraft-Web contributor instructions
 
 - **New to this repo? Read [docs/spec.md](docs/spec.md).** It's a design spec; there is no code yet.
-  Raise open questions (spec §18) with the developer rather than deciding them.
-- CutCraft-Web builds on two sibling repositories: [CutCraft](https://github.com/mkrzywonski/cutcraft)
-  and [cameo-pi](https://github.com/mkrzywonski/cameo-pi). Their instructions apply to changes made
-  there. Pin both to full commit hashes.
-- Coordinate writers: one agent edits a checkout at a time, here and in `~/cutcraft` or
-  `~/cameo-pi`. Use a separate worktree for any explicitly requested parallel work.
+  Raise open questions (spec §23) with the developer rather than deciding them.
+- CutCraft-Web is the one product. It replaces CutCraft and cameo-pi, whose repositories are
+  private and will be deleted: their code is imported here (spec §5.2) and recorded in
+  `docs/provenance.md`. Never depend on either old repository. Whether to import their history is open (spec §23).
+  VectorCraft stays an external dependency pinned to a full commit hash.
+- Coordinate writers: one agent edits a checkout at a time. Use a separate worktree for any
+  explicitly requested parallel work.
 - Clean room: never copy code from GPL/AGPL projects, including inkscape-silhouette, OctoPrint
   and OctoPi. Running GPL programs (Samba, for example) is fine; copying their code is not.
 - Private design files, their names, extracted assets and anything generated from them stay
@@ -24,7 +25,8 @@
   Cameo. Discovery never opens devices or sends commands.
 - Never write cryptography: rustls with ring, rcgen, argon2, sha2, getrandom, as in cameo-pi.
 - Every user-facing action is one validated action in the program, the same from both layouts
-  and MCP. There is no separate state for any client (spec §5, §7).
+  and MCP, through CutCraft's command registry. Both layouts have the same capabilities. There is
+  no separate state for any client (spec §5, §9).
 - **Simple UX:** fewer concepts, sensible defaults, no extra prompts.
 - Once the program exists, every commit that changes it raises the version (patch for fixes,
   minor for features, major only when the developer asks) and adds a `CHANGELOG.md` entry.
