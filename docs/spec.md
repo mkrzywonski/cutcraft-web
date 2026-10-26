@@ -50,8 +50,10 @@ From the developer, 2026-10-26:
    ([§10](#10-designs-fonts-and-files)).
 9. **One address and one login,** and **one design session per person**. Draft 1 proposed both; no
    reviewer or developer objected.
-10. **Hardware:** a Raspberry Pi 5 with 8 GB and an SSD, or a ZimaBoard 2 (Intel N150, 8 GB). The
-    choice follows measurements on the real boards ([§19](#19-performance-and-milestone-0)).
+10. **Hardware:** the target is a **Raspberry Pi 5 with 8 GB and an SSD**; the developer has one.
+    x86-64 machines are supported as well: arm64 and amd64 are both built and tested.
+11. **No history from the old repositories.** CutCraft-Web is a new repository that borrows their
+    code, with a provenance file, not their revision history.
 
 ## 3. Users, hardware and browsers
 
@@ -119,7 +121,8 @@ AI tool ─────────── MCP ───────────�
   API ([§13](#13-between-browser-and-server)), MCP, the library, users and backups.
 - **The cutter service** owns the cutters, as cameo-pi's per-cutter workers do: turns, the queue, the
   fresh-mat rule, Start, Pause and Stop. It is small and never parses a design.
-- **Each person's design session runs in a preparation worker** (proposed): a child process running
+- **Each person's design session runs in a preparation worker** (proposed, and the developer's
+  leaning, so a busy or stuck design can't hold up the rest): a child process running
   CutCraft's controller. It does the opening, Make cut-ready, planning and rendering. That isolates
   the risky part from the cutter service ([§18](#18-resources-and-isolation)):
   - **Malformed files and very large designs** stay inside that one worker.
@@ -151,7 +154,7 @@ VectorCraft stays an external dependency, pinned to a full commit, as CutCraft p
 
 ### 5.2 One self-contained workspace
 
-- **Import the code, not the history** (proposed). The crates above come in at recorded origin
+- **Import the code, not the history** (decided). The crates above come in at recorded origin
   commits, with a `docs/provenance.md` listing each one's origin repository, commit and licence (both
   are MIT or Apache-2.0).
   - **What's left out:** history, local artefacts and anything private (the privacy rules in
@@ -472,7 +475,8 @@ Preparation parses untrusted files and can use a lot of memory. Cutting must not
 
 ## 19. Performance and milestone 0
 
-**Targets (proposed), confirmed on the real board before it's chosen:**
+**Targets (proposed), measured on the Pi 5 in milestone 0. The developer has no view on the numbers
+yet, so milestone 0's measurements set them:**
 
 | What | Target |
 |---|---|
@@ -499,9 +503,8 @@ UI split:
 3. **Where it runs:** in Safari, Chrome and Firefox, with touch on an iPad, under the real CSP and
    serving headers. The wasm and transfer sizes are recorded.
 4. **Speed on the developer's archive:** `cutcraft-cli prepare` and `plan` timed on the design
-   archive (`CUTCRAFT_CORPUS_DIR`), with memory per design. Results stay in `local/`. Benchmark
-   ratios give only an estimate; the board is chosen after timing the same runs on a Pi 5 and a
-   ZimaBoard 2.
+   archive (`CUTCRAFT_CORPUS_DIR`), with memory per design, then the same runs on the Pi 5.
+   Results stay in `local/`.
 5. **Isolation:** worker processes against threads, by the §18 tests.
 
 ## 20. Backups and migration
@@ -566,14 +569,15 @@ UI split:
 
 ## 23. Open questions
 
-1. **Import with or without history** ([§5.2](#52-one-self-contained-workspace))?
-   - **Proposed:** without, with a provenance file. That carries nothing private along by
-     accident, and the old repositories will be deleted anyway.
-2. **Workers: processes or threads?**
-   - **Proposed:** processes. Milestone 0 decides by the isolation tests ([§18](#18-resources-and-isolation)).
-3. **The board:** Pi 5 or ZimaBoard 2, after timing both ([§19](#19-performance-and-milestone-0)).
-4. **The limits and timings marked proposed** (§7, §18, §19): the developer can change any of them;
-   milestone 0 measures them.
+1. **Workers: processes or threads?**
+   - **Proposed, and the developer's leaning:** processes, so one design can't block the rest.
+   - **Milestone 0 confirms it** with the isolation tests ([§18](#18-resources-and-isolation)).
+2. **The limits and timings marked proposed** (§7, §18, §19).
+   - **For now:** the developer has no view on them yet, so they stand as written.
+   - **Milestone 0** measures them on the Pi 5 and proposes final values.
+
+Settled since draft 2 (the developer, 2026-10-26, Zulip #41): no history from the old repositories
+(§2.11, §5.2); the Pi 5 is the target, with x86-64 supported too (§2.10).
 
 ## 24. Milestones
 
@@ -590,7 +594,8 @@ In the order the reviews recommended: contracts and risks first, layouts after.
 5. **The compact layout,** complete: the same capabilities, the parity test passing.
 6. **MCP** at one address, with session parity.
 7. **Backups and migration** (schema 3, people mapping, importing today's library and projects).
-8. **The board measured and chosen; packaging** (packages, the Pi 5 image, the container).
+8. **Packaging, measured on the Pi 5:** packages for arm64 and amd64, the Pi 5 image, the
+   container.
 9. **Acceptance** with the end user, the developer present for motion.
 
 ## 25. Out of scope

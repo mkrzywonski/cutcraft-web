@@ -4,7 +4,7 @@
   Raise open questions (spec §23) with the developer rather than deciding them.
 - CutCraft-Web is the one product. It replaces CutCraft and cameo-pi, whose repositories are
   private and will be deleted: their code is imported here (spec §5.2) and recorded in
-  `docs/provenance.md`. Never depend on either old repository. Whether to import their history is open (spec §23).
+  `docs/provenance.md`. Never depend on either old repository, and don't bring over their revision history.
   VectorCraft stays an external dependency pinned to a full commit hash.
 - Coordinate writers: one agent edits a checkout at a time. Use a separate worktree for any
   explicitly requested parallel work.
