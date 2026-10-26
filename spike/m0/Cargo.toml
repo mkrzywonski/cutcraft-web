@@ -3,7 +3,7 @@
 # is imported (spec §5.2). Not part of the main workspace.
 [workspace]
 resolver = "3"
-members = ["server"]
+members = ["server", "ui"]
 
 [workspace.package]
 version = "0.0.0"

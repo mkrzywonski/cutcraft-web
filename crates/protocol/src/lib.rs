@@ -210,11 +210,16 @@ impl PictureRequest {
 #[serde(tag = "ask", rename_all = "snake_case")]
 pub enum WorkerRequest {
     Command(CommandRequest),
-    Lookup { key: String },
+    Lookup {
+        key: String,
+    },
     Snapshot,
     Geometry,
     /// An uploaded design, already in the person's area, to open.
-    Open { file: String, name: String },
+    Open {
+        file: String,
+        name: String,
+    },
     Picture(PictureRequest),
 }
 
@@ -226,8 +231,12 @@ pub enum WorkerReply {
     Snapshot(SessionSnapshot),
     Geometry(Geometry),
     /// A PNG, base64-encoded (a JSON line can't carry bytes).
-    Picture { png_base64: String },
-    Failed { message: String },
+    Picture {
+        png_base64: String,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[cfg(test)]
@@ -246,7 +255,10 @@ mod tests {
         };
         let text = serde_json::to_string(&request).unwrap();
         assert!(!text.contains("revision"));
-        assert_eq!(serde_json::from_str::<CommandRequest>(&text).unwrap(), request);
+        assert_eq!(
+            serde_json::from_str::<CommandRequest>(&text).unwrap(),
+            request
+        );
     }
 
     #[test]
@@ -289,7 +301,10 @@ mod tests {
         ] {
             let line = serde_json::to_string(&request).unwrap();
             assert!(!line.contains('\n'));
-            assert_eq!(serde_json::from_str::<WorkerRequest>(&line).unwrap(), request);
+            assert_eq!(
+                serde_json::from_str::<WorkerRequest>(&line).unwrap(),
+                request
+            );
         }
     }
 }

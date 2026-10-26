@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use cutcraft_control::{Controller, Origin, Roots};
 use cutcraft_web_protocol::{
     ArtView, CommandReply, CommandRequest, DesignView, Geometry, GeometryRef, KeyLookup,
-    MatGeometry, PROTOCOL_VERSION, PictureRequest, SessionSnapshot, SheetView, Stroke,
-    WorkerReply, WorkerRequest, codes,
+    MatGeometry, PROTOCOL_VERSION, PictureRequest, SessionSnapshot, SheetView, Stroke, WorkerReply,
+    WorkerRequest, codes,
 };
 use serde_json::{Value, json};
 
@@ -49,7 +49,12 @@ struct Worker {
 }
 
 pub fn run(area: &Path) -> Result<(), String> {
-    rlimit::setrlimit(rlimit::Resource::AS, MEMORY_LIMIT, MEMORY_LIMIT)
+    // CUTCRAFT_WEB_WORKER_MB lowers the cap, for milestone 0's isolation test.
+    let limit = std::env::var("CUTCRAFT_WEB_WORKER_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(MEMORY_LIMIT, |mb| mb * 1024 * 1024);
+    rlimit::setrlimit(rlimit::Resource::AS, limit, limit)
         .map_err(|e| format!("setting the memory limit: {e}"))?;
     let area = std::fs::canonicalize(area).map_err(|e| format!("{}: {e}", area.display()))?;
     let roots = Roots::new(Some(&area), None)?;
@@ -133,7 +138,10 @@ impl Worker {
             return if *first == c {
                 reply.clone()
             } else {
-                refused(codes::KEY_REUSED, "That change was already made differently.")
+                refused(
+                    codes::KEY_REUSED,
+                    "That change was already made differently.",
+                )
             };
         }
         if c.incarnation != self.incarnation {
@@ -145,7 +153,11 @@ impl Worker {
         if !ALLOWED.contains(&c.id.as_str()) {
             return refused(codes::FORBIDDEN, format!("{} isn't available here.", c.id));
         }
-        let params = if c.params.is_null() { json!({}) } else { c.params.clone() };
+        let params = if c.params.is_null() {
+            json!({})
+        } else {
+            c.params.clone()
+        };
         let reply = match self
             .controller
             .execute(Origin::User, &c.id, params, c.revision)
@@ -218,7 +230,10 @@ impl Worker {
             protocol: PROTOCOL_VERSION,
             incarnation: self.incarnation.clone(),
             revision: s.revision,
-            busy: s.loading_path.as_ref().map(|_| "Opening the design…".into()),
+            busy: s
+                .loading_path
+                .as_ref()
+                .map(|_| "Opening the design…".into()),
             error: s.last_error.clone(),
             design,
             materials,
@@ -244,9 +259,20 @@ impl Worker {
         let plan = cutcraft_path::plan_sheet(project, &sheet.id)?;
         let roll = sheet.mat == cutcraft_control::job::Mat::Roll;
         let profile = sheet.mat_profile();
-        let origin = if roll { [0.0, 0.0] } else { profile.cut_origin_mm };
+        let origin = if roll {
+            [0.0, 0.0]
+        } else {
+            profile.cut_origin_mm
+        };
         let outer = if roll { plan.mat_mm } else { profile.outer_mm };
-        let shift = |b: [f64; 4]| [b[0] + origin[0], b[1] + origin[1], b[2] + origin[0], b[3] + origin[1]];
+        let shift = |b: [f64; 4]| {
+            [
+                b[0] + origin[0],
+                b[1] + origin[1],
+                b[2] + origin[0],
+                b[3] + origin[1],
+            ]
+        };
         let art = plan
             .operations
             .iter()
@@ -254,7 +280,12 @@ impl Worker {
             .flat_map(|o| o.points.iter())
             .fold(None, |b: Option<[f64; 4]>, p| {
                 Some(b.map_or([p[0], p[1], p[0], p[1]], |b| {
-                    [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+                    [
+                        b[0].min(p[0]),
+                        b[1].min(p[1]),
+                        b[2].max(p[0]),
+                        b[3].max(p[1]),
+                    ]
                 }))
             });
         let spot = cutcraft_control::test_cut_markers(&plan, &Default::default())
@@ -265,7 +296,11 @@ impl Worker {
             id: geometry_id(project.revision, Some(&plan)),
             mat: Some(MatGeometry {
                 outer_mm: outer,
-                sticky_mm: if roll { [0.0, 0.0, outer[0], outer[1]] } else { profile.sticky_mm },
+                sticky_mm: if roll {
+                    [0.0, 0.0, outer[0], outer[1]]
+                } else {
+                    profile.sticky_mm
+                },
                 origin_mm: origin,
             }),
             sheet: plan.operations.iter().map(|o| stroke(o, origin)).collect(),
@@ -329,7 +364,12 @@ fn art_view(open: &cutcraft_control::OpenDesign) -> Option<ArtView> {
         .flat_map(|(op, _)| op.points)
         .fold(None, |b: Option<[f64; 4]>, p| {
             Some(b.map_or([p[0], p[1], p[0], p[1]], |b| {
-                [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+                [
+                    b[0].min(p[0]),
+                    b[1].min(p[1]),
+                    b[2].max(p[0]),
+                    b[3].max(p[1]),
+                ]
             }))
         });
     let scale = project.scale;
@@ -337,7 +377,12 @@ fn art_view(open: &cutcraft_control::OpenDesign) -> Option<ArtView> {
         Some(page) => {
             let page = [0.0, 0.0, page.width_mm * scale, page.height_mm * scale];
             lines.map_or(page, |b| {
-                [page[0].min(b[0]), page[1].min(b[1]), page[2].max(b[2]), page[3].max(b[3])]
+                [
+                    page[0].min(b[0]),
+                    page[1].min(b[1]),
+                    page[2].max(b[2]),
+                    page[3].max(b[3]),
+                ]
             })
         }
         None => lines?,

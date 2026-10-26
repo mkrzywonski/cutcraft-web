@@ -28,7 +28,9 @@ use tokio::sync::broadcast;
 /// Spec §18, provisional.
 const UPLOAD_LIMIT: usize = 64 * 1024 * 1024;
 const COOKIE: &str = "m0session";
-const DESIGNS: &[&str] = &["svg", "svgz", "pdf", "ai", "eps", "dxf", "png", "jpg", "jpeg"];
+const DESIGNS: &[&str] = &[
+    "svg", "svgz", "pdf", "ai", "eps", "dxf", "png", "jpg", "jpeg",
+];
 
 pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
@@ -221,8 +223,14 @@ async fn security_headers(mut response: Response) -> Response {
              base-uri 'none'; form-action 'self'",
         ),
     );
-    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
     response
 }
 
@@ -232,14 +240,14 @@ fn status(code: StatusCode, message: &str) -> Response {
 
 /// Changes must come from this site's own pages: browsers can't send this header cross-site
 /// without asking first.
-fn guarded(app: &App, headers: &HeaderMap) -> Result<(), Response> {
+fn refusal(app: &App, headers: &HeaderMap) -> Option<Response> {
     if !app.signed_in(headers) {
-        return Err(status(StatusCode::UNAUTHORIZED, "Sign in first."));
+        return Some(status(StatusCode::UNAUTHORIZED, "Sign in first."));
     }
     if headers.get("x-cutcraft").is_none() {
-        return Err(status(StatusCode::FORBIDDEN, "Not from this site."));
+        return Some(status(StatusCode::FORBIDDEN, "Not from this site."));
     }
-    Ok(())
+    None
 }
 
 async fn index(State(app): State<Arc<App>>) -> Response {
@@ -328,21 +336,32 @@ async fn upload(
     Query(q): Query<UploadQuery>,
     body: Bytes,
 ) -> Response {
-    if let Err(r) = guarded(&app, &headers) {
+    if let Some(r) = refusal(&app, &headers) {
         return r;
     }
     let ext = q.name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     if !DESIGNS.contains(&ext.as_str()) || body.is_empty() {
-        return status(StatusCode::BAD_REQUEST, "That isn't a design CutCraft can open.");
+        return status(
+            StatusCode::BAD_REQUEST,
+            "That isn't a design CutCraft can open.",
+        );
     }
     let file = format!("{}.{ext}", random_hex(12));
     if tokio::fs::write(app.area.join("designs").join(&file), &body)
         .await
         .is_err()
     {
-        return status(StatusCode::INTERNAL_SERVER_ERROR, "The design couldn't be stored.");
+        return status(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The design couldn't be stored.",
+        );
     }
-    let name: String = q.name.chars().filter(|c| !c.is_control()).take(120).collect();
+    let name: String = q
+        .name
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(120)
+        .collect();
     let reply = app.ask(WorkerRequest::Open { file, name }).await;
     app.publish().await;
     match reply {
@@ -359,11 +378,14 @@ async fn command(
     headers: HeaderMap,
     body: axum::Json<CommandRequest>,
 ) -> Response {
-    if let Err(r) = guarded(&app, &headers) {
+    if let Some(r) = refusal(&app, &headers) {
         return r;
     }
     let reply = app.ask(WorkerRequest::Command(body.0)).await;
-    if matches!(reply, Ok(WorkerReply::Command(CommandReply::Applied { .. }))) {
+    if matches!(
+        reply,
+        Ok(WorkerReply::Command(CommandReply::Applied { .. }))
+    ) {
         app.publish().await;
     }
     // Milestone 0's lost-reply test: the change is made, the answer is dropped.

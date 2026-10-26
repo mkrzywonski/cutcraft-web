@@ -1,0 +1,3 @@
+// Loads the slice's wasm by its hashed name (a separate file: the CSP allows no inline script).
+import init from "/assets/@GLUE@";
+init({ module_or_path: "/assets/@WASM@" });
