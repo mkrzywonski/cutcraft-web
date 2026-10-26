@@ -8,8 +8,9 @@
   private and will be deleted: their code is imported here (spec §5.2) and recorded in
   `docs/provenance.md`. Never depend on either old repository, and don't bring over their revision history.
   VectorCraft stays an external dependency pinned to a full commit hash.
-- Coordinate writers: one agent edits a checkout at a time. Use a separate worktree for any
-  explicitly requested parallel work.
+- Coordinate writers as `docs/development.md` §2 says: `~/cutcraft-web` is the integration tree on
+  `main`; work happens on `<who>/<topic>` branches in `~/cutcraft-web-worktrees/<who>-<topic>`, one
+  writer each.
 - Clean room: never copy code from GPL/AGPL projects, including inkscape-silhouette, OctoPrint
   and OctoPi. Running GPL programs (Samba, for example) is fine; copying their code is not.
 - Private design files, their names, extracted assets and anything generated from them stay

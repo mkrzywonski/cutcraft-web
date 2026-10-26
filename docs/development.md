@@ -1,6 +1,7 @@
 # CutCraft-Web development standard
 
-Status: **proposed, draft 1** (2026-10-26), for review by the team. Once agreed, it binds every
+Status: **proposed, draft 2** (2026-10-26), after reviews by Grok (#51) and Codex (#52); waiting
+for the developer's agreement (§12). Once agreed, it binds every
 change to this repository, alongside [`AGENTS.md`](../AGENTS.md) (the short rules) and the
 [specification](spec.md) (what to build). Where this document and the spec disagree, the spec wins
 and this document is corrected.
@@ -34,8 +35,12 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
 
 ### 2.1 Who works where
 
-- **One writer per checkout.** Each agent, and the developer, works in its own git worktree on its
-  own branch. Nobody edits a checkout another writer is using.
+- **One writer per checkout, each on their own branch:**
+  - **The primary checkout** (`~/cutcraft-web`) is the integration tree, on `main`. Nobody leaves
+    work in progress there.
+  - **Work happens in worktrees:** each writer uses a sibling worktree,
+    `~/cutcraft-web-worktrees/<who>-<topic>`, on a branch named `<who>/<topic>`.
+  - **Nobody edits a worktree another writer is using.**
 - **Zulip is where work is coordinated** (`talk`, see the workspace `AGENTS.md`):
   - **Starting work:** post in the topic for that piece of work: what you're taking, which files,
     which branch.
@@ -47,9 +52,13 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
 
 ### 2.2 Branches, commits and merging
 
-- **`main` always passes every check.** Work happens on short-lived branches named
-  `<who>/<topic>` (for example `claude/m0-protocol`). A branch is merged once it passes the checks
-  and its review ([§8](#8-review)). Merges rebase or fast-forward, so history stays linear.
+- **`main` always passes every check.** Branches are short-lived. A branch is merged once it
+  passes the checks and its review is closed ([§8](#8-review)).
+  - **Who merges:** the author fast-forwards `main` in the integration tree, after saying so on the
+    change's topic.
+  - **History stays linear:** branches are rebased, never merged with a merge commit.
+  - **Integration conflicts** (for example two branches raising the version) are resolved by the
+    integrator before the final commit, and the checks that the resolution affects are run again.
 - **Small commits, each complete:** a commit builds, passes the checks, and does one thing. Don't
   mix a refactor with a behaviour change.
 - **Commit messages:** a summary line under 72 characters, in the imperative or naming the
@@ -59,9 +68,10 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
   help raises the version with `scripts/bump-version.sh` and fills in its `CHANGELOG.md` entry in
   the same commit. That's patch for fixes, minor for features, major only when the developer asks.
   Documentation-only commits need no bump.
-- **Pushing and publishing are the developer's call:** pushing, tags, releases, repository
-  settings and secrets each need the developer's approval for that request. Approval for one push
-  doesn't cover the next.
+- **Pushing and publishing need the developer's authorization.**
+  - **A standing authorization applies within its stated scope:** for example, "push each
+    significant change" covers those pushes, with no new request each time.
+  - **Tags, releases, repository settings and secrets** each follow their own authorization.
 - **When a requested task is done:** an ntfy notification to the developer, with the commit hash.
 
 ### 2.3 From idea to code
@@ -92,11 +102,21 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
   cargo build --workspace --locked
   ```
 
-  Plus, for the crates that run in the browser:
-  `cargo clippy --target wasm32-unknown-unknown --locked -p cutcraft-web-protocol -p cutcraft-ui -- -D warnings`.
+  Plus, for each crate that runs in the browser, once it exists (`cutcraft-web-protocol`,
+  `cutcraft-ui`):
+  `cargo clippy --target wasm32-unknown-unknown --locked -p <crate> -- -D warnings`.
   CI runs all of them ([§7](#7-continuous-integration)).
-- **Workspace lints:** `unsafe_code = "forbid"`; clippy `dbg_macro`, `todo` and `unimplemented`
-  denied. A local `#[allow(…)]` needs a comment saying why.
+- **Gates arrive with their tools.**
+  - **A check becomes mandatory** in the change that adds its harness or crate.
+  - **Its tool comes with it,** in the Nix shell, in that same change. That covers `cargo-deny`,
+    `cargo-fuzz`, Chromium for the browser checks and `scripts/bump-version.sh`, so running §13 is
+    always one `nix develop` away and nothing is downloaded during a test.
+  - **Missing a gate** that already exists is a failure.
+- **Workspace lints:**
+  - **Denied:** `unsafe_code = "forbid"`; clippy `dbg_macro`, `todo`, `unimplemented` and
+    `unwrap_used`.
+  - **Tests may unwrap:** `allow-unwrap-in-tests` in `clippy.toml`.
+  - **A local `#[allow(…)]`** needs a comment saying why.
 
 ### 3.2 Code
 
@@ -112,15 +132,26 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
     unchanged.
 - **Concurrency:**
   - **No blocking in async code.** Blocking work goes to a blocking task or a worker process.
-  - **No lock held across `.await`,** and none held while doing I/O. Take the lock, copy what's
-    needed, release it, then do the I/O.
+  - **Locks and I/O:**
+    - **No synchronous guard across `.await`.**
+    - **No blocking or network I/O under a general lock,** such as a session's or a cutter's: take
+      the lock, copy what's needed, release it, then do the I/O.
+    - **The exception:** a dedicated storage transaction lock, or a single storage owner, may span
+      bounded local file I/O when correctness needs it, as a read-modify-write that must not let
+      another writer in between does. Its lock order is documented, and it stays off the cutter's
+      latency-critical path.
+    - **Remote I/O** (backups, the network) is staged outside the transaction. Its result is
+      fenced before it's committed.
   - **Stale results never win.** Work started at one revision checks the revision (or operation
     id, connection, incarnation) before writing its result. That's the fence pattern from CutCraft's
     remote cutting.
   - **Only one owner per piece of state:** the cutter service for cutters, a session's worker for
     its project.
 - **Durability:**
-  - **Files that matter** are written with the shared atomic write: a temporary file, sync, rename.
+  - **Files that matter** are written with the shared atomic write: a temporary file of its own,
+    sync, rename, and a sync of the parent folder where that's what makes the rename durable.
+    The helper documents the limits of what that guarantees on each filesystem. It doesn't
+    promise power-loss safety from the rename alone.
   - **Formats:** each on-disk format has a `schema_version` and a tested migration from every
     version still supported.
 - **Time and randomness** come through injectable clocks and sources, so tests run without real
@@ -159,7 +190,9 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
 
 - **Plain HTML, CSS and JavaScript,** embedded in the program. No build step, no framework, nothing
   fetched from the internet, as in cameo-pi.
-- **A strict Content Security Policy:** no inline scripts or styles, no `eval`. A test enforces it.
+- **One strict Content Security Policy for the whole origin,** the desktop layout's shell included:
+  no inline scripts or styles, no `eval`, only `wasm-unsafe-eval` for the WebAssembly. The wasm
+  loader is an external script like any other. A test enforces it.
 - **Phone first:**
   - **The width to design for:** 360 CSS pixels.
   - **Touch targets:** at least 44 by 44 pixels.
@@ -184,26 +217,42 @@ It collects what worked on CutCraft and cameo-pi, and adds what a public, multi-
 
 - **`cutcraft-web-protocol` is the contract.** Every type that crosses between the browser, the
   server and a worker is defined there, versioned, and serialised with serde.
-  - **Additive changes** (a new field with a default, a new command) keep the version.
-  - **Anything else** raises it. The server refuses a mismatched client with a message that tells
-    the page to reload.
+  - **Two separate contracts, in separate modules:** the browser's, and the privileged one between
+    the server and its workers. Nothing that only a worker may be asked becomes reachable from a
+    browser because the crate is shared.
+- **The version stays only when every old/new pairing of client and server still works, in both
+  directions.** "Additive" isn't enough on its own:
+  - **What breaks it:** a new required field breaks old senders; a new enum variant can break an
+    old reader; a changed default can change a cut with no change in the schema.
+  - **Unknown fields, commands, events and capabilities** each have specified behaviour.
+  - **Otherwise the version is raised,** and the server refuses a mismatched client with a
+    message that tells the page to reload.
+  - **A compatibility test** at the wire boundary exercises old and new on each side.
 - **Every change is idempotent:** it carries a key, its session incarnation and the revision it was
   made against ([spec §7](spec.md#7-sessions)). The protocol tests cover repeats, changed bodies,
   stale revisions and lookups after recovery.
-- **Saved files are forever:**
+- **Saved files stay readable:**
   - **Projects and the library:** a `.cutcraft` or a library written by any released version opens
-    in every later one.
-  - **Kept as fixtures:** each released format version has authored fixtures, kept as tests.
-  - **Re-planning:** a revision cuts as it was reviewed. Re-planning makes a new revision, never a
-    silent change.
+    in every later one, migrated explicitly.
+  - **Kept as fixtures:** each supported released format version has authored fixtures, kept as
+    tests.
+  - **Re-planning:** a revision cuts as it was reviewed. Re-planning makes a new revision for the
+    person to review, never a silent change.
+  - **Old plans that can't run:** an old revision's plan that can no longer be cut safely, for
+    example after a driver correction, is refused with an explanation. It is never silently
+    reinterpreted.
 
 ## 6. Testing
 
 ### 6.1 What every change brings
 
-- **A bug fix brings its regression test,** named for the behaviour (`a_late_start_after_an_unanswered_stop_keeps_stopping`),
-  failing before the fix. It stays forever.
-  - **Reviewers' reproducers** are kept as permanent tests too, credited in a comment.
+- **A bug fix brings its regression test,** named for the behaviour
+  (`a_late_start_after_an_unanswered_stop_keeps_stopping`). It fails on the old behaviour, and it
+  stays.
+  - **Reviewers' reproducers** are adapted into that regression and credited in a comment. A
+    reproducer that looks at a temporary internal detail is rewritten to test the behaviour, so it
+    doesn't stand in the way of a valid fix.
+  - **No tests that only mirror the implementation,** and none for reversible cosmetic changes.
 - **A new command brings tests** for its result, for each refusal (wrong params, stale revision,
   not allowed for this person, disabled), and for its effect in the snapshot.
 - **A change to cutting, sessions, authority, persistence or backups** brings its failure tests:
@@ -232,9 +281,16 @@ that would fail if it broke.
 
 ### 6.3 How tests are written
 
-- **Deterministic:** no real network outside loopback, no real sleeps (inject the clock), no
-  dependence on test order. A flaky test is a bug, fixed or quarantined with an issue the same
-  day, never retried until it passes.
+- **Deterministic:**
+  - **Clocks:** domain timing uses injected clocks, never real sleeps.
+  - **Real processes:** a test of a subprocess, a browser or the network waits for readiness by
+    event, or by polling with a deadline that fails with a diagnostic. It never retries an
+    assertion until it happens to pass.
+  - **No outside dependencies:** routine tests use only what's in the repository and the Nix
+    shell. Loopback integration is fine; hardware acceptance is arranged with the developer.
+  - **No dependence on test order.**
+- **A flaky test is a bug.** The same day, it is either fixed, or quarantined with
+  `#[ignore = "flaky: Zulip #<id>"]` and a post on its topic, until it's fixed.
 - **Fast:** the whole workspace test suite runs in a few minutes on the developer's desktop.
   Anything slower goes behind a named script and runs in CI.
 - **Fixtures are authored:** every committed fixture was made for the tests. Nothing from the
@@ -265,10 +321,15 @@ A red `main` is fixed before anything else is merged.
 
 - **Every merge to `main` is reviewed by someone other than its author:** another agent, or the
   developer.
+  - **A review is of an exact commit.** After a rebase, or a fix that changes behaviour, the
+    reviewer looks at the new diff and its evidence again.
+  - **The checks:** until CI gates `main`, the reviewer runs the §13 row. Once it does, the
+    reviewer confirms CI passed at the reviewed commit, and spends the time on the checklist and on
+    a test that would break the change.
   - **The reviewer reads the change and runs the tests.** For anything with a stated failure mode,
     they also try to break it.
   - **Findings** go to Zulip with a file of details and, where possible, a failing test.
-- **Two reviewers, one of them the developer or an agent that didn't write it,** for changes to:
+- **Two reviewers who didn't write it** (agents or the developer) for changes to:
   - cutting and Stop;
   - the authority policy and logins;
   - sessions and idempotency;
@@ -276,6 +337,7 @@ A red `main` is fixed before anything else is merged.
   - backups and restore;
   - the protocol's version;
   - packaging and updates.
+- **The developer is required** for anything that moves a real cutter, and for a release tag.
 - **The review checklist:**
   1. **Spec:** does it do what the spec says, and only that? Is the spec updated if behaviour
      changed?
@@ -325,6 +387,7 @@ A red `main` is fixed before anything else is merged.
 - **A release is a version tag** on a `main` commit that passed CI, made with the developer's
   approval.
 - **Before tagging:**
+  - `cargo test --workspace --locked` on the Pi 5 itself (CI's aarch64 job only cross-builds);
   - the full isolation and performance runs on the Pi 5;
   - the archive run;
   - the packaging checks;
@@ -337,15 +400,35 @@ A red `main` is fixed before anything else is merged.
 Propose changes on Zulip (`cutcraft-web/development-standard`). They take effect once the developer
 agrees, recorded in `cutcraft-web/decisions`.
 
+**Revisions:**
+- **Draft 2 (2026-10-26):** after Grok's review (#51) and Codex's (#52).
+  - **Worktrees:** the integration tree and sibling worktrees; who merges; standing push
+    authorization.
+  - **Gates arrive with their tools,** for the bootstrap; `unwrap_used` denied.
+  - **Locks:** storage transaction locks allowed for bounded local I/O.
+  - **Compatibility:** in both directions, with separate browser and worker contracts; old plans
+    that can't run are refused.
+  - **Tests:** regressions test behaviour; bounded readiness waits; same-day flake quarantine.
+  - **Reviews:** two non-author reviewers, reviews of exact commits, CI replacing re-runs; one CSP
+    for the origin; tests on the Pi 5 before a tag.
+- **Draft 1 (2026-10-26):** first version.
+
 ## 13. Which checks each change needs
 
-Run every row the change touches. "Base" means the four cargo checks, the wasm checks and
-`cargo deny` ([§3.1](#31-toolchain-and-checks), [§3.3](#33-dependencies)).
+Run every row the change touches. "Base" means the four cargo checks, plus the wasm checks and
+`cargo deny` once they exist ([§3.1](#31-toolchain-and-checks), [§3.3](#33-dependencies)).
+- **Documentation-only changes** run only the docs row, unless they change something executable
+  (an example that's tested, configuration, the Nix shell).
+- **Every other change** runs Base, plus the rows it touches.
+- **Until CI gates `main`,** the author records the commands and results locally, and reviewers
+  run them again. **After that,** CI's result at the exact commit counts.
+- **Manual evidence** (Safari, accessibility, the Pi 5, hardware) is recorded as manual, never
+  claimed as automated.
 
 | The change touches | Run | Reviewers |
 |---|---|---|
-| Anything | Base | 1 |
 | Docs only | Links and anchors resolve; no private details (`git diff` scan) | 1 |
+| Any code | Base | 1 |
 | A registry command or the snapshot | Base, protocol tests, layout parity | 1 |
 | The compact layout | Base, browser checks (compact sizes), layout parity, the CSP test | 1 |
 | The desktop layout | Base, browser checks (desktop sizes), desktop parity | 1 |
@@ -368,8 +451,9 @@ When in doubt, run the stricter row.
 1. **Read the request:** the Zulip post, the spec sections it names, and the diff
    (`git diff main...<branch>`), all of it.
 2. **Check out the branch in your own worktree.** Never review in the author's checkout.
-3. **Run the checks** from [§13](#13-which-checks-each-change-needs) for what it touches. Record
-   the exact commands and their results.
+3. **The checks:** until CI gates `main`, run the [§13](#13-which-checks-each-change-needs) rows
+   for what it touches, and record the exact commands and results. Once CI gates `main`, confirm
+   it passed at the commit under review, and spend the time on step 4 instead.
 4. **Go through the checklist** in [§8](#8-review). For every stated failure mode, try to break
    it: write the test that would show the bug. A failing test is the strongest finding.
 5. **Write the report** in the format below, in a file under `/home/mike/ai-talk/` (or the
