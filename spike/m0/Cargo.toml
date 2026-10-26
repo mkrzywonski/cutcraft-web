@@ -1,0 +1,38 @@
+# Milestone 0 spike (spec §19): one working slice through the browser boundary. It builds against
+# a local CutCraft checkout at ~/cutcraft (beside ~/cutcraft-web-worktrees) and is thrown away in milestone 1, when the code
+# is imported (spec §5.2). Not part of the main workspace.
+[workspace]
+resolver = "3"
+members = ["server"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# As CutCraft resolves VectorCraft's PDF stack.
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+
+[profile.release]
+strip = "symbols"
+
+# The browser build: small.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

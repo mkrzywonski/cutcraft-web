@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# The archiver to go with zig-cc-aarch64-musl.
+exec zig ar "$@"

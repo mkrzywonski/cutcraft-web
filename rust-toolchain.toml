@@ -1,0 +1,6 @@
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+# The browser (the desktop layout), the Raspberry Pi 5 and x86-64 servers: static binaries.
+targets = ["wasm32-unknown-unknown", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]

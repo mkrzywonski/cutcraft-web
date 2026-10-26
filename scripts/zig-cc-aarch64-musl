@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# The C compiler for the Pi build (static aarch64 musl): Zig's clang, so no GCC cross toolchain
+# is needed. Used by crates with C or assembly (ring, for HTTPS). cc-rs passes Rust's target name
+# (--target=aarch64-unknown-linux-musl), which Zig doesn't accept; it is replaced by Zig's.
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --target=*) ;;
+    *) args+=("$arg") ;;
+  esac
+done
+exec zig cc -target aarch64-linux-musl "${args[@]}"

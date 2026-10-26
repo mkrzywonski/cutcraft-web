@@ -1,0 +1,8 @@
+# The Pi build links with Rust's own lld and musl's bundled start files. The little C in the
+# dependencies (ring's crypto, for HTTPS) is compiled with Zig's clang, from the Nix shell.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[env]
+CC_aarch64_unknown_linux_musl = { value = "scripts/zig-cc-aarch64-musl", relative = true }
+AR_aarch64_unknown_linux_musl = { value = "scripts/zig-ar", relative = true }

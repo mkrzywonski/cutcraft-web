@@ -3,3 +3,4 @@
 /local
 .DS_Store
 /.claude/
+/spike/*/target
