@@ -1,10 +1,10 @@
 # CutCraft-Web specification
 
-Status: second draft (2026-10-26), written before any code. It records the developer's decisions
-([§2](#2-decisions)), the design proposed for them, and the questions still open
-([§23](#23-open-questions)). Items marked **(proposed)** are still to be settled with the developer.
-Nothing here has been built or measured yet. Draft 1 was reviewed by Codex and Grok; draft 2 answers
-those reviews ([§25](#25-revision-history)).
+Status: **version 1, final** (2026-10-26), written before any code, after two rounds of review by
+Codex and Grok ([§26](#26-revision-history)). It records the developer's decisions
+([§2](#2-decisions)) and the design for them. Items marked **(provisional)** are engineering
+starting points that milestone 0 measures and may revise ([§23](#23-open-questions)). Nothing here
+has been built or measured yet.
 
 ## 1. Purpose
 
@@ -121,16 +121,18 @@ AI tool ─────────── MCP ───────────�
   API ([§13](#13-between-browser-and-server)), MCP, the library, users and backups.
 - **The cutter service** owns the cutters, as cameo-pi's per-cutter workers do: turns, the queue, the
   fresh-mat rule, Start, Pause and Stop. It is small and never parses a design.
-- **Each person's design session runs in a preparation worker** (proposed, and the developer's
-  leaning, so a busy or stuck design can't hold up the rest): a child process running
-  CutCraft's controller. It does the opening, Make cut-ready, planning and rendering. That isolates
+- **Each person's design session runs in a preparation worker:** a child process running
+  CutCraft's controller. This was the developer's leaning, and both reviewers agreed: a thread can't
+  be capped in memory or stopped without risking the whole program. The front and the cutter
+  service may share one process. It does the opening, Make cut-ready, planning and rendering. That isolates
   the risky part from the cutter service ([§18](#18-resources-and-isolation)):
   - **Malformed files and very large designs** stay inside that one worker.
   - **Memory per worker is limited.**
-  - **A crash** loses at most that session's last unsaved step, never a cut.
+  - **A crash** loses at most the changes since that session's last draft checkpoint
+    ([§7](#7-sessions)), never a cut.
 
-  If milestone 0 shows that threads in one process meet the same isolation tests, the workers can be
-  threads instead. Either way, the tests in §18 decide.
+  Milestone 0 measures what the processes cost (start-up, memory), and §18's tests confirm the
+  isolation.
 - **CutCraft's command registry is the one validated path for preparing.** It is about 80
   commands (`design.open`, `prepare.decide`, `sheet.place`, `view.show`…), each with a params
   schema, a read or edit class, and availability (`crates/control/src/commands.rs`). The window, MCP
@@ -220,10 +222,22 @@ let one person, or their AI key, reach another person's work or the server's sec
   opened.
 - **Undo** is the latest change to the shared project, whoever made it, labelled with where it came
   from ("on the phone", "by the AI tool"). There's no selective undo.
-- **Drafts:** the open project is written to its draft 5 seconds after the last change (proposed),
-  when the session unloads, and when the program stops. The draft write is the durability point:
-  after a crash or power cut, the session comes back as of its last draft.
-- **Unloading:** a session idle for an hour (proposed) is written to its draft and unloaded, then
+- **Drafts:**
+  - **When:** the open project is written to its draft 5 seconds after the last change, at least
+    every 30 seconds while changes keep coming (both provisional), when the session unloads, and
+    when the program stops.
+  - **The durability point:** each draft write. After a crash or power cut, the session comes back
+    as of its last draft, which can be several changes behind.
+- **Command results agree with the draft.** A command's recorded result is made durable with the
+  draft checkpoint that contains it, not before.
+  - **After a recovery,** looking up a key gives one of three answers: *applied* (its change is in
+    the recovered project), *refused* (with the recorded reason), or *not applied* (lost with the
+    changes after the last checkpoint). The device can then repeat it.
+  - **Never wrong:** a lookup never reports success for a change the recovered project doesn't
+    contain.
+  - **Free to choose:** the storage (a journal, checkpoints or both) is the implementation's,
+    within this rule.
+- **Unloading:** a session idle for an hour (provisional) is written to its draft and unloaded, then
   reloaded on the next visit. At the memory cap ([§18](#18-resources-and-isolation)), the
   longest-idle session unloads first. If none can unload, opening a design waits and says so.
 
@@ -295,6 +309,9 @@ presented for a phone:**
 - **Same capabilities is a rule, checked by a test.** Every user-facing registry command must be
   reachable from both layouts, or be listed in `docs/layout-exceptions.md` with the developer's
   agreement ([§22](#22-testing)). That list starts empty.
+  - **Window commands are outside the test:** `view.show`, `view.inspect`, `view.capture`,
+    `help.show`, `settings.mcp`. They act on the desktop window, its pictures or the AI setup
+    screen, not on the project. The phone shows the same things with its own pages.
 - **Presentation may differ, the outcome may not.** The phone may reach a result in more steps, or
   with a different control, but it reaches the same result through the same commands.
 
@@ -416,9 +433,14 @@ picture of the visible region at the current zoom. The browser does the same:
     - an unanswered Stop is kept and resent;
     - only one Start at a time.
 - **Updates and cuts:**
-  - **An update never restarts the program during a cut.** The package's install step asks the
-    running program; if a cutter is busy, the restart waits until every cutter is idle, and the
-    page says an update is waiting.
+  - **An update never restarts the program during a cut.** It drains first:
+    - **The program enters an "update waiting" state:** no new Start is accepted on any cutter,
+      and the page says an update is waiting.
+    - **Cuts in progress finish.** Queued projects wait through the update; none begins while
+      draining.
+    - **When every cutter is idle,** the program checks again and restarts on the new version.
+    - **Until the restart,** the running version keeps serving its own pages and wasm. After it, a
+      browser whose protocol version no longer matches reloads itself.
   - **A forced stop or a power cut** is recorded as interrupted, and motion never resumes by
     itself.
 - **Physical safety rules are cameo-pi's,** and stay in the cutter service.
@@ -452,11 +474,12 @@ picture of the visible region at the current zoom. The browser does the same:
 
 Preparation parses untrusted files and can use a lot of memory. Cutting must not notice.
 
-- **Limits** (proposed; measured in milestone 0):
+- **Limits** (provisional; milestone 0 records the peaks):
   - **Uploads:** 64 MB per file.
   - **Pictures:** 100 megapixels decoded per design.
   - **PDFs:** 100 pages.
-  - **Memory:** 1.5 GB per preparation worker.
+  - **Memory:** 1.5 GB per preparation worker. On 8 GB, two full workers plus the cutter service,
+    the front and the system is the budget to watch.
   - **Concurrency:** at most two opens or Make cut-readies at once on the server. Others wait in
     line, and the page says so.
 - **Cancellation:** opening, preparing and rendering can be cancelled, and are cancelled when their
@@ -466,8 +489,11 @@ Preparation parses untrusted files and can use a lot of memory. Cutting must not
 - **The cutter service is protected:**
   - **It runs apart from the workers** ([§5](#5-architecture)).
   - **Its memory is reserved,** and it is the last thing the system would stop.
-  - **Stop is answered within 200 ms (proposed) under any preparation load.**
-- **Acceptance, on the chosen board:**
+  - **Stop is acknowledged within 200 ms (provisional) under any preparation load.** That counts
+    from the request arriving to the cutter service accepting it. It does not mean the blade has
+    stopped: the physical stop, and the cutter's state afterwards, are measured and reported
+    separately. An acknowledgement is not a completed stop.
+- **Acceptance, on the Pi 5:**
   - **The load:** two sessions preparing large designs, a malformed file, a worker over its memory
     limit and a slow client.
   - **Meanwhile:** simulated cuts are started and stopped, and Stop's response time and the memory
@@ -475,7 +501,7 @@ Preparation parses untrusted files and can use a lot of memory. Cutting must not
 
 ## 19. Performance and milestone 0
 
-**Targets (proposed), measured on the Pi 5 in milestone 0. The developer has no view on the numbers
+**Targets (provisional), measured on the Pi 5 in milestone 0. The developer has no view on the numbers
 yet, so milestone 0's measurements set them:**
 
 | What | Target |
@@ -485,7 +511,7 @@ yet, so milestone 0's measurements set them:**
 | A change (tick a colour, change material) to the new preview | ≤ 300 ms |
 | A new artwork picture after pan or zoom stops | ≤ 300 ms (the old one shows meanwhile) |
 | Dragging on the mat | the browser's frame rate; confirmed ≤ 150 ms after the drop |
-| Stop under load | ≤ 200 ms |
+| Stop under load, acknowledged by the cutter service (not the physical stop) | ≤ 200 ms |
 | Memory | two loaded sessions with large designs, plus the cutter service, within 4 GB |
 
 **Milestone 0 is a thin working slice, not a compile check.** On the developer's desktop, before the
@@ -509,15 +535,19 @@ UI split:
 
 ## 20. Backups and migration
 
-- **cameo-pi's backup, extended** (schema 3, proposed):
+- **cameo-pi's backup, extended** (schema 3):
   - **Per person:** each person's area, under their user id, with their name recorded.
   - **Unchanged:** the library, and schema 2's immutable-generation rules and retained-key
     warnings.
   - **Never backed up:** passwords and login sessions, AI keys, the backup's SSH key, the TLS key,
     pairings.
   - **Restoring older backups:** schema 1 and 2 restore as libraries only.
-- **Restore maps people:** areas are matched to users by name. An area with no matching user is
-  offered to an admin, who can give it to a user or leave it in Recently deleted.
+- **Restore maps people, and an admin confirms:**
+  - **On the same installation:** areas are matched by each account's stable id.
+  - **On a fresh installation:** names suggest who each area belongs to. An admin confirms each
+    match before that area can be opened, because a name may have been reused.
+  - **An area with no confirmed owner** is kept, unopened, until an admin gives it to a user or
+    discards it.
 - **Two kinds of recovery, and the interface keeps them apart:**
   - **On the same machine,** after a crash or power cut: drafts ([§7](#7-sessions)).
   - **Off the machine:** the last successful backup. The page shows when that was, and whether a
@@ -552,8 +582,9 @@ UI split:
   - two devices of one person changing one project;
   - two people at once;
   - Save conflicts on a shared project.
-- **The layout parity test:** every user-facing registry command is reached by a browser check in
-  both layouts, or listed in `docs/layout-exceptions.md` (empty at the start).
+- **The layout parity test:** every user-facing registry command, except the window commands of
+  §9.3, is reached by a browser check in both layouts, or listed in `docs/layout-exceptions.md`
+  (empty at the start).
 - **The desktop parity test:** the desktop layout and the test-harness desktop app give the same
   snapshots for the same commands on authored fixtures, and on the developer's archive locally.
 - **Cutting on the Simulated Cameo, early:**
@@ -569,14 +600,16 @@ UI split:
 
 ## 23. Open questions
 
-1. **Workers: processes or threads?**
-   - **Proposed, and the developer's leaning:** processes, so one design can't block the rest.
-   - **Milestone 0 confirms it** with the isolation tests ([§18](#18-resources-and-isolation)).
-2. **The limits and timings marked proposed** (§7, §18, §19).
-   - **For now:** the developer has no view on them yet, so they stand as written.
-   - **Milestone 0** measures them on the Pi 5 and proposes final values.
+None. What's left to settle is measurement, not decisions:
 
-Settled since draft 2 (the developer, 2026-10-26, Zulip #41): no history from the old repositories
+- **Provisional values:** the draft timings (§7), the idle unload (§7), the limits (§18) and the
+  targets (§19) are engineering starting points. The developer has no view on them yet.
+  Milestone 0 measures them on the Pi 5, on authored fixtures and the developer's archive, and
+  proposes final values. Until then they stand as written.
+- **Preparation processes** (§5) are the starting design. Milestone 0 measures their cost, and
+  §18's tests confirm the isolation.
+
+Settled for version 1 (the developer, 2026-10-26, Zulip #41): no history from the old repositories
 (§2.11, §5.2); the Pi 5 is the target, with x86-64 supported too (§2.10).
 
 ## 24. Milestones
@@ -610,6 +643,18 @@ In the order the reviews recommended: contracts and risks first, layouts after.
 - Shipping the CutCraft desktop app or cameo-pi again.
 
 ## 26. Revision history
+
+- **Version 1, final (2026-10-26):** draft 2 with the developer's answers (#41) and the reviewers'
+  last clarifications (Codex #45, Grok #46).
+  - **Settled:** no history; the Pi 5 target with amd64 kept; preparation processes as the
+    starting design (§2, §5).
+  - **Drafts:** at least every 30 seconds while changing. Command results agree with the recovered
+    draft (§7).
+  - **Window commands** are outside the layout parity test (§9.3, §22).
+  - **Updates drain:** no new Start while an update waits (§14).
+  - **Stop:** 200 ms means acknowledgement, not the physical stop (§18, §19).
+  - **Restore:** an admin confirms who owns each area (§20).
+  - **Wording:** "proposed" becomes "provisional", and §23 has no open questions left.
 
 - **Draft 2 (2026-10-26):** after reviews by Codex and Grok, and the developer's decisions.
   - **One product, self-contained:** the code is imported, the old products retired (§2, §5.2).

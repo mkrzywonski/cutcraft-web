@@ -12,7 +12,7 @@ It replaces two earlier projects by the same developer, and brings their code in
 On a computer it looks and works like CutCraft. A phone gets its own thumb-friendly pages, with the
 same capabilities.
 
-**Status:** design. See the [specification](docs/spec.md). There is no code yet.
+**Status:** the [specification](docs/spec.md) is final (version 1). Milestone 0, a first working slice, is under way.
 
 ## License
 

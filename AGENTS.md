@@ -1,7 +1,7 @@
 # CutCraft-Web contributor instructions
 
 - **New to this repo? Read [docs/spec.md](docs/spec.md).** It's a design spec; there is no code yet.
-  Raise open questions (spec §23) with the developer rather than deciding them.
+  Raise new questions with the developer rather than deciding them; the spec records the answers.
 - CutCraft-Web is the one product. It replaces CutCraft and cameo-pi, whose repositories are
   private and will be deleted: their code is imported here (spec §5.2) and recorded in
   `docs/provenance.md`. Never depend on either old repository, and don't bring over their revision history.
