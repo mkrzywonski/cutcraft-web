@@ -8,8 +8,8 @@ publish.workspace = true
 
 [dependencies]
 cutcraft-web-protocol = { path = "../../../crates/protocol" }
-cutcraft-control = { path = "../../../../../cutcraft/crates/control" }
-cutcraft-path = { path = "../../../../../cutcraft/crates/path" }
+cutcraft-control = { path = "../../../crates/control" }
+cutcraft-path = { path = "../../../crates/path" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal", "io-util", "process", "fs"] }
 hyper = { version = "1", features = ["http1", "server"] }

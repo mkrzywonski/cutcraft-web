@@ -690,7 +690,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cutcraft-control"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "base64",
  "cutcraft-device",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-device"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "cutcraft-job",
  "cutcraft-path",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-import"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "cutcraft-job",
  "hayro-syntax",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-job"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "base64",
  "schemars",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-path"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "cutcraft-job",
  "kurbo",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-station"
-version = "1.4.2"
+version = "0.1.0"
 dependencies = [
  "cutcraft-device",
  "getrandom 0.3.4",

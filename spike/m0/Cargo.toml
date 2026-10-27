@@ -1,6 +1,6 @@
-# Milestone 0 spike (spec §19): one working slice through the browser boundary. It builds against
-# a local CutCraft checkout at ~/cutcraft (beside ~/cutcraft-web-worktrees) and is thrown away in milestone 1, when the code
-# is imported (spec §5.2). Not part of the main workspace.
+# Milestone 0 spike (spec §19): one working slice through the browser boundary, built from this
+# repository's own crates. It is its own workspace, not part of the main one, and is retired once
+# milestone 2 replaces it.
 [workspace]
 resolver = "3"
 members = ["server", "ui"]

@@ -9,13 +9,18 @@ were licensed MIT OR Apache-2.0, as this repository is.
 
 | Here | From | At | Notes |
 |---|---|---|---|
-| `crates/job`, `crates/path`, `crates/device`, `crates/sim` | CutCraft `crates/…` | `5462a35` (1.4.2) | Unchanged. Byte-identical to `b6aad51` (1.2.1), the commit cameo-pi pinned. |
+| `crates/job`, `crates/path`, `crates/device`, `crates/sim` | CutCraft `crates/…` | `5462a35` (1.4.2) | Code unchanged, comments edited (pronouns). The code is the same as at `b6aad51` (1.2.1), the commit cameo-pi pinned. |
 | `crates/import`, `crates/control`, `crates/station` | CutCraft `crates/…` | `5462a35` (1.4.2) | Help paths in `control` now point at `docs/help/`. |
 | `docs/help/mcp.md`, `troubleshooting.md`, `design-guide.md` | CutCraft `docs/` | `5462a35` | Bundled help, included by `crates/control`. |
 | `docs/reference/cutcraft-spec.md` | CutCraft `docs/spec.md` | `5462a35` | Reference for the desktop layout (spec §9.2). Not this project's spec. |
 | `crates/cameo-pi-core` | cameo-pi `crates/core` | `d60d963` (0.23.0) | Its pin test now checks this file. |
 | `apps/server` | cameo-pi `apps/server` | `d60d963` (0.23.0) | The server, still named `cameo-pi` until milestone 3 turns it into `cutcraft-web`. |
 | `docs/reference/cameo-pi-spec.md` | cameo-pi `docs/spec.md` | `d60d963` | Reference for cutting, the library and backups. |
+
+**Full origin commits:**
+- **CutCraft 1.4.2:** `5462a356a41987e32a9ff4e4b1b17f386cf831da`
+- **CutCraft 1.2.1** (cameo-pi's pin): `b6aad512f19217677c9675def794087e972fa89d`
+- **cameo-pi 0.23.0:** `d60d963a24517df79ec968a8d04b3cdb42b0af31`
 
 ## What changed in the merge
 
@@ -37,8 +42,12 @@ were licensed MIT OR Apache-2.0, as this repository is.
   IJG licence (jpeg-encoder, through VectorCraft's PDF output) is allowed: it's permissive and
   asks for credit in the documentation.
 - **The planner's identity** stays `1.2.1 (b6aad51)` (`crates/cameo-pi-core/src/validate.rs`):
-  the planner crates are unchanged since that commit, so library revisions planned by cameo-pi
-  still match.
+  the planner crates' code is unchanged since that commit (only comments changed), so library
+  revisions planned by cameo-pi still match. The test that reads this file only checks that the
+  record agrees with the constant. It isn't a fingerprint of the algorithm: any later change to
+  planning code must change the planner identity by hand.
+- **The spike** (`spike/m0`) now builds from these imported crates, so its protocol and browser
+  checks no longer need the old CutCraft checkout (Grok's and Codex's reviews).
 
 ## Not imported yet
 
