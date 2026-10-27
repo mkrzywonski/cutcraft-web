@@ -104,7 +104,7 @@ measured.cached_load_to_running_ms = Math.round(cached.ready_at_ms);
 // 3. Upload the authored fixture, as a drop or the file picker does.
 const svg = await fs.readFile(fixture, "utf8");
 const uploaded = await page(`fetch("/api/upload?name=star-and-ring.svg", { method: "POST",
-  headers: { "x-cutcraft": "1" }, body: ${JSON.stringify(svg)} }).then(r => r.status)`);
+  headers: { "x-cutcraft": "1", "x-cutcraft-protocol": "1" }, body: ${JSON.stringify(svg)} }).then(r => r.status)`);
 check("upload", uploaded === 200, `HTTP ${uploaded}`);
 let s = await until("the design, cut-ready, with its geometry", (s) => s.design && s.cut_ready && s.geometry && s.mat_view);
 check("Make cut-ready ran in the worker", s.cut_ready === true);

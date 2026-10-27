@@ -16,7 +16,7 @@ CUTCRAFT_WEB_PASSWORD=pc target/release/cutcraft-web-m0 serve --data "$work/data
 server_pid=$!
 B=https://127.0.0.1:$port
 for _ in $(seq 50); do curl -sk -o /dev/null "$B/" && break; sleep 0.1; done
-c() { curl -sk -b "$work/jar" -c "$work/jar" "$@"; }
+c() { curl -sk -b "$work/jar" -c "$work/jar" -H 'x-cutcraft-protocol: 1' "$@"; }
 code() { c -o /dev/null -w '%{http_code}' "$@"; }
 failures=0
 check() { if [[ $2 == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: got $2, wanted $3"; failures=$((failures + 1)); fi; }
@@ -27,6 +27,7 @@ cmd() { # ID PARAMS KEY INCARNATION REVISION [extra curl args]
   c -H 'x-cutcraft: 1' -H 'content-type: application/json' -d "$body" "$@" "$B/api/command"
 }
 
+check "another protocol version is told to reload" "$(curl -sk -o /dev/null -w '%{http_code}' -H 'x-cutcraft-protocol: 99' $B/api/snapshot)" 409
 check "a wrong password is refused" "$(code -H 'content-type: application/json' -d '{"password":"no"}' $B/api/login)" 401
 check "the right one signs in" "$(code -H 'content-type: application/json' -d '{"password":"pc"}' $B/api/login)" 200
 check "a change without the site's header is refused" "$(code --data-binary @fixtures/star-and-ring.svg "$B/api/upload?name=a.svg")" 403

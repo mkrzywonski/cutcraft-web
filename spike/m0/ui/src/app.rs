@@ -12,6 +12,7 @@ use eframe::egui;
 use serde_json::{Value, json};
 
 use crate::net;
+use crate::state;
 use crate::view::{self, Viewport};
 
 /// How long a dropped design waits for its new plan before snapping back (the desktop's rule).
@@ -55,6 +56,8 @@ struct Shared {
     snapshot_at: Option<f64>,
     lost_reply: Option<String>,
     busy: Option<String>,
+    /// The server speaks another protocol version: the page must reload (spec §13).
+    reload: bool,
 }
 
 impl Shared {
@@ -258,9 +261,16 @@ impl App {
                         }
                         None => "the lookup failed too".into(),
                     };
-                    let mut sh = shared.borrow_mut();
-                    sh.note(text.clone());
-                    sh.lost_reply = Some(text);
+                    shared.borrow_mut().note(text.clone());
+                    // The page shows what the server has now, not only a note: fetch the
+                    // snapshot (and so the plan) rather than trusting the live push.
+                    if let Ok(a) = net::request("GET", "/api/snapshot", None, None, &[]).await
+                        && a.status == 200
+                        && let Ok(snap) = String::from_utf8(a.body)
+                    {
+                        apply_snapshot(&shared, &ctx, &snap);
+                    }
+                    shared.borrow_mut().lost_reply = Some(text);
                 }
             }
             ctx.request_repaint();
@@ -299,6 +309,7 @@ impl App {
             "drop_to_snapshot_ms": self.drop_at.zip(sh.snapshot_at).filter(|(d, s)| s > d).map(|(d, s)| s - d),
             "drop_to_plan_ms": self.drop_at.zip(sh.geometry_at).filter(|(d, g)| g > d).map(|(d, g)| g - d),
             "pixels_per_point": self.ctx.pixels_per_point(),
+            "reload": sh.reload,
         });
         net::report(&state.to_string());
     }
@@ -309,18 +320,17 @@ fn apply_snapshot(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, text: &str)
         return;
     };
     let mut sh = shared.borrow_mut();
-    // A snapshot from an older revision of the same load never replaces a newer one.
-    if let Some(old) = &sh.snapshot
-        && old.incarnation == snapshot.incarnation
-        && old.revision > snapshot.revision
-    {
+    if !state::snapshot_is_newer(sh.snapshot.as_ref(), &snapshot) {
         return;
     }
-    let wanted = snapshot
-        .design
-        .as_ref()
-        .and_then(|d| d.geometry.as_ref())
-        .map(|g| g.id.clone());
+    if state::needs_reload(&snapshot) {
+        sh.reload = true;
+    }
+    let wanted = state::wanted_geometry(&snapshot).map(str::to_owned);
+    if wanted.is_none() {
+        // No design (or a fresh worker): nothing of the old plan stays on the mat.
+        sh.geometry = None;
+    }
     sh.snapshot = Some(snapshot);
     sh.snapshot_at = Some(net::now_ms());
     let have = sh.geometry.as_ref().map(|g| g.id.clone());
@@ -328,7 +338,7 @@ fn apply_snapshot(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, text: &str)
         && have.as_ref() != Some(&id)
         && sh.geometry_loading.as_ref() != Some(&id)
     {
-        sh.geometry_loading = Some(id);
+        sh.geometry_loading = Some(id.clone());
         drop(sh);
         let (shared, ctx) = (shared.clone(), ctx.clone());
         wasm_bindgen_futures::spawn_local(async move {
@@ -337,12 +347,40 @@ fn apply_snapshot(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, text: &str)
                 && let Ok(g) = serde_json::from_slice::<Geometry>(&a.body)
             {
                 let mut sh = shared.borrow_mut();
-                sh.geometry_ms = Some(a.ms);
-                sh.geometry_bytes = a.body.len();
-                sh.geometry = Some(g);
-                sh.geometry_at = Some(net::now_ms());
+                // Only the plan the latest snapshot asks for: a late answer about an older
+                // one is dropped (Grok's review of milestone 0).
+                if state::geometry_is_current(sh.snapshot.as_ref(), &g) {
+                    sh.geometry_ms = Some(a.ms);
+                    sh.geometry_bytes = a.body.len();
+                    sh.geometry = Some(g);
+                    sh.geometry_at = Some(net::now_ms());
+                }
             }
-            shared.borrow_mut().geometry_loading = None;
+            let mut sh = shared.borrow_mut();
+            if sh.geometry_loading.as_deref() == Some(id.as_str()) {
+                sh.geometry_loading = None;
+            }
+            // If the snapshot moved on meanwhile, fetch what it asks for now.
+            let again = sh
+                .snapshot
+                .as_ref()
+                .and_then(state::wanted_geometry)
+                .map(str::to_owned);
+            let stale = again.is_some()
+                && again.as_deref() != Some(id.as_str())
+                && sh.geometry_loading.is_none()
+                && sh.geometry.as_ref().map(|g| &g.id) != again.as_ref();
+            let text = stale
+                .then(|| {
+                    sh.snapshot
+                        .as_ref()
+                        .and_then(|s| serde_json::to_string(s).ok())
+                })
+                .flatten();
+            drop(sh);
+            if let Some(text) = text {
+                apply_snapshot(&shared, &ctx, &text);
+            }
             ctx.request_repaint();
         });
     }
@@ -424,6 +462,15 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.ready_at.get_or_insert_with(net::now_ms);
         self.report();
+        if self.shared.borrow().reload {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(80.0);
+                    ui.heading("CutCraft was updated. Reload this page.");
+                });
+            });
+            return;
+        }
         let signed_in = self.shared.borrow().signed_in;
         if signed_in != Some(true) {
             egui::CentralPanel::default().show(ui, |ui| self.sign_in(ui, signed_in));

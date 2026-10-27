@@ -1,6 +1,7 @@
 //! Milestone 0's desktop-layout slice in the browser (spec §19). `view` holds the arithmetic and is
 //! tested natively; the rest runs only in the browser.
 
+pub mod state;
 pub mod view;
 
 #[cfg(target_arch = "wasm32")]

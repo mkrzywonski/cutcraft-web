@@ -37,6 +37,12 @@ pub async fn request(
     init.set_credentials(web_sys::RequestCredentials::SameOrigin);
     let headers = web_sys::Headers::new().map_err(js)?;
     headers.set("x-cutcraft", "1").map_err(js)?;
+    headers
+        .set(
+            "x-cutcraft-protocol",
+            &cutcraft_web_protocol::PROTOCOL_VERSION.to_string(),
+        )
+        .map_err(js)?;
     if let Some(kind) = content_type {
         headers.set("content-type", kind).map_err(js)?;
     }
@@ -79,7 +85,10 @@ pub fn follow(on_text: std::rc::Rc<dyn Fn(String)>, on_state: std::rc::Rc<dyn Fn
         "ws"
     };
     let host = location.host().unwrap_or_default();
-    let Ok(socket) = web_sys::WebSocket::new(&format!("{scheme}://{host}/api/live")) else {
+    let version = cutcraft_web_protocol::PROTOCOL_VERSION;
+    let Ok(socket) =
+        web_sys::WebSocket::new(&format!("{scheme}://{host}/api/live?protocol={version}"))
+    else {
         return;
     };
     let text = on_text.clone();

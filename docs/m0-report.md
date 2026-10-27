@@ -1,8 +1,7 @@
 # Milestone 0 report: the thin slice (spec §19)
 
-Status: **first results, 2026-10-26.** These are from the developer's desktop: an Intel i9-9900K,
-NixOS, and headless Chromium 155. Results on the Pi 5, Safari, Firefox and the iPad are still to
-come (§5).
+Status: **results, 2026-10-27.** From the developer's desktop (an Intel i9-9900K, NixOS, headless
+Chromium 155) and the Pi 5. Safari, Firefox and the iPad are still to come (§5).
 
 Branch `claude/m0`:
 - **The contract** is in `crates/protocol` and is kept.
@@ -65,9 +64,20 @@ designs of the local acceptance set, one process each:
 | Wall time | 0.40 s | 1.24 s | 3.88 s | 4.08 s |
 | Peak memory | 59 MB | 97 MB | 169 MB | 177 MB |
 
-None failed, and none took over 10 s. A Pi 5 is roughly half as fast single-threaded (published
-benchmarks), which suggests about 0.8 s median and 8 s for the slowest. That's inside the 10 s
-target (spec §19), **to be confirmed on the Pi 5.**
+None failed, and none took over 10 s.
+
+**The same run on the Pi 5** (8 GB, NVMe SSD, the static aarch64 build, the archive's fonts copied
+over for the run):
+
+| | median | 90% | 99% | slowest |
+|---|---|---|---|---|
+| Wall time | 0.32 s | 1.75 s | 5.62 s | 5.96 s |
+| Peak memory | 31 MB | 60 MB | 134 MB | 162 MB |
+
+- **Speed:** each design took about 1.5 times as long as on the desktop (median; 1.8 times at 90%, 2.5 at worst).
+- **Heat:** the board stayed near 59 °C.
+- **Limits:** none of the 142 failed or took over 10 s, so the 10 s target (spec §19) holds on the target board.
+- **Clean-up:** the designs, the fonts and the files naming them were deleted from the Pi afterwards.
 
 **The slice, on the desktop over loopback:**
 
@@ -119,7 +129,19 @@ target (spec §19), **to be confirmed on the Pi 5.**
      the button went down.
    - **The layout moves as status messages arrive,** so the check waits for a steady view before
      aiming.
-8. **Headless Chromium redraws lazily.** The page's own timing shows the plan 55 ms after a drop,
+8. **The static (musl) builds plan two archive designs very slightly differently** from the desktop
+   development build (glibc).
+   - **Which ones:** entries 113 and 114 of the acceptance set, with different geometry hashes and
+     nothing else.
+   - **The cause is musl, not Arm:** the static x86 build differs on exactly the same two. The
+     likely cause is musl's maths library (trigonometry) differing from glibc's in the last bits.
+   - **Why it matters:** releases ship static builds, so the archive check must run on the build
+     that ships. Alternatively, preparation could use a maths library that gives identical results
+     everywhere. That's a decision for milestone 2 or 3.
+   - **Everything else matched:** the other 137 designs gave identical results on the Pi 5. Three
+     differed only because a font they use comes with the desktop's NixOS but not with Raspberry
+     Pi OS. That's an environment difference: fonts are per person in CutCraft-Web (spec §10).
+9. **Headless Chromium redraws lazily.** The page's own timing shows the plan 55 ms after a drop,
    but the check saw it in the page's state only about 1.2 s later. Whether a real browser shows
    the move as quickly is one of the checks by eye below.
 
@@ -128,7 +150,7 @@ target (spec §19), **to be confirmed on the Pi 5.**
 | Item (spec §19) | Status |
 |---|---|
 | Safari, Firefox and an iPad, under the real headers | **Not run.** They need the developer's Mac and iPad. Firefox's automation isn't set up here. |
-| Timing on the Pi 5 | **Not run:** the board has just arrived. Next: build `cutcraft-cli` for aarch64 and rerun `scripts/m0-speed.py` there. |
+| Timing on the Pi 5 | **Done** (§3, finding 8). |
 | Stop acknowledged under preparation load (§18) | **Not run.** The slice has no cutter service. Next: cameo-pi's cutter worker with the Simulated Cameo, timing Stop while two workers prepare. |
 | Is a dropped move on screen quickly in a real browser? | **Not checked** (finding 8). |
 | Which renderer wgpu chose (WebGPU or WebGL2) | **Not recorded:** the browser had `navigator.gpu`, but the slice doesn't report which backend started. |
@@ -153,3 +175,24 @@ CUTCRAFT_CORPUS_DIR=… nix-shell --run "python3 scripts/m0-speed.py CLI MANIFES
 To try it by hand: build the shell with `spike/m0/build-web.sh`, then start the server:
 `CUTCRAFT_WEB_PASSWORD=… spike/m0/target/release/cutcraft-web-m0 serve --data DIR --web spike/m0/web-dist`.
 Open `https://localhost:8443`.
+
+## 7. Review
+
+Grok reviewed `e6cf4c4` (`/home/mike/ai-talk/grok-review-m0-m1-2026-10-26.md`). Fixed in the next
+commit:
+
+- **P1: a late geometry answer could put an older plan back on the mat.**
+  - **The fix:** the page now shows a geometry only if it's the one the latest snapshot asks for
+    (`ui/src/state.rs`, tested natively). It also clears the plan when no design is open, and asks
+    again if the snapshot moved on while a request was out.
+- **P2: the protocol version was never checked.**
+  - **Sending it:** every request and the live socket carry it.
+  - **The server:** refuses another version with `protocol-version` before anything reaches a
+    worker.
+  - **The page:** says "CutCraft was updated. Reload this page."
+  - **Tested:** the protocol check covers it.
+- **P2: a lost reply updated a note, not the page.** After the key lookup the page now fetches
+  the snapshot itself. The test hook now also holds back the live snapshot, so the browser check
+  proves the page recovers on its own.
+- **P2: the checks built only against the old CutCraft checkout.** Fixed on `claude/m1`, which
+  points the spike at the imported crates.

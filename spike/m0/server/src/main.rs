@@ -20,7 +20,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cutcraft_web_protocol::{
-    CommandReply, CommandRequest, PictureRequest, WorkerReply, WorkerRequest,
+    CommandReply, CommandRequest, PROTOCOL_VERSION, PictureRequest, WorkerReply, WorkerRequest,
+    codes,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
@@ -206,10 +207,41 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/geometry", get(geometry))
         .route("/api/picture", get(picture))
         .route("/api/live", get(live))
+        .layer(axum::middleware::from_fn(same_protocol))
         .layer(DefaultBodyLimit::max(UPLOAD_LIMIT))
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(axum::middleware::map_response(security_headers))
         .with_state(app)
+}
+
+/// Spec §13: a client speaking another protocol version is told to reload, before anything
+/// reaches a worker. Pages and sign-in carry no protocol data and pass.
+async fn same_protocol(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let path = request.uri().path();
+    if !path.starts_with("/api/") || path == "/api/login" {
+        return next.run(request).await;
+    }
+    let wanted = PROTOCOL_VERSION.to_string();
+    let from_header = request
+        .headers()
+        .get("x-cutcraft-protocol")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let from_query = request.uri().query().and_then(|q| {
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("protocol=").map(str::to_owned))
+    });
+    if from_header.or(from_query).as_deref() == Some(wanted.as_str()) {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::CONFLICT,
+        axum::Json(CommandReply::Refused {
+            code: codes::PROTOCOL.into(),
+            message: "CutCraft was updated. Reload this page.".into(),
+        }),
+    )
+        .into_response()
 }
 
 /// Spec §13: nothing from elsewhere, nothing inline, WebAssembly allowed.
@@ -382,15 +414,16 @@ async fn command(
         return r;
     }
     let reply = app.ask(WorkerRequest::Command(body.0)).await;
+    // Milestone 0's lost-reply test: the change is made, but neither the answer nor the live
+    // snapshot is sent, so the page must recover by looking up its key.
+    if headers.get("x-m0-drop-reply").is_some() {
+        return status(StatusCode::SERVICE_UNAVAILABLE, "");
+    }
     if matches!(
         reply,
         Ok(WorkerReply::Command(CommandReply::Applied { .. }))
     ) {
         app.publish().await;
-    }
-    // Milestone 0's lost-reply test: the change is made, the answer is dropped.
-    if headers.get("x-m0-drop-reply").is_some() {
-        return status(StatusCode::SERVICE_UNAVAILABLE, "");
     }
     match reply {
         Ok(WorkerReply::Command(r)) => axum::Json(r).into_response(),
