@@ -4,6 +4,13 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.7.0 — 2026-10-26
+
+- Start M3 with a shared update-drain admission guard: new Starts are refused while draining, accepted Start requests still replay, queued turns wait, and Stop remains independent.
+- Report update waiting and readiness in the shared HTTP/MCP status. Readiness requires every cutter idle; paused, running and unconfirmed-stop executions block it.
+- Add deterministic admission/update race tests and a simulator regression for Start replay, refused new Start, Stop, settling, and a queued turn surviving drain.
+- This is updater infrastructure; deployment/restart wiring, immutable cut copies, durable cutter records and worker scheduling remain M3 work.
+
 ## 0.6.2 — 2026-10-26
 
 - Finish M2 review fixes: establish the initial design snapshot and subscription under the publication gate, and coalesce slow SSE readers to the newest full snapshot.

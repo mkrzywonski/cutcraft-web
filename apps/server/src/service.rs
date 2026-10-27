@@ -136,6 +136,8 @@ enum UploadKey {
 
 pub struct Service {
     pub boot: String,
+    /// Shared by every Start path; the updater closes admission before draining.
+    pub updates: cameo_pi_core::update::UpdateGate,
     pub library: Library,
     pub cutters: Vec<CutterEntry>,
     pub keys: Keys,
@@ -159,6 +161,14 @@ pub struct Service {
     pub(crate) lists: PathBuf,
 }
 
+fn update_waiting() -> ApiError {
+    ApiError::new(
+        409,
+        "update-waiting",
+        "An update is waiting. Queued cuts will wait until it finishes.",
+    )
+}
+
 fn job_ref(id: &str, revision: u32) -> JobRef {
     JobRef {
         job_id: id.to_owned(),
@@ -175,6 +185,7 @@ impl Service {
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
         Ok(Self {
             boot,
+            updates: cameo_pi_core::update::UpdateGate::default(),
             library,
             cutters,
             keys,
@@ -299,6 +310,9 @@ impl Service {
         if let Some(answer) = lock(&entry.shared).replay_start(&body.key, &action) {
             return Ok(answer?);
         }
+        if self.updates.waiting() {
+            return Err(update_waiting());
+        }
         // A page showing an older revision than the job's current one starts nothing (spec §9.2).
         if self.library.details(&body.job_id)?.current_revision != body.revision {
             return Err(Refusal::StaleRevision.into());
@@ -315,7 +329,22 @@ impl Service {
             key: body.key,
             actor,
         };
-        Ok(lock(&entry.shared).start(request)?)
+        // Plan validation is outside the gate. Stop never takes it. Replays above remain
+        // available during draining, because they cannot start another execution.
+        Ok(self
+            .updates
+            .admit_start(|| lock(&entry.shared).start(request))
+            .map_err(|_| update_waiting())??)
+    }
+
+    /// The updater must check this again immediately before a graceful restart.
+    /// A queued turn is idle; an execution, pause or stop confirmation is not.
+    pub fn update_ready(&self) -> bool {
+        self.updates.ready(|| {
+            self.cutters
+                .iter()
+                .all(|entry| lock(&entry.shared).view().activity == "idle")
+        })
     }
 
     pub fn start_result(&self, cutter: &str, key: &str) -> Result<Answer> {

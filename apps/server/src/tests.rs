@@ -2318,3 +2318,109 @@ async fn a_slow_design_stream_coalesces_to_the_latest_snapshot() {
         latest["design"]["sheet"]["material"]
     );
 }
+
+/// Drain closes admission, not observation or Stop. The same service backs HTTP and MCP.
+#[tokio::test]
+async fn update_drain_keeps_start_replay_and_stop_available() {
+    let mut h = harness();
+    let (_, job) = upload(&h.app, "drain-upload").await;
+    let id = job["id"].as_str().unwrap();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.unload();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.load(Media::Mat12x12);
+    for _ in 0..9 {
+        h.worker.step();
+    }
+    let (_, queued) = send(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/cutters/practice/queue",
+            json!({"job_id":id, "key":"drain-queue"}),
+        ),
+    )
+    .await;
+    let view = lock(&h.app.service.cutters[0].shared).view();
+    let cameo_pi_core::mat::Mat::Fresh(generation) = view.mat else {
+        panic!("not fresh");
+    };
+    let start = json!({"boot":"t", "kind":"main", "turn":queued["turn"], "job_id":id, "revision":1,
+        "generation":generation, "action_epoch":view.action_epoch, "key":"drain-start"});
+    let (status, accepted) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", start.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    h.app.service.updates.begin();
+    let (status, waiting_turn) = send(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/cutters/practice/queue",
+            json!({"job_id":id, "key":"waiting-turn"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{waiting_turn}");
+
+    assert!(
+        !h.app.service.update_ready(),
+        "accepted execution is already active before the driver steps"
+    );
+    let (status, replay) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", start.clone()),
+    )
+    .await;
+    assert_eq!((status, replay), (StatusCode::OK, accepted));
+    let mut new_start = start;
+    new_start["key"] = json!("another-start");
+    let (status, refused) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", new_start.clone()),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["error"].as_str()),
+        (StatusCode::CONFLICT, Some("update-waiting")),
+        "{refused}"
+    );
+    let (status, stopped) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/stop", json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stopped}");
+    for _ in 0..20 {
+        h.worker.step();
+    }
+    assert!(
+        h.app.service.update_ready(),
+        "the cancelled execution must settle before restart"
+    );
+
+    let waiting = lock(&h.app.service.cutters[0].shared).view();
+    assert!(waiting.execution.is_none());
+    assert_eq!(
+        waiting.turn.unwrap().id,
+        waiting_turn["turn"].as_str().unwrap()
+    );
+    let (_, state) = send(&h.app, get("/api/v1/state", "cameo-pi.local")).await;
+    assert_eq!(state["update"], json!({"waiting":true, "ready":true}));
+    let (status, refused) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", new_start),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["error"].as_str()),
+        (StatusCode::CONFLICT, Some("update-waiting")),
+        "drain stays closed: {refused}"
+    );
+}

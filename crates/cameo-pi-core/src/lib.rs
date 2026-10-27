@@ -11,5 +11,6 @@ pub mod journal;
 pub mod library;
 pub mod mat;
 pub mod runnable;
+pub mod update;
 pub mod validate;
 pub mod worker;

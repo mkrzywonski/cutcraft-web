@@ -394,6 +394,7 @@ pub(crate) fn snapshot(app: &App) -> Value {
         "version": env!("CARGO_PKG_VERSION"),
         "seq": app.seq.load(Ordering::SeqCst),
         "cutters": app.service.cutters_view(),
+        "update": { "waiting": app.service.updates.waiting(), "ready": app.service.update_ready() },
     })
 }
 
