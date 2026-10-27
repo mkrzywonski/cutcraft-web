@@ -4169,7 +4169,7 @@ mod tests {
     }
 
     #[test]
-    fn tiny_thin_and_nearly_duplicated_shapes_are_questions_she_can_accept() {
+    fn tiny_thin_and_nearly_duplicated_shapes_are_questions_they_can_accept() {
         let content = r#"<rect x="10" y="10" width="0.5" height="0.5"/>
             <rect x="20" y="10" width="0.2" height="20"/>
             <rect x="40" y="10" width="20" height="20"/>"#;
@@ -4604,7 +4604,7 @@ mod tests {
     }
 
     #[test]
-    fn a_photo_is_traced_only_when_she_says_so() {
+    fn a_photo_is_traced_only_when_asked() {
         // Smooth shading, as in a photo: few flat areas.
         let bytes = crate::picture::tests::png(64, 64, |x, y| {
             [(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8, 255]

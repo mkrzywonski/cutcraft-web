@@ -36,7 +36,8 @@ were licensed MIT OR Apache-2.0, as this repository is.
     either build. They were recorded before Make cut-ready asked about very small and very thin
     pieces. Re-recording them is the developer's decision.
 - **Pronouns:** "she" and "her" for the end user became "they" and "their" in comments and in the
-  command descriptions AI tools read (64 lines), as this project's rules require.
+  command descriptions AI tools read (64 lines), as this project's rules require. Nine test names and
+  one manifest comment followed (Grok's re-review).
 - **Dependency updates:** tokio 1.53.2 to 1.54.1 (an unsoundness advisory) and crypto-bigint 0.7.8
   to 0.7.10 (yanked). `cargo deny` (`deny.toml`) now guards sources, licences and advisories. The
   IJG licence (jpeg-encoder, through VectorCraft's PDF output) is allowed: it's permissive and

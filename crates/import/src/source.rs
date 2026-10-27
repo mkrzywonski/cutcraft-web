@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_is_drawn_at_the_size_she_gave_it() {
+    fn a_picture_is_drawn_at_the_size_given() {
         // 200 × 100 px, left half black; they say it is 100 mm wide.
         let mut image = RgbaImage::from_pixel(200, 100, image::Rgba([255, 255, 255, 255]));
         for y in 0..100 {

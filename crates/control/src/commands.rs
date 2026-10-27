@@ -5093,7 +5093,7 @@ mod tests {
     }
 
     #[test]
-    fn her_piece_size_is_set_both_ways_or_forgotten() {
+    fn the_piece_size_is_set_both_ways_or_forgotten() {
         let dir = tempfile::tempdir().unwrap();
         let (controller, read, _) = headless(dir.path());
         run(
@@ -5287,7 +5287,7 @@ mod tests {
 
     #[cfg(feature = "dev-automation")]
     #[test]
-    fn she_can_place_the_test_cut_but_not_on_the_design() {
+    fn the_test_cut_can_be_placed_but_not_on_the_design() {
         let dir = tempfile::tempdir().unwrap();
         let (controller, read, _) = headless(dir.path());
         run(
@@ -5344,7 +5344,7 @@ mod tests {
     }
 
     #[test]
-    fn mats_are_kept_chosen_per_sheet_and_her_material_sits_anywhere_on_them() {
+    fn mats_are_kept_chosen_per_sheet_and_the_material_sits_anywhere_on_them() {
         let dir = tempfile::tempdir().unwrap();
         let (controller, read, _) = headless(dir.path());
         run(
@@ -5639,7 +5639,7 @@ mod tests {
     }
 
     #[test]
-    fn new_designs_start_with_her_chosen_material_and_mat() {
+    fn new_designs_start_with_the_chosen_material_and_mat() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("design.svg");
         std::fs::write(&source, DESIGN).unwrap();

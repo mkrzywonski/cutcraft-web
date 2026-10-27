@@ -2066,7 +2066,7 @@ mod tests {
     }
 
     #[test]
-    fn her_material_can_sit_anywhere_and_cuts_off_the_mat_grid_are_flagged() {
+    fn the_material_can_sit_anywhere_and_cuts_off_the_mat_grid_are_flagged() {
         let mut project = one_sheet(ring_design());
         let plan = plan_sheet(&project, "sheet/1").unwrap();
         let [x0, y0, x1, y1] = plan.bounds_mm.unwrap();
@@ -2198,7 +2198,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_off_her_piece_blocks_the_sheet_and_the_test_cut_stays_on_it() {
+    fn a_cut_off_the_piece_blocks_the_sheet_and_the_test_cut_stays_on_it() {
         let mut project = one_sheet(ring_design());
         let plan = plan_sheet(&project, "sheet/1").unwrap();
         let [_, _, x1, y1] = plan.bounds_mm.unwrap();

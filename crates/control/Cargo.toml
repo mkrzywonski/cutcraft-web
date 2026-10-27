@@ -22,7 +22,7 @@ sha2.workspace = true
 getrandom.workspace = true
 
 [features]
-# The Simulated Cameo as a device (spec §7.4). Never part of her release build.
+# The Simulated Cameo as a device (spec §7.4). Never part of the release build.
 dev-automation = ["dep:cutcraft-sim"]
 
 [lints]
