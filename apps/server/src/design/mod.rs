@@ -491,6 +491,7 @@ impl Sessions {
             let mut link = session.link.lock().await;
             let _activity=Activity { session:session.clone(), key:key.clone() };
             *session.current_key.lock().unwrap_or_else(|p|p.into_inner())=key.clone();
+            if pool.stopping.load(std::sync::atomic::Ordering::SeqCst) { return Err(ApiError::new(503,"server-stopping","The server is restarting.")); }
             if session.retired.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(ApiError::new(401, "login", "Log in first."));
             }
@@ -504,7 +505,17 @@ impl Sessions {
                     }
                     if let Ok(permit) = pool.slots.clone().try_acquire_owned() {
                         match Link::start(&mode, &session.area, &lists) {
-                            Ok(worker) => { *link = Some(worker); *session.permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit); break; },
+                            Ok(mut worker) => {
+                                // A reload changes incarnation. Publish it even if the triggering
+                                // request is a stale command or a replay, rather than a Snapshot.
+                                if !matches!(request, WorkerRequest::Snapshot) {
+                                    match worker.ask(&WorkerRequest::Snapshot).await {
+                                        Ok(WorkerReply::Snapshot(snapshot)) => cache_snapshot(&session, snapshot),
+                                        _ => { worker.close().await; return Err(ApiError::new(503,"worker-stopped","The design worker could not recover its draft.")); }
+                                    }
+                                }
+                                *link = Some(worker); *session.permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit); break;
+                            },
                             Err(e) => { set_phase(&session,None); return Err(storage(e)); },
                         }
                     }
@@ -591,6 +602,10 @@ impl Sessions {
         while unload_oldest(&self.sessions, None, Some(now)).await {}
     }
 
+    pub(crate) fn is_stopping(&self) -> bool {
+        self.pool.stopping.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub(crate) async fn shutdown(&self) -> Result<(), ApiError> {
         self.pool
             .stopping
@@ -602,6 +617,16 @@ impl Sessions {
             .values()
             .cloned()
             .collect();
+        for session in &sessions {
+            let active = session
+                .active
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if let Some(active) = active {
+                request_cancel(session.clone(), active).await;
+            }
+        }
         for session in sessions {
             let _operation = session.operations.lock().await;
             let mut link = session.link.lock().await;
@@ -974,28 +999,30 @@ pub(crate) async fn cancel_preparation(
         .filter(|active| active.key.as_deref() == Some(key));
     let requested = match active {
         Some(active) => {
-            let requested = active.control.cancel(active.id).await;
-            if requested {
-                let session = session.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    let current = session
-                        .active
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .clone();
-                    if current.is_some_and(|current| {
-                        current.id == active.id && current.control.same(&active.control)
-                    }) {
-                        active.control.kill().await;
-                    }
-                });
-            }
-            requested
+            request_cancel(session.clone(), active).await;
+            true
         }
         None => true,
     };
     Ok(serde_json::json!({"cancel_requested":requested}))
+}
+
+async fn request_cancel(session: Arc<Session>, active: Active) {
+    let _ =
+        tokio::time::timeout(Duration::from_millis(500), active.control.cancel(active.id)).await;
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let current = session
+            .active
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if current
+            .is_some_and(|current| current.id == active.id && current.control.same(&active.control))
+        {
+            active.control.kill().await;
+        }
+    });
 }
 
 /// Spec §13: the browser and the server must speak the same protocol; another version is told
@@ -1369,22 +1396,23 @@ pub async fn live(
     // A slow page retains only the latest full snapshot, regardless of how many edits occur.
     let rest = changes.map(|text| Ok(Event::default().event("snapshot").data(text)));
     let checks =
-        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(5)))
+        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
             .map(|_| None);
     let stream = initial
         .map(Some)
         .chain(rest.map(Some).merge(checks))
         .take_while(move |_| {
-            crate::http::identify(&app, caller.key.as_deref(), caller.session.as_deref())
-                .ok()
-                .and_then(|identity| {
-                    let current = Caller {
-                        identity,
-                        ..caller.clone()
-                    };
-                    current.principal()
-                })
-                .is_some_and(|current| current.id == p.id)
+            !app.design.is_stopping()
+                && crate::http::identify(&app, caller.key.as_deref(), caller.session.as_deref())
+                    .ok()
+                    .and_then(|identity| {
+                        let current = Caller {
+                            identity,
+                            ..caller.clone()
+                        };
+                        current.principal()
+                    })
+                    .is_some_and(|current| current.id == p.id)
         })
         .filter_map(|event| event);
     Ok(Sse::new(stream)
@@ -1773,8 +1801,6 @@ mod tests {
             "least recently used session must unload"
         );
         assert_eq!(sessions.pool.slots.available_permits(), 0);
-        let recovered = snap(&sessions, &a).await;
-        assert_ne!(initial.incarnation, recovered.incarnation);
         assert!(matches!(
             sessions
                 .ask(
@@ -1787,6 +1813,20 @@ mod tests {
                 .unwrap(),
             WorkerReply::Lookup(cutcraft_web_protocol::KeyLookup::Applied { .. })
         ));
+        let advertised = session
+            .cached
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .incarnation
+            .clone();
+        assert_ne!(
+            initial.incarnation, advertised,
+            "a lookup-triggered reload must publish its new incarnation"
+        );
+        let recovered = snap(&sessions, &a).await;
+        assert_eq!(advertised, recovered.incarnation);
         sessions
             .unload_idle(Instant::now() + IDLE + Duration::from_secs(1))
             .await;

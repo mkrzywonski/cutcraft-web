@@ -427,6 +427,12 @@ await sleep(500);
 check("a confirmed Replace reports the restored library", await page(`document.getElementById("view").textContent.includes("The library is restored.")`), "missing success message");
 await page(`api = backupTest.api; prompt = backupTest.prompt; delete window.backupTest;`);
 
+// Update waiting is visible in every view, without replacing this version's assets.
+await page(`state.update = {waiting: true, ready: false}; render()`);
+check("update waiting is visible", await page(`!document.getElementById("update-status").hidden && document.getElementById("update-status").textContent.includes("Current cuts can finish")`), "missing update notice");
+await page(`state.update = null; render()`);
+check("update notice clears", await page(`document.getElementById("update-status").hidden`), "stale update notice");
+
 // --- The login screen hides the tabs -------------------------------------------------------------
 
 await page("showLogin()");

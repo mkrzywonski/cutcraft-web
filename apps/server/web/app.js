@@ -115,7 +115,7 @@ function showError(where, error) {
 
 // --- Live state (spec §9.3) ---------------------------------------------------------------------
 
-const state = { boot: null, seq: 0, cutters: [], version: "", me: null };
+const state = { boot: null, seq: 0, cutters: [], version: "", me: null, update: null };
 const jobs = new Map(); // job id -> job details, cached for names
 let source = null;
 
@@ -133,6 +133,7 @@ function applySnapshot(snapshot) {
   state.seq = snapshot.seq;
   state.cutters = snapshot.cutters;
   state.version = snapshot.version || state.version;
+  state.update = snapshot.update || null;
   render();
 }
 
@@ -216,6 +217,9 @@ window.addEventListener("blur", () => { pressing = 0; });
 /** Re-renders the current page. Live updates only redraw pages that show cutters. */
 function render(live) {
   const [page, ...rest] = route();
+  const notice = document.getElementById("update-status");
+  notice.hidden = !state.update?.waiting;
+  notice.textContent = state.update?.waiting ? "Update waiting. Current cuts can finish; new cuts will wait until the server restarts." : "";
   if (!state.me || state.me.locked || state.me.needsLogin || state.me.mustChange) return;
   if (live && !["cutters", "cutter"].includes(page)) return;
   if (live && pressing) {
@@ -548,7 +552,7 @@ function renderCutter(id, fresh) {
     );
   } else if (v.turn) {
     const turn = v.turn;
-    const ready = v.online && v.activity === "idle" && v.mat.state === "fresh" && v.mat_loaded;
+    const ready = !state.update?.waiting && v.online && v.activity === "idle" && v.mat.state === "fresh" && v.mat_loaded;
     const steps = h("ol", { class: "steps" });
     const facts = h("div");
     // Exactly the revision this turn cuts: the steps, the material and Start all name it.

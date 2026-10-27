@@ -13,7 +13,7 @@ cleanup() { [[ -n $server_pid ]] && kill "$server_pid" 2>/dev/null; wait 2>/dev/
 trap cleanup EXIT
 cargo build --locked -q -p cameo-pi
 port=18495
-target/debug/cameo-pi --practice --insecure-http --data "$work/data" --listen "127.0.0.1:$port" \
+target/debug/cutcraft-web --practice --insecure-http --data "$work/data" --listen "127.0.0.1:$port" \
   >"$work/log" 2>&1 &
 server_pid=$!
 B=http://127.0.0.1:$port
@@ -36,7 +36,7 @@ open_upload() { # ID KEY [replace]
   local s; s=$(now)
   post open "{\"design\":\"$1\",\"key\":\"$2\",\"incarnation\":\"$(field "['incarnation']" <<<"$s")\",\"revision\":$(field "['revision']" <<<"$s")${3:+,\"replace_unsaved\":true}}"
 }
-worker() { pgrep -a cameo-pi | grep "worker --area $work" | cut -d' ' -f1; }
+worker() { pgrep -af "worker --area $work" | cut -d' ' -f1; }
 
 check "another protocol version is refused first" "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]:0:8}" -H 'x-cutcraft-protocol: 99' "$B/api/v1/design/snapshot")" 409
 up=$(c -H 'content-type: application/octet-stream' --data-binary @crates/import/tests/fixtures/one-inch.svg "$B/api/v1/design/upload?name=one-inch.svg")

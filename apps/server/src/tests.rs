@@ -1070,7 +1070,13 @@ async fn cutcraft_pairs_and_works_through_the_real_protocol() {
     let config = crate::tls::server_config(&identity).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
-    tokio::spawn(crate::serve_tls(listener, router(h.app.clone()), config));
+    let (_closing, closed) = tokio::sync::watch::channel(false);
+    tokio::spawn(crate::serve_tls(
+        listener,
+        router(h.app.clone()),
+        config,
+        closed,
+    ));
     let service = h.app.service.clone();
     let fingerprint = identity.fingerprint();
     tokio::task::spawn_blocking(move || {

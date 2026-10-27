@@ -14,7 +14,7 @@ were licensed MIT OR Apache-2.0, as this repository is.
 | `docs/help/mcp.md`, `troubleshooting.md`, `design-guide.md` | CutCraft `docs/` | `5462a35` | Bundled help, included by `crates/control`. |
 | `docs/reference/cutcraft-spec.md` | CutCraft `docs/spec.md` | `5462a35` | Reference for the desktop layout (spec §9.2). Not this project's spec. |
 | `crates/cameo-pi-core` | cameo-pi `crates/core` | `d60d963` (0.23.0) | Its pin test now checks this file. |
-| `apps/server` | cameo-pi `apps/server` | `d60d963` (0.23.0) | The server, still named `cameo-pi` until milestone 3 turns it into `cutcraft-web`. |
+| `apps/server` | cameo-pi `apps/server` | `d60d963` (0.23.0) | The server package retains its imported name; milestone 3 names its executable `cutcraft-web`. |
 | `docs/reference/cameo-pi-spec.md` | cameo-pi `docs/spec.md` | `d60d963` | Reference for cutting, the library and backups. |
 
 **Full origin commits:**

@@ -20,7 +20,7 @@ cargo build --locked -q -p cameo-pi
 planner=$(cargo run --locked -q -p cameo-pi-core --features fixtures --example write_fixture -- "$work")
 
 port=18490 debug=18491
-target/debug/cameo-pi --practice --insecure-http --data "$work/data" --listen "127.0.0.1:$port" \
+target/debug/cutcraft-web --practice --insecure-http --data "$work/data" --listen "127.0.0.1:$port" \
   >"$work/server.log" 2>&1 &
 server_pid=$!
 "$chrome" --headless=new --no-sandbox --disable-gpu --remote-debugging-port=$debug \

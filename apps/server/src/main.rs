@@ -33,12 +33,12 @@ use crate::http::{App, Names};
 use crate::service::{CutterEntry, Service};
 
 const HELP: &str = "\
-cameo-pi: the network cut server for Silhouette Cameo cutters.
+cutcraft-web: the network cut server for Silhouette Cameo cutters.
 
-Usage: cameo-pi [--data DIR] [--listen ADDR] [--redirect ADDR] [--practice] [--usb] [--name HOST]...
-       sudo cameo-pi reset-admin [--data DIR] [--user NAME]
-       cameo-pi fingerprint [--data DIR]
-       cameo-pi certificate [--data DIR]
+Usage: cutcraft-web [--data DIR] [--listen ADDR] [--redirect ADDR] [--practice] [--usb] [--name HOST]...
+       sudo cutcraft-web reset-admin [--data DIR] [--user NAME]
+       cutcraft-web fingerprint [--data DIR]
+       cutcraft-web certificate [--data DIR]
 
   --data DIR      Where the library and cameo-pi's own state live (default /var/lib/cameo-pi
                   where the service is installed, otherwise ./cameo-pi-data).
@@ -63,7 +63,7 @@ printed here, to change at the next login. It ends that admin's sessions. It als
 account files. It's the only way to recover a forgotten admin password (spec §14.1). Files it
 writes keep the data folder's owner, so the service can still read them.";
 
-/// The service's data folder (packaging/cameo-pi.service).
+/// The service's data folder (ops/cutcraft-web.service).
 const SERVICE_DATA: &str = "/var/lib/cameo-pi";
 
 /// `--data`'s default: the service's folder where it's installed, else one in the current folder.
@@ -75,7 +75,7 @@ fn default_data() -> PathBuf {
     }
 }
 
-/// Gives everything under `private` the data folder's owner. `sudo cameo-pi reset-admin` writes
+/// Gives everything under `private` the data folder's owner. `sudo cutcraft-web reset-admin` writes
 /// as root; without this, the service's own user could no longer read its accounts.
 fn keep_owner(data: &std::path::Path, private: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -152,7 +152,7 @@ fn options(args: &[String]) -> Result<Option<Options>, String> {
                 return Ok(None);
             }
             "--version" => {
-                println!("cameo-pi {}", env!("CARGO_PKG_VERSION"));
+                println!("cutcraft-web {}", env!("CARGO_PKG_VERSION"));
                 return Ok(None);
             }
             "--data" => o.data = PathBuf::from(value("--data")?),
@@ -186,25 +186,26 @@ fn launch<L: Link + Send + 'static>(
     link: L,
     journal: Arc<Journal>,
     shutdown: Arc<AtomicBool>,
-) where
+) -> (std::thread::JoinHandle<()>, std::thread::JoinHandle<()>)
+where
     L::Transport: Send,
 {
     let (tx, rx) = mpsc::channel::<Finished>();
-    Worker::new(shared.clone(), link, journal, Some(tx)).spawn(shutdown);
+    let device = Worker::new(shared.clone(), link, journal, Some(tx)).spawn(shutdown);
     let service = service.clone();
-    std::thread::spawn(move || {
+    let history = std::thread::spawn(move || {
         for finished in rx {
             let (id, name) = {
                 let state = lock(&shared);
                 (state.id().to_owned(), state.name().to_owned())
             };
-            service.record_finished(&id, &name, &finished, "cameo-pi");
+            service.record_finished(&id, &name, &finished, "cutcraft-web");
         }
     });
+    (device, history)
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // A preparation worker for one person's design session, started by the server (spec §5).
     if args.first().map(String::as_str) == Some("worker") {
@@ -215,7 +216,7 @@ async fn main() -> ExitCode {
         {
             Some(area) => std::path::PathBuf::from(area),
             None => {
-                eprintln!("cameo-pi worker: --area DIR is needed");
+                eprintln!("cutcraft-web worker: --area DIR is needed");
                 return ExitCode::FAILURE;
             }
         };
@@ -225,17 +226,32 @@ async fn main() -> ExitCode {
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from)
         else {
-            eprintln!("cameo-pi worker: --lists DIR is needed");
+            eprintln!("cutcraft-web worker: --lists DIR is needed");
             return ExitCode::FAILURE;
         };
         return match design::worker::run_process(&area, &lists) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("cameo-pi worker: {e}");
+                eprintln!("cutcraft-web worker: {e}");
                 ExitCode::FAILURE
             }
         };
     }
+    // Preparation workers are synchronous. Do not reserve an entire server runtime's
+    // thread stacks inside their address-space budget (especially on many-core hosts).
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(server_main(args)),
+        Err(error) => {
+            eprintln!("cutcraft-web: starting runtime: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn server_main(args: Vec<String>) -> ExitCode {
     if args.first().map(String::as_str) == Some("certificate") {
         let data = match args.get(1).map(String::as_str) {
             Some("--data") => args.get(2).map(PathBuf::from),
@@ -254,7 +270,9 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(_) => {
-                eprintln!("cameo-pi certificate: no certificate yet; start cameo-pi once first");
+                eprintln!(
+                    "cutcraft-web certificate: no certificate yet; start cutcraft-web once first"
+                );
                 ExitCode::FAILURE
             }
         };
@@ -275,7 +293,9 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(_) => {
-                eprintln!("cameo-pi fingerprint: no certificate yet; start cameo-pi once first");
+                eprintln!(
+                    "cameo-pi fingerprint: no certificate yet; start cutcraft-web once first"
+                );
                 ExitCode::FAILURE
             }
         };
@@ -293,14 +313,14 @@ async fn main() -> ExitCode {
         Ok(Some(o)) => o,
         Ok(None) => return ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("cameo-pi: {message}");
+            eprintln!("cutcraft-web: {message}");
             return ExitCode::FAILURE;
         }
     };
     match run(options).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("cameo-pi: {message}");
+            eprintln!("cutcraft-web: {message}");
             ExitCode::FAILURE
         }
     }
@@ -339,8 +359,9 @@ async fn run(options: Options) -> Result<(), String> {
         Arc::new(Service::new(boot.clone(), &options.data, cutters).map_err(|e| e.message)?);
     let journal = service.journal.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
+    let mut device_threads = Vec::new();
     for (shared, sim) in links {
-        match sim {
+        let threads = match sim {
             Some(sim) => launch(
                 &service,
                 shared,
@@ -358,10 +379,16 @@ async fn run(options: Options) -> Result<(), String> {
                 journal.clone(),
                 shutdown.clone(),
             ),
-        }
+        };
+        device_threads.push(threads);
     }
 
     let (events, _) = tokio::sync::broadcast::channel(256);
+    // The installed path may be atomically replaced during an update. Workers must keep
+    // speaking the running server's protocol until that server has drained and exited.
+    #[cfg(target_os = "linux")]
+    let program = PathBuf::from("/proc/self/exe");
+    #[cfg(not(target_os = "linux"))]
     let program = std::env::current_exe()
         .map_err(|e| format!("can't find this program to start design workers: {e}"))?;
     let design = Arc::new(design::Sessions::new(
@@ -418,20 +445,23 @@ async fn run(options: Options) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(&options.listen)
         .await
         .map_err(|e| format!("can't listen on {}: {e}", options.listen))?;
-    let router = http::router(app);
-    if options.insecure_http {
+    let router = http::router(app.clone());
+    let (closing, closed) = tokio::sync::watch::channel(false);
+    let serving = if options.insecure_http {
         eprintln!(
-            "cameo-pi {} listening on http://{} (boot {boot}; plain HTTP: development only)",
+            "cutcraft-web {} listening on http://{} (boot {boot}; plain HTTP: development only)",
             env!("CARGO_PKG_VERSION"),
             options.listen
         );
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(stopped())
-        .await
-        .map_err(|e| e.to_string())?;
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(wait_closed(closed))
+            .await
+            .map_err(|e| e.to_string())
+        })
     } else {
         let mut cert_names = names;
         if let Ok(address) = options.listen.parse::<std::net::SocketAddr>()
@@ -455,17 +485,70 @@ async fn run(options: Options) -> Result<(), String> {
             });
         }
         eprintln!(
-            "cameo-pi {} listening on https://{} (boot {boot}; certificate {})",
+            "cutcraft-web {} listening on https://{} (boot {boot}; certificate {})",
             env!("CARGO_PKG_VERSION"),
             options.listen,
             identity.fingerprint()
         );
-        serve_tls(listener, router, config).await;
+        tokio::spawn(async move {
+            serve_tls(listener, router, config, closed).await;
+            Ok(())
+        })
+    };
+    // Keep listening, serving this version's assets and accepting Stop until every cutter
+    // has settled. SIGTERM is a drain request, never an abort or a resumed execution.
+    tokio::select! {
+        _ = stopped() => {},
+        _ = async { while !serving.is_finished() { tokio::time::sleep(std::time::Duration::from_millis(50)).await; } } => {
+            return serving.await.map_err(|e| e.to_string())?;
+        }
     }
-    queue_checkpoint.persist_queues().map_err(|e| e.message)?;
+    app.service.updates.begin();
+    eprintln!("cutcraft-web: update waiting; waiting for every cutter to become idle");
+    wait_idle(&app.service).await;
     design.shutdown().await.map_err(|e| e.message)?;
+    // Recheck immediately before closing listeners, even if draft checkpointing took time.
+    wait_idle(&app.service).await;
+    closing.send_replace(true);
+    // SSE ends on the stopping flag. An abandoned client cannot hold a drained process alive.
+    if tokio::time::timeout(std::time::Duration::from_secs(6), async {
+        while !serving.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .is_err()
+    {
+        serving.abort();
+    }
+    if !serving.is_finished() {
+        serving.abort();
+    }
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::task::spawn_blocking(move || {
+        for (device, history) in device_threads {
+            device.join().map_err(|_| "device thread panicked")?;
+            history.join().map_err(|_| "history thread panicked")?;
+        }
+        queue_checkpoint.persist_queues().map_err(|e| e.message)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    eprintln!("cutcraft-web: idle, checkpointed; ready for restart");
     Ok(())
+}
+
+async fn wait_idle(service: &Service) {
+    while !service.update_ready() {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+async fn wait_closed(mut closed: tokio::sync::watch::Receiver<bool>) {
+    while !*closed.borrow_and_update() {
+        if closed.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Resolves on Ctrl-C or SIGTERM (what `systemctl stop` sends).
@@ -488,23 +571,26 @@ async fn serve_tls(
     listener: tokio::net::TcpListener,
     router: axum::Router,
     config: Arc<rustls::ServerConfig>,
+    closed: tokio::sync::watch::Receiver<bool>,
 ) {
     let acceptor = tokio_rustls::TlsAcceptor::from(config);
-    let stop = stopped();
+    let stop = wait_closed(closed);
     tokio::pin!(stop);
+    let mut connections = tokio::task::JoinSet::new();
     loop {
         let (stream, address) = tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok(accepted) => accepted,
                 Err(_) => continue,
             },
-            _ = &mut stop => return,
+            _ = &mut stop => break,
+            Some(_) = connections.join_next(), if !connections.is_empty() => continue,
         };
         let acceptor = acceptor.clone();
         let service = router
             .clone()
             .layer(axum::Extension(axum::extract::ConnectInfo(address)));
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let handshake =
                 tokio::time::timeout(std::time::Duration::from_secs(10), acceptor.accept(stream));
             let Ok(Ok(tls)) = handshake.await else {
@@ -518,4 +604,11 @@ async fn serve_tls(
                 .await;
         });
     }
+    // Existing TLS responses may still be sending. Bound abandoned keep-alive/SSE
+    // connections only after all cutters are idle and preparation is checkpointed.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await;
+    connections.abort_all();
 }

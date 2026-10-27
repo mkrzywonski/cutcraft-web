@@ -1,12 +1,16 @@
 [package]
 name = "cameo-pi"
-description = "The cameo-pi server: cutters, the job library, the web interface and the protocol"
+description = "The CutCraft-Web server: cutters, design sessions, the library and the protocol"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[[bin]]
+name = "cutcraft-web"
+path = "src/main.rs"
 
 [dependencies]
 argon2 = { workspace = true }

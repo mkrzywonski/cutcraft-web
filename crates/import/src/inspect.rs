@@ -207,6 +207,14 @@ pub(crate) fn import_route(
     {
         return Err("This content is not a supported vector source. For AI, save with PDF compatibility enabled.".into());
     }
+    // Bound PDF page work before the engine constructs every page's geometry. AI files
+    // with a PDF representation use the same limit. This parser runs inside the worker.
+    if matches!(format.id, "pdf" | "ai")
+        && let Ok(pdf) = hayro_syntax::Pdf::new(bytes.to_vec())
+        && pdf.pages().len() > 100
+    {
+        return Err("This PDF has more than 100 pages. Export only the pages you need.".into());
+    }
     let mut diagnostics = Vec::new();
     let (declared_size, normalized_svg) = if matches!(format.id, "svg" | "svgz") {
         svg_preflight(bytes, &mut diagnostics)?
@@ -1298,6 +1306,24 @@ pub(crate) mod tests {
             objects.len() + 1
         ));
         out.into_bytes()
+    }
+
+    #[test]
+    fn pdf_page_budget_is_checked_before_importing_geometry() {
+        for name in ["pages.pdf", "pages.ai"] {
+            assert!(
+                inspect_bytes(Path::new(name), &pdf(101))
+                    .unwrap_err()
+                    .contains("100 pages")
+            );
+        }
+        assert_eq!(
+            inspect_bytes(Path::new("pages.pdf"), &pdf(100))
+                .unwrap()
+                .pages
+                .len(),
+            100
+        );
     }
 
     #[test]

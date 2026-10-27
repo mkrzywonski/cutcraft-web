@@ -1,0 +1,28 @@
+# Reference service policy. Packaging/installers are milestone 8.
+[Unit]
+Description=CutCraft-Web
+After=network.target
+
+[Service]
+Type=simple
+User=cutcraft
+Group=cutcraft
+StateDirectory=cutcraft-web
+ExecStart=/usr/bin/cutcraft-web --data /var/lib/cutcraft-web --listen 0.0.0.0:8443 --usb
+Restart=on-failure
+# TERM goes only to the authority. It serves Stop while draining existing cuts,
+# checkpoints its workers, then joins the device/history threads before exiting.
+KillMode=mixed
+TimeoutStopSec=infinity
+OOMPolicy=continue
+OOMScoreAdjust=-500
+MemoryAccounting=yes
+MemoryLow=512M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

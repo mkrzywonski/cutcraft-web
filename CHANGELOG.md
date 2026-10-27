@@ -4,6 +4,13 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.13.0 — 2026-10-27
+
+- Drain active cuts on SIGTERM/Ctrl-C, continue serving Stop and this version’s assets, then checkpoint workers/queues and join device/history threads before restart.
+- Show update waiting, disable new Cut actions, pin Linux worker launches to the running executable, and provide a protected reference systemd unit.
+- Name the server executable `cutcraft-web`; keep the imported package name and existing data paths compatible. Synchronous workers no longer allocate the server runtime’s thread stacks.
+- Enforce the 100-page PDF/AI import budget before building page geometry.
+
 ## 0.12.0 — 2026-10-27
 
 - Limit preparation to two resident workers, checkpoint and unload idle/LRU sessions, bound queued requests and upload bodies, and discard superseded previews.

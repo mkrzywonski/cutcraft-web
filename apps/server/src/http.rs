@@ -189,6 +189,19 @@ async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Resp
         return ApiError::new(421, "wrong-host", "This isn't one of cameo-pi's addresses.")
             .into_response();
     }
+    if app.design.is_stopping()
+        && !matches!(
+            *request.method(),
+            Method::GET | Method::HEAD | Method::OPTIONS
+        )
+    {
+        return ApiError::new(
+            503,
+            "server-stopping",
+            "The server is restarting. Reconnect shortly.",
+        )
+        .into_response();
+    }
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let changes = !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS);
@@ -451,7 +464,13 @@ async fn events(
     let for_changes = app.clone();
     let changes = BroadcastStream::new(receiver).map(move |item| {
         Some(match item {
-            Ok(value) => Event::default().event("change").data(value.to_string()),
+            Ok(value) => Event::default()
+                .event(if value.get("cutters").is_some() {
+                    "snapshot"
+                } else {
+                    "change"
+                })
+                .data(value.to_string()),
             Err(_) => Event::default()
                 .event("snapshot")
                 .data(snapshot(&for_changes).to_string()),
@@ -460,17 +479,18 @@ async fn events(
     // Every few seconds the caller is checked again: a removed user, a changed password or a
     // removed key ends the stream (spec §14.1).
     let checks =
-        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(5)))
+        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
             .map(|_| None);
     let still_allowed = move || {
-        matches!(
-            identify(&app, caller.key.as_deref(), caller.session.as_deref()),
-            Ok(Identity::Open
-                | Identity::User {
-                    must_change: false,
-                    ..
-                })
-        )
+        !app.design.is_stopping()
+            && matches!(
+                identify(&app, caller.key.as_deref(), caller.session.as_deref()),
+                Ok(Identity::Open
+                    | Identity::User {
+                        must_change: false,
+                        ..
+                    })
+            )
     };
     let stream = initial
         .chain(changes.merge(checks))
@@ -482,6 +502,7 @@ async fn events(
 /// Watches every cutter and publishes a change event when its view changes (every 250 ms).
 pub async fn watch(app: App) {
     let mut last: Vec<String> = Vec::new();
+    let mut last_update = String::new();
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tick.tick().await;
@@ -501,6 +522,16 @@ pub async fn watch(app: App) {
             }
         }
         last = views.iter().map(Value::to_string).collect();
+        let update = format!(
+            "{}:{}",
+            app.service.updates.waiting(),
+            app.service.update_ready()
+        );
+        if update != last_update {
+            app.seq.fetch_add(1, Ordering::SeqCst);
+            let _ = app.events.send(snapshot(&app));
+            last_update = update;
+        }
     }
 }
 

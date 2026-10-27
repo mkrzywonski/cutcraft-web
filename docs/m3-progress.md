@@ -1,5 +1,9 @@
 # M3 implementation status
 
+Implementation and simulator acceptance are complete through 0.13.0. Independent
+review is pending; integration to main waits for two non-author approvals.
+See `docs/reviews/m3-author-evidence.md` for the test matrix and target-Pi results.
+
 ## First slice: update drain (0.7.0)
 
 The cutter service owns a shared `UpdateGate`. An updater calls `begin()` before
@@ -140,13 +144,40 @@ held until consumption or disconnection. SSE coalesces snapshots. These limits d
 not gate cutter controls. Regressions cover LRU/idle recovery, request pressure,
 call-fenced cancellation and slow preview bodies while the Stop route responds.
 
-## Next slices required by the spec
+## Seventh slice: deployment drain and acceptance (0.13.0)
 
-- Independent review of the complete cutter-authority fault matrix.
-- Target-Pi simulator measurements under heavy and malformed imports, memory
-  failure and slow readers.
-- Connect deployment shutdown to drain and verify the final all-cutter idle check.
-  Keep the running executable's own assets and worker protocol until restart.
+SIGTERM/Ctrl-C now drives the update gate. The server keeps serving its own assets
+and accepting Stop until all cutters are idle, cancels and checkpoints preparation,
+rechecks idle, closes listeners and joins device/history threads before the final
+queue checkpoint. Abandoned readers cannot keep an already drained server alive.
+The page displays update waiting and disables new Cut/Test cut actions. On Linux,
+worker launches use the running inode, even after atomic binary replacement.
 
-Independent review is required before integrating these safety-related changes.
-The M2 carryovers in `docs/reviews/m2-codex.md` remain explicitly separate scope.
+The server executable is `cutcraft-web`; its imported Cargo package and existing
+data defaults remain compatible. Synchronous workers no longer allocate the server
+runtime's thread stacks. The reference service policy and deployment contract are
+in `ops/cutcraft-web.service` and `ops/updates.md`. Packaging remains milestone 8.
+PDF/PDF-compatible AI imports now refuse more than 100 pages before building page
+geometry (100 accepted, 101 refused tests). The inherited picture decoder's
+40-megapixel guard is stricter than the provisional 100-megapixel upper budget.
+
+`scripts/m3-check.py` is the reproducible real-process acceptance harness. It uses
+only authored geometry and the Simulated Cameo, isolated temporary storage and a
+loopback listener. Two sessions open large designs while a cut starts/stops. Other
+phases exercise cancellation, malformed input, unread SSE and geometry responses,
+an unfinished upload, a worker over a deliberately lowered memory cap and recovery,
+and SIGTERM during an execution. A new Start is refused while draining; Stop still
+works. An incompatible replacement of the harness's executable path proves that
+the old server still creates matching workers.
+
+Final Pi 5 acceptance passed over HTTP and HTTPS with two concurrent 2,000-shape
+imports. HTTPS Stop round trips were 3.092–4.137 ms (target ≤200 ms); peak authority
+plus worker RSS was 173.70 MiB (target <4 GiB). At most two workers were resident.
+Cancellation, worker memory failure/recovery, slow readers/senders and update drain
+all passed. The full matrix and limits are in `docs/reviews/m3-author-evidence.md`.
+No real cutter was opened or moved.
+
+The implementation is ready for independent review. **Do not merge until two
+non-author reviews have closed the safety/persistence changes.** M4/M5 layouts,
+M6 full MCP parity, M7 migration/backups and M8 packaging remain their own milestones;
+the earlier M2 carryovers are not claimed complete here.

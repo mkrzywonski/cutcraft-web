@@ -41,7 +41,7 @@ touch "$work/authorized_keys"
 start_sshd
 
 port=18552
-target/debug/cameo-pi --practice --data "$work/data" --listen "127.0.0.1:$port" >"$work/server.log" 2>&1 &
+target/debug/cutcraft-web --practice --data "$work/data" --listen "127.0.0.1:$port" >"$work/server.log" 2>&1 &
 server_pid=$!
 sleep 2
 
@@ -322,7 +322,7 @@ ok("an encrypted legacy backup migrates after password checking, without replaci
 # A replacement Pi discovers encryption from the backup, preserves its key on Replace,
 # and continues encrypted scheduled/manual backups without silently switching to plaintext.
 original = base, op, jar
-replacement = subprocess.Popen(["target/debug/cameo-pi", "--practice", "--data", f"{work}/replacement", "--listen", "127.0.0.1:18553"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+replacement = subprocess.Popen(["target/debug/cutcraft-web", "--practice", "--data", f"{work}/replacement", "--listen", "127.0.0.1:18553"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     time.sleep(2)
     base = "https://localhost:18553"

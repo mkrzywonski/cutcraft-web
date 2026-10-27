@@ -12,9 +12,15 @@ It replaces two earlier projects by the same developer, and brings their code in
 On a computer it looks and works like CutCraft. A phone gets its own thumb-friendly pages, with the
 same capabilities.
 
-**Status:** the [specification](docs/spec.md) is final (version 1). Milestone 0's working slice is
+**Status:** the [specification](docs/spec.md) is final (version 1.1). Milestone 0's working slice is
 built ([report](docs/m0-report.md)), and milestone 1 brought the earlier projects' code in
-([provenance](docs/provenance.md)).
+([provenance](docs/provenance.md)). Authority/session fixes and the M3 cut-handoff and
+isolation implementation are on the review branch; see [M3 evidence](docs/m3-progress.md).
+
+For development, build with `nix-shell --run 'cargo build --workspace --locked'`.
+The server executable is `target/debug/cutcraft-web`. Use `--practice` for simulator
+work, an isolated `--data` directory, and `--insecure-http` only for local checks.
+[Update draining and simulator checks](ops/updates.md) describe the M3 operational contract.
 
 ## License
 
