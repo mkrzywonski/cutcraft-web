@@ -174,6 +174,11 @@ fn schema<T: JsonSchema>() -> Value {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct NoParams {}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CancelParams {
+    key: Option<String>,
+}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -667,6 +672,16 @@ fn registry() -> Vec<Spec> {
             Nothing,
             OpenParams,
             "Import a design and run Make cut-ready. Returns the import report."
+        ),
+        spec!(
+            "design.cancel",
+            "Cancel preparation",
+            None,
+            None,
+            Read,
+            Nothing,
+            CancelParams,
+            "Cancel an in-flight import or preparation; its late result is not applied."
         ),
         spec!(
             "design.close",
@@ -2607,6 +2622,12 @@ impl Controller {
             "device.load" => {
                 let p: LoadParams = decode(params)?;
                 self.sim_load(p.media)
+            }
+            "design.cancel" => {
+                let p: CancelParams = decode(params)?;
+                let _ = p.key;
+                self.cancel_pending().map_err(CommandError::failed)?;
+                value(json!({"cancel_requested":true}))
             }
             "cut.copy" => {
                 decode::<NoParams>(params)?;

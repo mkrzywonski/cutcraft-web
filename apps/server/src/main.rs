@@ -370,13 +370,20 @@ async fn run(options: Options) -> Result<(), String> {
         service.lists.clone(),
     ));
     let app = App {
-        design,
+        design: design.clone(),
         service,
         names: Names(options.names),
         events,
         seq: Arc::new(AtomicU64::new(0)),
         secure: !options.insecure_http,
     };
+    let housekeeping = design.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            housekeeping.unload_idle(std::time::Instant::now()).await;
+        }
+    });
     tokio::spawn(http::watch(app.clone()));
     // The backup (spec §15): on every change, daily or weekly, with retries; looked at often.
     let scheduled = app.service.clone();
@@ -456,6 +463,7 @@ async fn run(options: Options) -> Result<(), String> {
         serve_tls(listener, router, config).await;
     }
     queue_checkpoint.persist_queues().map_err(|e| e.message)?;
+    design.shutdown().await.map_err(|e| e.message)?;
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }

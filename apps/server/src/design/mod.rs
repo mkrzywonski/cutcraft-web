@@ -2,13 +2,14 @@
 //! CutCraft's controller, behind the server's guard (login, CSRF, Host). The browser speaks
 //! `cutcraft-web-protocol` here; every request is checked for the protocol version first.
 
+mod ipc;
 pub mod worker;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::body::Bytes;
@@ -21,7 +22,6 @@ use cutcraft_web_protocol::{
     CommandReply, CommandRequest, PROTOCOL_VERSION, PictureRequest, SavedRef, codes,
 };
 use futures_util::Stream;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::WatchStream;
@@ -92,18 +92,77 @@ pub enum Mode {
     Thread,
 }
 
-type Ask = (WorkerRequest, tokio::sync::oneshot::Sender<WorkerReply>);
+type Ask = (
+    u64,
+    WorkerRequest,
+    tokio::sync::oneshot::Sender<WorkerReply>,
+);
 
 /// The connection to one session's worker. Requests go one at a time.
 enum Link {
     Process(Box<ProcessLink>),
-    Thread(std::sync::mpsc::Sender<Ask>),
+    Thread(ThreadLink),
 }
 
 struct ProcessLink {
-    _child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    _child: Arc<tokio::sync::Mutex<tokio::process::Child>>,
+    pipe: ipc::Pipe,
+}
+struct ThreadLink {
+    send: std::sync::mpsc::Sender<Ask>,
+    control: Option<worker::Control>,
+    next: u64,
+}
+#[derive(Clone)]
+enum Control {
+    Process {
+        pipe: ipc::Pipe,
+        child: Arc<tokio::sync::Mutex<tokio::process::Child>>,
+    },
+    Thread(worker::Control),
+}
+impl Control {
+    async fn cancel(&self, id: u64) -> bool {
+        match self {
+            Self::Process { pipe, .. } => matches!(
+                pipe.ask(WorkerRequest::Cancel { target: id }).await,
+                Ok(WorkerReply::Cancel { requested: true })
+            ),
+            Self::Thread(control) => control.cancel(id),
+        }
+    }
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Process { child: a, .. }, Self::Process { child: b, .. }) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+    async fn kill(&self) {
+        if let Self::Process { child, .. } = self {
+            let _ = child.lock().await.start_kill();
+        }
+    }
+}
+#[derive(Clone)]
+struct Active {
+    id: u64,
+    key: Option<String>,
+    picture: bool,
+    control: Control,
+}
+fn request_key(request: &WorkerRequest) -> Option<String> {
+    match request {
+        WorkerRequest::Open(open) => Some(open.key.clone()),
+        WorkerRequest::Command(command)
+            if matches!(command.id.as_str(), "prepare.decide" | "prepare.reset") =>
+        {
+            Some(command.key.clone())
+        }
+        _ => None,
+    }
+}
+fn cancellable(request: &WorkerRequest) -> bool {
+    request_key(request).is_some() || matches!(request, WorkerRequest::Picture(_))
 }
 
 impl Link {
@@ -123,71 +182,152 @@ impl Link {
                     .spawn()
                     .map_err(|e| format!("starting a worker: {e}"))?;
                 let stdin = child.stdin.take().ok_or("no worker stdin")?;
-                let stdout = BufReader::new(child.stdout.take().ok_or("no worker stdout")?).lines();
+                let stdout = child.stdout.take().ok_or("no worker stdout")?;
                 Ok(Self::Process(Box::new(ProcessLink {
-                    _child: child,
-                    stdin,
-                    stdout,
+                    _child: Arc::new(tokio::sync::Mutex::new(child)),
+                    pipe: ipc::Pipe::new(stdin, stdout),
                 })))
             }
             Mode::Thread => {
                 let (send, receive) = std::sync::mpsc::channel::<Ask>();
-                let (area, lists) = (area.to_path_buf(), lists.to_path_buf());
+                let mut worker = worker::Worker::new(area, lists)?;
+                let control = worker.control();
+                let calls = control.clone();
                 std::thread::spawn(move || {
-                    let mut worker = worker::Worker::new(&area, &lists);
                     loop {
-                        match receive.recv_timeout(std::time::Duration::from_millis(500)) {
-                            Ok((request, reply)) => {
-                                let answer = match worker.as_mut() {
-                                    Ok(w) => w.answer(request),
-                                    Err(e) => WorkerReply::Failed { message: e.clone() },
+                        match receive.recv_timeout(Duration::from_millis(500)) {
+                            Ok((id, request, reply)) => {
+                                let mut answer = if calls.begin(id) {
+                                    worker.answer(request)
+                                } else {
+                                    WorkerReply::Failed {
+                                        message: "Preparation was cancelled.".into(),
+                                    }
                                 };
+                                calls.finish(id, &mut answer);
                                 let _ = reply.send(answer);
                             }
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                                if let Ok(w) = worker.as_mut() {
-                                    let _ = w.checkpoint();
-                                }
+                                let _ = worker.checkpoint();
                                 return;
                             }
                         }
-                        if let Ok(w) = worker.as_mut() {
-                            w.tick(std::time::Instant::now());
-                        }
+                        worker.tick(Instant::now());
                     }
                 });
-                Ok(Self::Thread(send))
+                Ok(Self::Thread(ThreadLink {
+                    send,
+                    control: Some(control),
+                    next: 1,
+                }))
             }
         }
     }
 
-    async fn ask(&mut self, request: &WorkerRequest) -> Result<WorkerReply, String> {
-        match self {
-            Self::Process(p) => {
-                let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
-                line.push('\n');
-                p.stdin
-                    .write_all(line.as_bytes())
-                    .await
-                    .map_err(|e| e.to_string())?;
-                match p.stdout.next_line().await.map_err(|e| e.to_string())? {
-                    Some(reply) => serde_json::from_str(&reply).map_err(|e| e.to_string()),
-                    None => Err("the worker stopped".into()),
-                }
-            }
-            Self::Thread(send) => {
-                let (reply, answer) = tokio::sync::oneshot::channel();
-                send.send((request.clone(), reply))
-                    .map_err(|_| "the worker stopped".to_string())?;
-                answer.await.map_err(|_| "the worker stopped".to_string())
+    async fn close(self) {
+        if let Self::Process(p) = self {
+            let ProcessLink { mut _child, pipe } = *p;
+            let _ = tokio::time::timeout(Duration::from_secs(1), pipe.close()).await;
+            drop(pipe);
+            let mut _child = _child.lock().await;
+            if tokio::time::timeout(Duration::from_secs(3), _child.wait())
+                .await
+                .is_err()
+            {
+                let _ = _child.kill().await;
             }
         }
     }
+    async fn ask(&mut self, request: &WorkerRequest) -> Result<WorkerReply, String> {
+        self.ask_inner(request, None).await
+    }
+    async fn ask_inner(
+        &mut self,
+        request: &WorkerRequest,
+        session: Option<&Session>,
+    ) -> Result<WorkerReply, String> {
+        let (id, answer, control) = match self {
+            Self::Process(p) => {
+                let (id, answer) = p.pipe.begin(request.clone()).await?;
+                (
+                    id,
+                    answer,
+                    Some(Control::Process {
+                        pipe: p.pipe.clone(),
+                        child: p._child.clone(),
+                    }),
+                )
+            }
+            Self::Thread(thread) => {
+                let id = thread.next;
+                thread.next += 1;
+                if let Some(control) = &thread.control {
+                    control.queued(id, request);
+                }
+                let (send, answer) = tokio::sync::oneshot::channel();
+                thread
+                    .send
+                    .send((id, request.clone(), send))
+                    .map_err(|_| "the worker stopped".to_owned())?;
+                (id, answer, thread.control.clone().map(Control::Thread))
+            }
+        };
+        if let (Some(session), Some(control)) = (session, control) {
+            *session.active.lock().unwrap_or_else(|p| p.into_inner()) = Some(Active {
+                id,
+                key: request_key(request),
+                picture: matches!(request, WorkerRequest::Picture(_)),
+                control: control.clone(),
+            });
+            let cancelled = request_key(request).is_some_and(|key| {
+                session
+                    .cancelled
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .contains(&key)
+            });
+            if cancelled {
+                control.cancel(id).await;
+            }
+        }
+        let reply = answer.await.map_err(|_| "the worker stopped".to_owned());
+        if let Some(session) = session {
+            session
+                .active
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take();
+        }
+        reply
+    }
+}
+
+const MAX_WORKERS: usize = 2;
+const MAX_PENDING: usize = 32;
+const IDLE: Duration = Duration::from_secs(60 * 60);
+
+struct Pool {
+    slots: Arc<tokio::sync::Semaphore>,
+    requests: Arc<tokio::sync::Semaphore>,
+    uploads: Arc<tokio::sync::Semaphore>,
+    responses: Arc<tokio::sync::Semaphore>,
+    loading: tokio::sync::Mutex<()>,
+    stopping: std::sync::atomic::AtomicBool,
 }
 
 struct Session {
     area: PathBuf,
+    active: Mutex<Option<Active>>,
+    known: Mutex<std::collections::HashSet<String>>,
+    cancelled: Mutex<std::collections::HashSet<String>>,
+    current_key: Mutex<Option<String>>,
+    pictures: std::sync::atomic::AtomicU64,
+    initializing: std::sync::atomic::AtomicBool,
+    last_used: Mutex<Instant>,
+    cached: Mutex<Option<cutcraft_web_protocol::SessionSnapshot>>,
+    phase: Mutex<Option<String>>,
+    permit: Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     /// Held while the upload index is read and rewritten.
     index: Mutex<()>,
     operations: tokio::sync::Mutex<()>,
@@ -197,13 +337,46 @@ struct Session {
     live: watch::Sender<String>,
 }
 
+struct Activity {
+    session: Arc<Session>,
+    key: Option<String>,
+}
+impl Drop for Activity {
+    fn drop(&mut self) {
+        self.session
+            .current_key
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(key) = &self.key {
+            self.session
+                .known
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(key);
+            self.session
+                .cancelled
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(key);
+        }
+        *self
+            .session
+            .last_used
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Instant::now();
+        set_phase(&self.session, None);
+    }
+}
+
 /// Every principal's design session.
 pub struct Sessions {
     mode: Mode,
     people: PathBuf,
     /// The household's material and mat lists (spec §8).
     lists: PathBuf,
-    sessions: Mutex<HashMap<String, Arc<Session>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
+    pool: Arc<Pool>,
 }
 
 fn storage(e: impl std::fmt::Display) -> ApiError {
@@ -216,21 +389,47 @@ impl Sessions {
             mode,
             people,
             lists,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            pool: Arc::new(Pool {
+                slots: Arc::new(tokio::sync::Semaphore::new(MAX_WORKERS)),
+                requests: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING)),
+                uploads: Arc::new(tokio::sync::Semaphore::new(2)),
+                responses: Arc::new(tokio::sync::Semaphore::new(4)),
+                loading: tokio::sync::Mutex::new(()),
+                stopping: std::sync::atomic::AtomicBool::new(false),
+            }),
         }
     }
 
     fn session(&self, principal: &Principal) -> Result<Arc<Session>, ApiError> {
+        if self.pool.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(ApiError::new(
+                503,
+                "server-stopping",
+                "The server is restarting. Reconnect shortly.",
+            ));
+        }
         let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(s) = sessions.get(&principal.id) {
             if s.retired.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(ApiError::new(401, "login", "Log in first."));
             }
+            *s.last_used.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
             return Ok(s.clone());
         }
         let area = people::area(&self.people, principal).map_err(storage)?;
         let session = Arc::new(Session {
             area,
+            active: Mutex::new(None),
+            known: Mutex::new(std::collections::HashSet::new()),
+            cancelled: Mutex::new(std::collections::HashSet::new()),
+            current_key: Mutex::new(None),
+            pictures: std::sync::atomic::AtomicU64::new(0),
+            initializing: std::sync::atomic::AtomicBool::new(false),
+            last_used: Mutex::new(Instant::now()),
+            cached: Mutex::new(None),
+            phase: Mutex::new(None),
+            permit: Mutex::new(None),
             index: Mutex::new(()),
             operations: tokio::sync::Mutex::new(()),
             retired: std::sync::atomic::AtomicBool::new(false),
@@ -251,27 +450,93 @@ impl Sessions {
         let session = self.session(principal)?;
         let mode = self.mode.clone();
         let lists = self.lists.clone();
+        let pool = self.pool.clone();
+        let sessions = self.sessions.clone();
+        let capacity = pool.requests.clone().try_acquire_owned().map_err(|_| {
+            ApiError::new(
+                503,
+                "preparation-busy",
+                "Preparation is busy. Wait for the current requests, then retry.",
+            )
+        })?;
+        let key = request_key(&request);
+        if let Some(key) = &key {
+            session
+                .known
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(key.clone());
+        }
+        let picture = if matches!(request, WorkerRequest::Picture(_)) {
+            let generation = session
+                .pictures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            let old = session
+                .active
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+                .filter(|active| active.picture);
+            if let Some(old) = old {
+                old.control.cancel(old.id).await;
+            }
+            Some(generation)
+        } else {
+            None
+        };
         // A disconnected HTTP client must not leave an unread worker reply in the pipe.
         tokio::spawn(async move {
+            let _capacity = capacity;
             let mut link = session.link.lock().await;
+            let _activity=Activity { session:session.clone(), key:key.clone() };
+            *session.current_key.lock().unwrap_or_else(|p|p.into_inner())=key.clone();
             if session.retired.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(ApiError::new(401, "login", "Log in first."));
             }
             if link.is_none() {
-                *link = Some(Link::start(&mode, &session.area, &lists).map_err(storage)?);
-            }
-            let worker = link.as_mut().expect("just started");
-            match worker.ask(&request).await {
-                Ok(reply) => Ok(reply),
-                Err(e) => {
-                    *link = None;
-                    Err(ApiError::new(
-                        503,
-                        "worker-stopped",
-                        format!("The design worker stopped ({e}). CutCraft will recover the last draft on the next request."),
-                    ))
+                set_phase(&session, Some("Waiting for a preparation slot…"));
+                let _loading = pool.loading.lock().await;
+                loop {
+                    if pool.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                        set_phase(&session,None);
+                        return Err(ApiError::new(503,"server-stopping","The server is restarting."));
+                    }
+                    if let Ok(permit) = pool.slots.clone().try_acquire_owned() {
+                        match Link::start(&mode, &session.area, &lists) {
+                            Ok(worker) => { *link = Some(worker); *session.permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit); break; },
+                            Err(e) => { set_phase(&session,None); return Err(storage(e)); },
+                        }
+                    }
+                    if unload_oldest(&sessions, Some(&session), None).await { continue; }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
                 }
             }
+            set_phase(&session,match &request { WorkerRequest::Open(_)=>Some("Opening and making cut-ready…"),WorkerRequest::Picture(_)=>Some("Rendering preview…"),WorkerRequest::Command(_)|WorkerRequest::Export=>Some("Preparing…"),_=>None });
+            *session.current_key.lock().unwrap_or_else(|p|p.into_inner())=key.clone();
+            let worker=link.as_mut().expect("just started");
+            let obsolete=picture.is_some_and(|generation|generation!=session.pictures.load(std::sync::atomic::Ordering::SeqCst))
+                || key.as_ref().is_some_and(|key|session.cancelled.lock().unwrap_or_else(|p|p.into_inner()).contains(key));
+            if obsolete { return Err(ApiError::new(409,"cancelled","Preparation was superseded or cancelled.")); }
+            if cancellable(&request) {
+                match worker.ask(&WorkerRequest::Checkpoint).await {
+                    Ok(WorkerReply::Replay { result:None })=>{},
+                    _=>return Err(ApiError::new(503,"checkpoint-failed","The project could not be checkpointed before preparation.")),
+                }
+            }
+            let result = match worker.ask_inner(&request,Some(&session)).await {
+                Ok(reply) => {
+                    if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,snapshot.clone()); }
+                    Ok(reply)
+                },
+                Err(e) => {
+                    if let Some(worker) = link.take() { worker.close().await; }
+                    session.permit.lock().unwrap_or_else(|p| p.into_inner()).take();
+                    Err(ApiError::new(503,"worker-stopped",format!("The design worker stopped ({e}). CutCraft will recover the last draft on the next request.")))
+                }
+            };
+            if picture.is_some_and(|generation|generation!=session.pictures.load(std::sync::atomic::Ordering::SeqCst)) { return Err(ApiError::new(409,"superseded","A newer preview was requested.")); }
+            result
         })
         .await
         .map_err(|e| ApiError::new(503, "worker-stopped", e.to_string()))?
@@ -297,7 +562,14 @@ impl Sessions {
         session
             .retired
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        link.take();
+        if let Some(worker) = link.take() {
+            worker.close().await;
+        }
+        session
+            .permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
         Ok(())
     }
 
@@ -312,6 +584,45 @@ impl Sessions {
                 .retired
                 .store(false, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+
+    /// Uses an injected instant for deterministic eviction tests; no wall-clock waiting.
+    pub(crate) async fn unload_idle(&self, now: Instant) {
+        while unload_oldest(&self.sessions, None, Some(now)).await {}
+    }
+
+    pub(crate) async fn shutdown(&self) -> Result<(), ApiError> {
+        self.pool
+            .stopping
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let sessions: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for session in sessions {
+            let _operation = session.operations.lock().await;
+            let mut link = session.link.lock().await;
+            if let Some(worker) = link.as_mut()
+                && let WorkerReply::Failed { message } = worker
+                    .ask(&WorkerRequest::Checkpoint)
+                    .await
+                    .map_err(storage)?
+            {
+                return Err(storage(message));
+            }
+            if let Some(worker) = link.take() {
+                worker.close().await;
+            }
+            session
+                .permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take();
+        }
+        Ok(())
     }
 
     /// Another person changed the household's material or mat list (spec §8): every other loaded
@@ -344,14 +655,109 @@ impl Sessions {
         }
     }
 
-    /// Sends this principal's pages the current snapshot.
+    /// Asks for the current snapshot; ask publishes it while still holding the worker link.
     async fn publish(&self, principal: &Principal) {
-        if let Ok(WorkerReply::Snapshot(s)) = self.ask(principal, WorkerRequest::Snapshot).await
-            && let (Ok(text), Ok(session)) = (serde_json::to_string(&s), self.session(principal))
-        {
-            session.live.send_replace(text);
-        }
+        let _ = self.ask(principal, WorkerRequest::Snapshot).await;
     }
+}
+
+fn cache_snapshot(session: &Session, mut snapshot: cutcraft_web_protocol::SessionSnapshot) {
+    let mut cached = session.cached.lock().unwrap_or_else(|p| p.into_inner());
+    snapshot.busy = session
+        .phase
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    snapshot.busy_key = if snapshot.busy.is_some() {
+        session
+            .current_key
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    } else {
+        None
+    };
+    let text = serde_json::to_string(&snapshot).unwrap_or_default();
+    *cached = Some(snapshot);
+    session.live.send_replace(text);
+}
+
+fn set_phase(session: &Session, phase: Option<&str>) {
+    *session.phase.lock().unwrap_or_else(|p| p.into_inner()) = phase.map(str::to_owned);
+    let mut cached = session.cached.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(snapshot) = cached.as_mut() {
+        snapshot.busy = phase.map(str::to_owned);
+        snapshot.busy_key = if phase.is_some() {
+            session
+                .current_key
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        } else {
+            None
+        };
+        session
+            .live
+            .send_replace(serde_json::to_string(snapshot).unwrap_or_default());
+    }
+}
+
+async fn unload_oldest(
+    sessions: &Mutex<HashMap<String, Arc<Session>>>,
+    except: Option<&Arc<Session>>,
+    idle: Option<Instant>,
+) -> bool {
+    let mut candidates: Vec<_> = sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .filter(|session| except.is_none_or(|except| !Arc::ptr_eq(session, except)))
+        .cloned()
+        .collect();
+    candidates.sort_by_key(|session| *session.last_used.lock().unwrap_or_else(|p| p.into_inner()));
+    for session in candidates {
+        let Ok(_operation) = session.operations.try_lock() else {
+            continue;
+        };
+        let Ok(mut link) = session.link.try_lock() else {
+            continue;
+        };
+        let Some(worker) = link.as_mut() else {
+            continue;
+        };
+        if idle.is_some_and(|now| {
+            now.saturating_duration_since(
+                *session.last_used.lock().unwrap_or_else(|p| p.into_inner()),
+            ) < IDLE
+        }) {
+            continue;
+        }
+        match worker.ask(&WorkerRequest::Checkpoint).await {
+            Ok(WorkerReply::Replay { result: None }) => {}
+            Err(_) => {
+                if let Some(worker) = link.take() {
+                    worker.close().await;
+                }
+                session
+                    .permit
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .take();
+                return true;
+            }
+            _ => continue,
+        }
+        if let Some(worker) = link.take() {
+            worker.close().await;
+        }
+        session
+            .permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        return true;
+    }
+    false
 }
 
 /// Durable copy receipts also fence keys after a worker/session loses its checkpoint.
@@ -479,10 +885,117 @@ pub(crate) async fn session_status(
     app: &App,
     p: &Principal,
 ) -> Result<cutcraft_web_protocol::SessionSnapshot, ApiError> {
+    let session = app.design.session(p)?;
+    let busy = session
+        .phase
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some();
+    if busy
+        && let Some(snapshot) = session
+            .cached
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    {
+        return Ok(snapshot);
+    }
+    let pressured = app.design.pool.slots.available_permits() == 0
+        && session
+            .permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none();
+    if pressured {
+        let snapshot = session
+            .cached
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| cutcraft_web_protocol::SessionSnapshot {
+                protocol: PROTOCOL_VERSION,
+                incarnation: "pending".into(),
+                revision: 0,
+                busy: Some("Waiting for a preparation slot…".into()),
+                ..Default::default()
+            });
+        set_phase(&session, Some("Waiting for a preparation slot…"));
+        cache_snapshot(&session, snapshot.clone());
+        if session
+            .initializing
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            let (design, principal, session) = (app.design.clone(), p.clone(), session.clone());
+            tokio::spawn(async move {
+                let _ = design.ask(&principal, WorkerRequest::Snapshot).await;
+                session
+                    .initializing
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+        return Ok(snapshot);
+    }
     match app.design.ask(p, WorkerRequest::Snapshot).await? {
         WorkerReply::Snapshot(snapshot) => Ok(snapshot),
         _ => Err(unexpected()),
     }
+}
+
+pub(crate) async fn cancel_preparation(
+    app: &App,
+    p: &Principal,
+    key: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let session = app.design.session(p)?;
+    let known = session
+        .known
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(key);
+    if !known {
+        return Ok(serde_json::json!({"cancel_requested":false}));
+    }
+    session
+        .cancelled
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(key.into());
+    let active = session
+        .active
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .filter(|active| active.key.as_deref() == Some(key));
+    let requested = match active {
+        Some(active) => {
+            let requested = active.control.cancel(active.id).await;
+            if requested {
+                let session = session.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let current = session
+                        .active
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .clone();
+                    if current.is_some_and(|current| {
+                        current.id == active.id && current.control.same(&active.control)
+                    }) {
+                        active.control.kill().await;
+                    }
+                });
+            }
+            requested
+        }
+        None => true,
+    };
+    Ok(serde_json::json!({"cancel_requested":requested}))
 }
 
 /// Spec §13: the browser and the server must speak the same protocol; another version is told
@@ -531,11 +1044,7 @@ pub async fn snapshot(
     uri: Uri,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
-    match app.design.ask(&p, WorkerRequest::Snapshot).await? {
-        WorkerReply::Snapshot(s) => Ok(Json(s).into_response()),
-        WorkerReply::Failed { message } => Err(ApiError::new(500, "worker", message)),
-        _ => Err(unexpected()),
-    }
+    Ok(Json(session_status(&app, &p).await?).into_response())
 }
 
 pub async fn command(
@@ -570,6 +1079,32 @@ pub async fn command(
             )
             .await?,
         )
+        .into_response());
+    }
+    if body.id == "design.cancel" {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Target {
+            key: Option<String>,
+        }
+        let params: Target = serde_json::from_value(body.params)
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        let current = session_status(&app, &p).await?;
+        if body.incarnation != current.incarnation {
+            return Ok(refusal(
+                codes::STALE_INCARNATION,
+                "This preparation belongs to an earlier session.",
+            ));
+        }
+        let key = params
+            .key
+            .or(current.busy_key)
+            .ok_or_else(|| ApiError::bad_request("Name the preparation request to cancel."))?;
+        let value = cancel_preparation(&app, &p, &key).await?;
+        return Ok(Json(CommandReply::Applied {
+            revision: current.revision,
+            value,
+        })
         .into_response());
     }
     let session = app.design.session(&p)?;
@@ -719,6 +1254,51 @@ pub struct UploadQuery {
     name: String,
 }
 
+/// Keep the permit until the last response byte is consumed or the reader disconnects.
+/// A slow preview reader can occupy one bounded slot, never the cutter's control path.
+pub(crate) async fn preview_capacity(
+    State(app): State<App>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Ok(permit) = app.design.pool.responses.clone().try_acquire_owned() else {
+        return ApiError::new(
+            503,
+            "preview-busy",
+            "Preview downloads are busy. Retry shortly.",
+        )
+        .into_response();
+    };
+    let response = next.run(request).await;
+    let (parts, body) = response.into_parts();
+    let stream = futures_util::stream::unfold(
+        (body.into_data_stream(), permit),
+        |(mut stream, permit)| async move { stream.next().await.map(|chunk| (chunk, (stream, permit))) },
+    );
+    Response::from_parts(parts, axum::body::Body::from_stream(stream))
+}
+
+/// Admit upload bodies before buffering them. Cutter controls never acquire this permit.
+pub(crate) async fn upload_capacity(
+    State(app): State<App>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Ok(_permit) = app.design.pool.uploads.clone().try_acquire_owned() else {
+        return ApiError::new(
+            503,
+            "upload-busy",
+            "Two uploads are already in progress. Retry shortly.",
+        )
+        .into_response();
+    };
+    match tokio::time::timeout(Duration::from_secs(120), next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => ApiError::new(408, "upload-timeout", "The upload took too long. Retry it.")
+            .into_response(),
+    }
+}
+
 /// Spec §10: an upload becomes a server-owned copy in the person's own area, named by the
 /// server. Opening it is a change of its own ([`open`]).
 pub async fn upload(
@@ -780,16 +1360,11 @@ pub async fn live(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let p = who(&caller, &headers, &uri)?;
     let session = app.design.session(&p)?;
-    // Initial snapshot and subscription share the mutation/publication gate. A queued
-    // older snapshot can therefore never follow this initial, newer snapshot.
-    let operation = session.operations.lock().await;
-    let first = match app.design.ask(&p, WorkerRequest::Snapshot).await? {
-        WorkerReply::Snapshot(s) => serde_json::to_string(&s).map_err(storage)?,
-        WorkerReply::Failed { message } => return Err(ApiError::new(503, "worker", message)),
-        _ => return Err(unexpected()),
-    };
+    let latest = session_status(&app, &p).await?;
+    let cached = session.cached.lock().unwrap_or_else(|p| p.into_inner());
+    let first = serde_json::to_string(cached.as_ref().unwrap_or(&latest)).map_err(storage)?;
     let changes = WatchStream::from_changes(session.live.subscribe());
-    drop(operation);
+    drop(cached);
     let initial = tokio_stream::once(Ok(Event::default().event("snapshot").data(first)));
     // A slow page retains only the latest full snapshot, regardless of how many edits occur.
     let rest = changes.map(|text| Ok(Event::default().event("snapshot").data(text)));
@@ -938,9 +1513,7 @@ async fn open_inner(app: App, p: Principal, body: OpenBody) -> Result<Response, 
         replace_unsaved: body.replace_unsaved,
     };
     let reply = app.design.ask(&p, WorkerRequest::Open(request)).await?;
-    if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
-        app.design.publish(&p).await;
-    }
+    app.design.publish(&p).await;
     match reply {
         WorkerReply::Command(r) => Ok(Json(r).into_response()),
         WorkerReply::Failed { message } => Err(ApiError::new(500, "worker", message)),
@@ -1129,6 +1702,121 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
 mod tests {
     use super::*;
 
+    fn principal(id: &str) -> Principal {
+        Principal {
+            id: id.into(),
+            name: id.into(),
+        }
+    }
+    async fn snap(sessions: &Sessions, p: &Principal) -> cutcraft_web_protocol::SessionSnapshot {
+        match sessions.ask(p, WorkerRequest::Snapshot).await.unwrap() {
+            WorkerReply::Snapshot(s) => s,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resident_budget_checkpoints_lru_and_idle_unloads_without_losing_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = Sessions::new(
+            Mode::Thread,
+            dir.path().join("people"),
+            dir.path().join("lists"),
+        );
+        let a = principal("a");
+        let b = principal("b");
+        let c = principal("c");
+        let initial = snap(&sessions, &a).await;
+        let session = sessions.session(&a).unwrap();
+        std::fs::write(session.area.join("designs/shape.svg"), r#"<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="30mm" viewBox="0 0 30 30"><rect x="5" y="5" width="20" height="20"/></svg>"#).unwrap();
+        let reply = sessions
+            .ask(
+                &a,
+                WorkerRequest::Open(OpenRequest {
+                    request: None,
+                    source: OpenSource::Upload {
+                        file: "shape.svg".into(),
+                        name: "shape.svg".into(),
+                    },
+                    key: "open".into(),
+                    incarnation: initial.incarnation.clone(),
+                    revision: initial.revision,
+                    replace_unsaved: false,
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            reply,
+            WorkerReply::Command(CommandReply::Applied { .. })
+        ));
+        let opened = snap(&sessions, &a).await;
+        let edit = CommandRequest {
+            id: "sheet.adjust".into(),
+            params: serde_json::json!({"force":22}),
+            key: "force".into(),
+            incarnation: opened.incarnation,
+            revision: Some(opened.revision),
+        };
+        assert!(matches!(
+            sessions
+                .ask(&a, WorkerRequest::Command(edit))
+                .await
+                .unwrap(),
+            WorkerReply::Command(CommandReply::Applied { .. })
+        ));
+        snap(&sessions, &b).await;
+        assert_eq!(sessions.pool.slots.available_permits(), 0);
+        snap(&sessions, &c).await;
+        assert!(
+            session.link.lock().await.is_none(),
+            "least recently used session must unload"
+        );
+        assert_eq!(sessions.pool.slots.available_permits(), 0);
+        let recovered = snap(&sessions, &a).await;
+        assert_ne!(initial.incarnation, recovered.incarnation);
+        assert!(matches!(
+            sessions
+                .ask(
+                    &a,
+                    WorkerRequest::Lookup {
+                        key: "force".into()
+                    }
+                )
+                .await
+                .unwrap(),
+            WorkerReply::Lookup(cutcraft_web_protocol::KeyLookup::Applied { .. })
+        ));
+        sessions
+            .unload_idle(Instant::now() + IDLE + Duration::from_secs(1))
+            .await;
+        assert_eq!(sessions.pool.slots.available_permits(), MAX_WORKERS);
+        sessions.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_backpressure_does_not_wait_for_a_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = Sessions::new(
+            Mode::Thread,
+            dir.path().join("people"),
+            dir.path().join("lists"),
+        );
+        let _held = sessions
+            .pool
+            .requests
+            .clone()
+            .acquire_many_owned(MAX_PENDING as u32)
+            .await
+            .unwrap();
+        let error = sessions
+            .ask(&principal("a"), WorkerRequest::Snapshot)
+            .await
+            .unwrap_err();
+        assert_eq!(error.error, "preparation-busy");
+        assert_eq!(sessions.pool.slots.available_permits(), MAX_WORKERS);
+    }
+
     /// Cancelling the HTTP-facing future leaves the exchange alive until its reply is consumed.
     #[tokio::test]
     async fn a_cancelled_request_still_consumes_its_worker_reply() {
@@ -1144,13 +1832,17 @@ mod tests {
         };
         let session = sessions.session(&principal).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
-        *session.link.lock().await = Some(Link::Thread(tx));
+        *session.link.lock().await = Some(Link::Thread(ThreadLink {
+            send: tx,
+            control: None,
+            next: 1,
+        }));
         let original = {
             let sessions = sessions.clone();
             let principal = principal.clone();
             tokio::spawn(async move { sessions.ask(&principal, WorkerRequest::Snapshot).await })
         };
-        let (_, reply) = tokio::task::spawn_blocking(move || rx.recv())
+        let (_, _, reply) = tokio::task::spawn_blocking(move || rx.recv())
             .await
             .unwrap()
             .unwrap();

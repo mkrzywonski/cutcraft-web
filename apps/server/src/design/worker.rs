@@ -55,6 +55,7 @@ const KEPT_PREVIOUS: usize = 10;
 /// drive a cutter, which goes through the cutter service from milestone 3.
 const REFUSED: &[&str] = &[
     "cut.copy",
+    "design.cancel",
     // Replies with server paths: the snapshot gives a browser what it needs of them.
     "app.status",
     "app.engine_check",
@@ -101,6 +102,7 @@ fn policy(id: &str, authority: cutcraft_control::Authority) -> Result<(), (&'sta
 
 pub struct Worker {
     controller: Controller,
+    control_state: std::sync::Arc<std::sync::Mutex<CallState>>,
     area: PathBuf,
     incarnation: String,
     /// Accepted keys: the request as received and its answer (spec §7). They become durable
@@ -121,53 +123,167 @@ pub struct Worker {
     authority: HashMap<&'static str, cutcraft_control::Authority>,
 }
 
+#[derive(Clone)]
+pub(super) struct Control {
+    controller: Controller,
+    state: std::sync::Arc<std::sync::Mutex<CallState>>,
+}
+#[derive(Default)]
+struct CallState {
+    id: u64,
+    active: bool,
+    cancelled: bool,
+    import: bool,
+    cancellable: bool,
+}
+impl Control {
+    pub fn queued(&self, id: u64, request: &WorkerRequest) {
+        let import = matches!(request, WorkerRequest::Open(_))
+            || matches!(request,WorkerRequest::Command(c) if matches!(c.id.as_str(),"prepare.decide"|"prepare.reset"));
+        *self.state.lock().unwrap_or_else(|p| p.into_inner()) = CallState {
+            id,
+            active: false,
+            cancelled: false,
+            import,
+            cancellable: import || matches!(request, WorkerRequest::Picture(_)),
+        };
+    }
+    pub fn begin(&self, id: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.id != id || state.cancelled {
+            return false;
+        }
+        state.active = true;
+        true
+    }
+    pub fn finish(&self, id: u64, reply: &mut WorkerReply) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.id == id {
+            if state.cancelled
+                && matches!(reply, WorkerReply::Command(CommandReply::Refused { .. }))
+            {
+                *reply = WorkerReply::Command(refused("cancelled", "Preparation was cancelled."));
+            }
+            if state.cancelled && matches!(reply, WorkerReply::Picture { .. }) {
+                *reply = WorkerReply::Failed {
+                    message: "The preview was superseded.".into(),
+                };
+            }
+            state.id = 0;
+            state.active = false;
+        }
+    }
+    pub fn cancel(&self, id: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.id != id || !state.cancellable {
+            return false;
+        }
+        if state.cancelled {
+            return true;
+        }
+        state.cancelled = true;
+        if state.active && state.import {
+            let _ = self
+                .controller
+                .execute(Origin::User, "design.cancel", json!({}), None);
+        }
+        true
+    }
+}
+
 /// The worker as a child process (`cameo-pi worker --area DIR`): its memory capped, one JSON
 /// request per line in, one answer per line out.
 pub fn run_process(area: &Path, lists: &Path) -> Result<(), String> {
-    // CUTCRAFT_WEB_WORKER_MB lowers the cap, for the isolation checks.
     let limit = std::env::var("CUTCRAFT_WEB_WORKER_MB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .map_or(MEMORY_LIMIT, |mb| mb * 1024 * 1024);
+        .map_or(MEMORY_LIMIT, |mb| {
+            mb.saturating_mul(1024 * 1024).min(MEMORY_LIMIT)
+        });
     rlimit::setrlimit(rlimit::Resource::AS, limit, limit)
         .map_err(|e| format!("setting the memory limit: {e}"))?;
+    #[cfg(target_os = "linux")]
+    if std::fs::write("/proc/self/oom_score_adj", b"500").is_err() {
+        eprintln!("cutcraft-web worker: could not lower OOM priority");
+    }
     let mut worker = Worker::new(area, lists)?;
-    // Lines come from a reader thread, so the draft timer runs while no request arrives.
-    let (send, lines) = std::sync::mpsc::channel::<String>();
+    let control = worker.control();
+    let (send, lines) = std::sync::mpsc::sync_channel::<cutcraft_web_protocol::worker::Call>(1);
+    let (output, responses) =
+        std::sync::mpsc::sync_channel::<cutcraft_web_protocol::worker::Response>(8);
+    let reply = output.clone();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
-            let Ok(line) = line else { break };
-            if send.send(line).is_err() {
+            let Ok(line) = line else {
+                break;
+            };
+            let Ok(call) = serde_json::from_str::<cutcraft_web_protocol::worker::Call>(&line)
+            else {
+                break;
+            };
+            if let WorkerRequest::Cancel { target } = call.request {
+                let requested = control.cancel(target);
+                if reply
+                    .send(cutcraft_web_protocol::worker::Response {
+                        id: call.id,
+                        reply: WorkerReply::Cancel { requested },
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            } else {
+                control.queued(call.id, &call.request);
+                if send.send(call).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        let mut stdout = std::io::stdout().lock();
+        for response in responses {
+            let Ok(mut bytes) = serde_json::to_vec(&response) else {
+                break;
+            };
+            bytes.push(b'\n');
+            if stdout
+                .write_all(&bytes)
+                .and_then(|()| stdout.flush())
+                .is_err()
+            {
                 break;
             }
         }
     });
-    let mut stdout = std::io::stdout().lock();
+    let control = worker.control();
     loop {
-        let line = match lines.recv_timeout(Duration::from_millis(500)) {
-            Ok(line) => line,
+        let call = match lines.recv_timeout(Duration::from_millis(500)) {
+            Ok(call) => call,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 worker.tick(Instant::now());
                 continue;
             }
-            // The server closed the connection (it stopped, or dropped the session): keep the
-            // work, then leave.
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                return worker.checkpoint();
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return worker.checkpoint(),
         };
-        let reply = match serde_json::from_str::<WorkerRequest>(&line) {
-            Ok(request) => worker.answer(request),
-            Err(e) => WorkerReply::Failed {
-                message: format!("unreadable request: {e}"),
-            },
+        let mut answer = if control.begin(call.id) {
+            worker.answer(call.request)
+        } else {
+            WorkerReply::Command(refused(
+                "cancelled",
+                "Preparation was cancelled before it began.",
+            ))
         };
-        let mut text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
-        text.push('\n');
-        stdout
-            .write_all(text.as_bytes())
-            .and_then(|()| stdout.flush())
-            .map_err(|e| e.to_string())?;
+        control.finish(call.id, &mut answer);
+        if output
+            .send(cutcraft_web_protocol::worker::Response {
+                id: call.id,
+                reply: answer,
+            })
+            .is_err()
+        {
+            return worker.checkpoint();
+        }
         worker.tick(Instant::now());
     }
 }
@@ -180,6 +296,13 @@ fn refused(code: &str, message: impl Into<String>) -> CommandReply {
 }
 
 impl Worker {
+    pub(super) fn control(&self) -> Control {
+        Control {
+            controller: self.controller.clone(),
+            state: self.control_state.clone(),
+        }
+    }
+
     /// A worker for the person whose private area this is: it reads only inside it. Their own
     /// settings live in the area; the material and mat lists are the household's, in `lists`
     /// (spec §8).
@@ -200,6 +323,7 @@ impl Worker {
             reads,
             authority,
             controller,
+            control_state: std::sync::Arc::new(std::sync::Mutex::new(CallState::default())),
             area,
             incarnation: crate::keys::random_hex(8),
             keys: HashMap::new(),
@@ -319,6 +443,7 @@ impl Worker {
 
     pub fn answer(&mut self, request: WorkerRequest) -> WorkerReply {
         match request {
+            WorkerRequest::Cancel { .. } => WorkerReply::Cancel { requested: false },
             WorkerRequest::Checkpoint => match self.checkpoint() {
                 Ok(()) => WorkerReply::Replay { result: None },
                 Err(message) => WorkerReply::Failed { message },
@@ -680,6 +805,7 @@ impl Worker {
             }
         };
         Ok(SessionSnapshot {
+            busy_key: None,
             protocol: PROTOCOL_VERSION,
             incarnation: self.incarnation.clone(),
             revision: s.revision,
@@ -857,6 +983,44 @@ fn art_view(open: &cutcraft_control::OpenDesign, incarnation: &str) -> Option<Ar
 mod tests {
     use super::*;
     use cutcraft_web_protocol::KeyLookup;
+
+    #[test]
+    fn cancellation_is_fenced_to_the_active_call_and_never_rewrites_an_applied_edit() {
+        let dir = area();
+        let worker = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let control = worker.control();
+        let picture = WorkerRequest::Open(OpenRequest {
+            request: None,
+            source: OpenSource::Upload {
+                file: "star.svg".into(),
+                name: "star.svg".into(),
+            },
+            key: "open".into(),
+            incarnation: "test".into(),
+            revision: 0,
+            replace_unsaved: false,
+        });
+        control.queued(1, &picture);
+        assert!(control.cancel(1));
+        assert!(!control.begin(1), "queued cancellation must prevent work");
+        control.queued(2, &picture);
+        assert!(control.begin(2));
+        assert!(
+            !control.cancel(1),
+            "late cancellation cannot reach the next call"
+        );
+        assert!(control.cancel(2));
+        let mut applied = WorkerReply::Command(CommandReply::Applied {
+            revision: 42,
+            value: json!({}),
+        });
+        control.finish(2, &mut applied);
+        assert!(matches!(
+            applied,
+            WorkerReply::Command(CommandReply::Applied { revision: 42, .. })
+        ));
+        assert!(!control.cancel(2));
+    }
 
     const STAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"><path fill="#d22" d="M20 5 L24.7 17.6 L38 17.6 L27.2 25.4 L31.4 38 L20 30.2 L8.6 38 L12.8 25.4 L2 17.6 L15.3 17.6 Z"/></svg>"##;
 

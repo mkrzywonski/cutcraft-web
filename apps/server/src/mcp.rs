@@ -66,6 +66,15 @@ fn folder(description: &str) -> Value {
 
 const TOOLS: &[ToolSpec] = &[
     ToolSpec {
+        name: "preparation_cancel",
+        title: "Cancel preparation",
+        description: "Cancel a specific in-flight open or Make cut-ready request in your session. Give its key from design_status.busy_key. A completed operation cannot be undone by cancellation.",
+        read_only: false,
+        destructive: false,
+        properties: || json!({"key":s("The preparation request key to cancel.")}),
+        required: &["key"],
+    },
+    ToolSpec {
         name: "design_status",
         title: "Current design",
         description: "Your current design session, incarnation and revision. Use before design_cut_copy.",
@@ -427,10 +436,21 @@ impl Tools {
     }
 
     pub(crate) async fn invoke(&self, name: &str, args: Value, caller: Caller) -> Out {
-        if matches!(name, "design_status" | "design_cut_copy") {
+        if matches!(
+            name,
+            "design_status" | "design_cut_copy" | "preparation_cancel"
+        ) {
             let principal = caller
                 .principal()
                 .ok_or_else(|| ApiError::new(401, "login", "Log in first."))?;
+            if name == "preparation_cancel" {
+                return crate::design::cancel_preparation(
+                    &self.app,
+                    &principal,
+                    text(&args, "key")?,
+                )
+                .await;
+            }
             if name == "design_status" {
                 return serde_json::to_value(
                     crate::design::session_status(&self.app, &principal).await?,

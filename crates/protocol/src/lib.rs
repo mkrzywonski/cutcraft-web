@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,6 +83,8 @@ pub struct SessionSnapshot {
     /// Opening or preparing, with what to show meanwhile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub busy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,6 +270,10 @@ pub mod worker {
     #[serde(tag = "ask", rename_all = "snake_case")]
     pub enum WorkerRequest {
         Command(CommandRequest),
+        /// Control-plane cancellation for one in-flight call, never a later one.
+        Cancel {
+            target: u64,
+        },
         Replay(CommandRequest),
         /// Record an already durable server-side action, without marking the project edited.
         Remember {
@@ -293,6 +299,17 @@ pub mod worker {
         /// Another session changed the household's material or mat list: read them again.
         ReloadLists,
         Checkpoint,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct Call {
+        pub id: u64,
+        pub request: WorkerRequest,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct Response {
+        pub id: u64,
+        pub reply: WorkerReply,
     }
 
     /// Opening a design or a library project in the session (spec §7).
@@ -329,6 +346,9 @@ pub mod worker {
     #[serde(tag = "reply", rename_all = "snake_case")]
     pub enum WorkerReply {
         Command(CommandReply),
+        Cancel {
+            requested: bool,
+        },
         Replay {
             result: Option<CommandReply>,
         },

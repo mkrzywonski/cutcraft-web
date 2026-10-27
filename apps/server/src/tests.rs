@@ -3051,3 +3051,59 @@ fn a_second_server_cannot_take_the_same_authority_directory() {
         "authority-in-use"
     );
 }
+
+#[tokio::test]
+async fn slow_preview_bodies_hold_bounded_slots_without_blocking_stop() {
+    let h = harness();
+    let mut held = Vec::new();
+    for _ in 0..4 {
+        let mut request = get("/api/v1/design/geometry", "cameo-pi.local");
+        request.headers_mut().insert(
+            "x-cutcraft-protocol",
+            cutcraft_web_protocol::PROTOCOL_VERSION
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        let response = router(h.app.clone()).oneshot(request).await.unwrap();
+        assert_ne!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        held.push(response);
+    }
+    let mut request = get("/api/v1/design/geometry", "cameo-pi.local");
+    request.headers_mut().insert(
+        "x-cutcraft-protocol",
+        cutcraft_web_protocol::PROTOCOL_VERSION
+            .to_string()
+            .parse()
+            .unwrap(),
+    );
+    let (status, error) = send(&h.app, request).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error["error"], "preview-busy");
+    assert_eq!(
+        send(
+            &h.app,
+            page(
+                "POST",
+                "/api/v1/cutters/practice/stop",
+                json!({"key":"stop-with-slow-readers"})
+            )
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    drop(held);
+    let mut request = get("/api/v1/design/geometry", "cameo-pi.local");
+    request.headers_mut().insert(
+        "x-cutcraft-protocol",
+        cutcraft_web_protocol::PROTOCOL_VERSION
+            .to_string()
+            .parse()
+            .unwrap(),
+    );
+    assert_ne!(
+        send(&h.app, request).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+}

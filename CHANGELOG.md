@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.12.0 — 2026-10-27
+
+- Limit preparation to two resident workers, checkpoint and unload idle/LRU sessions, bound queued requests and upload bodies, and discard superseded previews.
+- Add targeted preparation cancellation over correlated worker IPC; protect the last draft before cancellable work and isolate worker memory failures.
+
 ## 0.11.0 — 2026-10-27
 
 - Persist queue order, current turn and accepted Queue receipts independently of the library and preparation sessions; replay accepted requests before mutable revision checks.

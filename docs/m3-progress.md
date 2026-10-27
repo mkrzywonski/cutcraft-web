@@ -118,15 +118,35 @@ writing or claiming the same state. Corrupt queue/record formats fail closed.
 Tests exercise waiting-turn order and attribution, duplicate/reused keys after
 restart, stale checkpoints, consumed turns and exclusive directory ownership.
 
+## Sixth slice: bounded preparation (0.12.0)
+
+At most two workers are resident. Other opens wait and snapshots report that state.
+The least recently used idle worker is checkpointed before its slot is reused;
+workers unused for an hour unload as well. Reload changes the incarnation and
+recovers the saved draft and acknowledged keys. A failed checkpoint prevents normal
+unloading. Detached exchanges retain their replies after a caller disconnects.
+
+The worker wire protocol now correlates calls and replies. Targeted cancellation
+can bypass an import without taking its worker lock. `design.cancel` and MCP
+`preparation_cancel` share the same session-scoped action. Cancellation never
+rewrites an already applied edit. Before cancellable work, the worker checkpoints;
+an unresponsive cancelled process is killed after two seconds, fenced to that
+specific process and call. Superseded pictures are discarded. All workers enforce
+a maximum 1.5 GiB address-space limit and lower their Linux OOM priority.
+
+Pending exchanges are bounded to 32, simultaneous upload bodies to two (120-second
+timeout), and large preview/download responses to four, with the response permit
+held until consumption or disconnection. SSE coalesces snapshots. These limits do
+not gate cutter controls. Regressions cover LRU/idle recovery, request pressure,
+call-fenced cancellation and slow preview bodies while the Stop route responds.
+
 ## Next slices required by the spec
 
-- Independently review the complete cutter-authority fault matrix.
-- Bound heavy preparation concurrency, evict/unload idle workers safely, and add
-  backpressure/cancellation. Measure Stop under malformed and heavy imports,
-  memory pressure, slow readers and worker failures on the target Pi.
-- Connect the deployment updater to drain and verify its final all-cutter idle
-  check before restart. Do not replace served assets during draining.
-- Complete the previously declared M2 carryovers in `docs/reviews/m2-codex.md`;
-  starting M3 does not certify those acceptance gates.
+- Independent review of the complete cutter-authority fault matrix.
+- Target-Pi simulator measurements under heavy and malformed imports, memory
+  failure and slow readers.
+- Connect deployment shutdown to drain and verify the final all-cutter idle check.
+  Keep the running executable's own assets and worker protocol until restart.
 
 Independent review is required before integrating these safety-related changes.
+The M2 carryovers in `docs/reviews/m2-codex.md` remain explicitly separate scope.

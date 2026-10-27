@@ -335,13 +335,25 @@ pub fn router(app: App) -> Router {
             post(restore_fetch).delete(restore_cancel),
         )
         .route("/api/v1/backup/restore/apply", post(restore_apply))
-        .route("/api/v1/jobs", post(upload))
+        .route(
+            "/api/v1/jobs",
+            post(upload).layer(middleware::from_fn_with_state(
+                app.clone(),
+                crate::design::upload_capacity,
+            )),
+        )
         .route("/api/v1/jobs/{id}", get(job).patch(edit).delete(delete_job))
         .route("/api/v1/jobs/{id}/move", post(move_job))
         .route("/api/v1/jobs/{id}/adjust", post(adjust_save))
         .route("/api/v1/jobs/{id}/adjust/preview", post(adjust_preview))
         .route("/api/v1/catalog", get(catalog_get).put(catalog_put))
-        .route("/api/v1/jobs/{id}/revisions/{n}/{what}", get(download))
+        .route(
+            "/api/v1/jobs/{id}/revisions/{n}/{what}",
+            get(download).layer(middleware::from_fn_with_state(
+                app.clone(),
+                crate::design::preview_capacity,
+            )),
+        )
         .route("/api/v1/pair", post(pair))
         .route("/api/v1/pair/collect", post(collect))
         .route("/api/v1/pair/waiting", get(waiting))
@@ -362,21 +374,44 @@ pub fn router(app: App) -> Router {
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/icon.svg", get(icon))
-        .route("/api/v1/jobs/{id}/revisions/{n}/geometry", get(geometry))
+        .route(
+            "/api/v1/jobs/{id}/revisions/{n}/geometry",
+            get(geometry).layer(middleware::from_fn_with_state(
+                app.clone(),
+                crate::design::preview_capacity,
+            )),
+        )
         .route("/api/v1/design/snapshot", get(crate::design::snapshot))
         .route("/api/v1/design/command", post(crate::design::command))
         .route("/api/v1/design/lookup/{key}", get(crate::design::lookup))
-        .route("/api/v1/design/geometry", get(crate::design::geometry))
-        .route("/api/v1/design/picture", get(crate::design::picture))
+        .route(
+            "/api/v1/design/geometry",
+            get(crate::design::geometry).layer(middleware::from_fn_with_state(
+                app.clone(),
+                crate::design::preview_capacity,
+            )),
+        )
+        .route(
+            "/api/v1/design/picture",
+            get(crate::design::picture).layer(middleware::from_fn_with_state(
+                app.clone(),
+                crate::design::preview_capacity,
+            )),
+        )
         .route("/api/v1/design/live", get(crate::design::live))
         .route("/api/v1/design/designs", get(crate::design::designs))
         .route("/api/v1/design/open", post(crate::design::open))
         .route("/api/v1/design/save", post(crate::design::save))
         .route(
             "/api/v1/design/upload",
-            post(crate::design::upload).layer(axum::extract::DefaultBodyLimit::max(
-                crate::design::UPLOAD_LIMIT,
-            )),
+            post(crate::design::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::design::UPLOAD_LIMIT,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    app.clone(),
+                    crate::design::upload_capacity,
+                )),
         )
         .nest_service("/mcp", crate::mcp::service(app.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(
