@@ -14,6 +14,9 @@ use crate::cutter::{Answer, Ended, Execution, JobRef, Kind};
 /// One execution, as kept on disk.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Record {
+    /// Earlier imported records had no version field; their fields are schema 1.
+    #[serde(default = "record_schema")]
+    pub schema_version: u32,
     pub execution: String,
     /// The cutter's stable id.
     pub cutter: String,
@@ -30,6 +33,10 @@ pub struct Record {
     pub started: u64,
     /// `None` until the execution ends.
     pub outcome: Option<serde_json::Value>,
+}
+
+fn record_schema() -> u32 {
+    1
 }
 
 impl Record {
@@ -101,6 +108,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// The folder of execution records.
 pub struct Journal {
     dir: PathBuf,
+    transaction: std::sync::Mutex<()>,
 }
 
 impl Journal {
@@ -109,7 +117,10 @@ impl Journal {
     pub fn open(dir: impl Into<PathBuf>) -> std::io::Result<(Self, Vec<Record>)> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        let journal = Self { dir };
+        let journal = Self {
+            dir,
+            transaction: std::sync::Mutex::new(()),
+        };
         let mut records = Vec::new();
         for entry in fs::read_dir(&journal.dir)? {
             let path = entry?.path();
@@ -123,12 +134,20 @@ impl Journal {
                 }
                 continue;
             }
-            let Ok(text) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(mut record) = serde_json::from_str::<Record>(&text) else {
-                continue;
-            };
+            let text = fs::read_to_string(&path)?;
+            let mut record: Record = serde_json::from_str(&text).map_err(std::io::Error::other)?;
+            if journal.path(&record.execution) != path {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "execution record identity does not match its file",
+                ));
+            }
+            if record.schema_version != record_schema() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unsupported execution record schema",
+                ));
+            }
             if record.outcome.is_none() {
                 let ended = Ended::Interrupted {
                     reason: "cameo-pi stopped while this was running; what was cut is uncertain"
@@ -141,6 +160,12 @@ impl Journal {
         }
         records.sort_by_key(|r| r.started);
         Ok((journal, records))
+    }
+
+    /// Deterministic storage-stall seam for simulator fixtures, absent from production builds.
+    #[cfg(feature = "fixtures")]
+    pub fn hold_writes_for_fixture(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.transaction.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     fn path(&self, execution: &str) -> PathBuf {
@@ -159,7 +184,36 @@ impl Journal {
 
     /// Records an execution before anything is sent. If this fails, nothing may be sent.
     pub fn started(&self, cutter: &str, execution: &Execution) -> std::io::Result<()> {
+        let _transaction = self.transaction.lock().unwrap_or_else(|p| p.into_inner());
+        match fs::read(self.path(&execution.id)) {
+            Ok(bytes) => {
+                let first: Record =
+                    serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                if first.cutter == cutter
+                    && first.execution == execution.id
+                    && first.key == execution.key
+                    && first.fingerprint == execution.fingerprint
+                    && first.digest == execution.run.digest
+                    && first.turn == execution.turn
+                    && first.job_id == execution.job.job_id
+                    && first.revision == execution.job.revision
+                    && first.user == execution.actor.user
+                    && first.client == execution.actor.client
+                    && first.schema_version == record_schema()
+                    && first.outcome.is_none()
+                {
+                    return Ok(());
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "an execution with this id was already recorded differently or ended",
+                ));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
         self.write(&Record {
+            schema_version: record_schema(),
             execution: execution.id.clone(),
             cutter: cutter.to_owned(),
             turn: execution.turn.clone(),
@@ -181,8 +235,12 @@ impl Journal {
 
     /// Completes a record with how the execution ended.
     pub fn ended(&self, execution: &str, ended: &Ended) -> std::io::Result<()> {
+        let _transaction = self.transaction.lock().unwrap_or_else(|p| p.into_inner());
         let text = fs::read_to_string(self.path(execution))?;
         let mut record: Record = serde_json::from_str(&text).map_err(std::io::Error::other)?;
+        if record.outcome.is_some() {
+            return Ok(());
+        }
         record.outcome = Some(serde_json::to_value(ended).map_err(std::io::Error::other)?);
         self.write(&record)
     }
@@ -305,5 +363,39 @@ mod tests {
         let (_, records) = Journal::open(dir.path()).unwrap();
         assert!(records.is_empty());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+    #[test]
+    fn recording_twice_is_idempotent_and_never_resurrects_an_ended_execution() {
+        let dir = tempfile::tempdir().unwrap();
+        let (journal, _) = Journal::open(dir.path()).unwrap();
+        let execution = execution("exec-once");
+        journal.started("cutter", &execution).unwrap();
+        let first = fs::read(journal.path(&execution.id)).unwrap();
+        journal.started("cutter", &execution).unwrap();
+        assert_eq!(fs::read(journal.path(&execution.id)).unwrap(), first);
+        journal.ended(&execution.id, &Ended::Finished).unwrap();
+        assert!(journal.started("cutter", &execution).is_err());
+        journal.ended(&execution.id, &Ended::Stopped).unwrap();
+        let (_, records) = Journal::open(dir.path()).unwrap();
+        assert_eq!(records[0].outcome.as_ref().unwrap()["ended"], "finished");
+    }
+
+    #[test]
+    fn legacy_execution_records_remain_readable_and_damaged_records_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (journal, _) = Journal::open(dir.path()).unwrap();
+        let execution = execution("exec-legacy");
+        journal.started("cutter", &execution).unwrap();
+        let path = journal.path(&execution.id);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy.as_object_mut().unwrap().remove("schema_version");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let (_, records) = Journal::open(dir.path()).unwrap();
+        assert_eq!(records[0].schema_version, 1);
+        assert_eq!(records[0].outcome.as_ref().unwrap()["ended"], "interrupted");
+        fs::write(&path, b"damaged").unwrap();
+        assert!(Journal::open(dir.path()).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"damaged");
     }
 }

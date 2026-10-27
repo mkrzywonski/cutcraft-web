@@ -4,6 +4,14 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.9.0 — 2026-10-27
+
+- Persist an accepted Start before acknowledging it or releasing the job to the device worker. Lookup shares the acceptance transaction; preparation and disk I/O never hold the cutter state lock.
+- Preserve Stop during a blocked record write; cancel release after storage failure, disconnection or an observed mat change.
+- Recover accepted results in the cutter service even when the driver never took the job. Restart marks unfinished records interrupted and never resumes motion; deleting ordinary library history cannot delete these results.
+- Make execution recording idempotent, retain the first terminal outcome, support imported unversioned records as schema 1, and fail closed on damaged or unsupported records.
+- Add simulator regressions for the pre-driver restart window, failed storage, blocked persistence with Stop, and cancellation. Outstanding Stop intent, queue recovery and load/latency acceptance remain M3 work.
+
 ## 0.8.0 — 2026-10-27
 
 - Add validated immutable cut copies through the shared `cut.copy` registry command; preparation never queues or moves a cutter.

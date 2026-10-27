@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cameo_pi_core::cutter::Cutter;
-use cameo_pi_core::journal::Journal;
 use cameo_pi_core::worker::{SimLink, Worker, lock};
 use cutcraft_sim::{Clock as SimClock, Media, Profile, Scenario, Simulator};
 use http_body_util::BodyExt;
@@ -38,13 +37,8 @@ fn harness() -> Harness {
         }],
     )
     .unwrap();
-    let (journal, _) = Journal::open(dir.path().join("private/executions")).unwrap();
-    let worker = Worker::new(
-        shared,
-        SimLink { sim: sim.clone() },
-        Arc::new(journal),
-        None,
-    );
+    let journal = service.journal.clone();
+    let worker = Worker::new(shared, SimLink { sim: sim.clone() }, journal, None);
     let (events, _) = tokio::sync::broadcast::channel(16);
     let design = Arc::new(crate::design::Sessions::new(
         crate::design::Mode::Thread,
@@ -2677,5 +2671,183 @@ async fn an_absent_or_stale_design_never_publishes_a_copy() {
             .unwrap()
             .count(),
         0
+    );
+}
+
+async fn ready_start(h: &mut Harness, key: &str) -> (String, Value) {
+    let (_, job) = upload(&h.app, &format!("upload-{key}")).await;
+    let id = job["id"].as_str().unwrap().to_owned();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.unload();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.load(Media::Mat12x12);
+    for _ in 0..9 {
+        h.worker.step();
+    }
+    let view = lock(&h.app.service.cutters[0].shared).view();
+    let cameo_pi_core::mat::Mat::Fresh(generation) = view.mat else {
+        panic!("not fresh");
+    };
+    (
+        id.clone(),
+        json!({"boot":"t", "kind":"main", "turn":null, "job_id":id, "revision":1,
+        "generation":generation, "action_epoch":view.action_epoch, "key":key}),
+    )
+}
+
+#[tokio::test]
+async fn an_acknowledged_start_survives_restart_before_the_driver_takes_it() {
+    let mut h = harness();
+    let (id, body) = ready_start(&mut h, "durable-start").await;
+    let (status, first) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let dir = h._dir;
+    drop(h.worker);
+    drop(h.app);
+    let shared = Arc::new(Mutex::new(Cutter::new(
+        "practice",
+        "Practice Cameo",
+        "after",
+    )));
+    let service = Service::new(
+        "after".into(),
+        dir.path(),
+        vec![CutterEntry {
+            id: "practice".into(),
+            shared: shared.clone(),
+            simulator: None,
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(service.start_result("practice", "durable-start").unwrap()).unwrap(),
+        first
+    );
+    assert!(
+        lock(&shared).take_pending().is_none(),
+        "restart restores the answer, never the motion"
+    );
+    let records: Vec<cameo_pi_core::journal::Record> =
+        std::fs::read_dir(dir.path().join("private/executions"))
+            .unwrap()
+            .map(|entry| {
+                serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap()
+            })
+            .collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome.as_ref().unwrap()["ended"], "interrupted");
+    // Ordinary library/history removal cannot delete the cutter authority's accepted result.
+    service.delete_job(&id).unwrap();
+    let actor = cameo_pi_core::cutter::Actor {
+        user: None,
+        client: "reconnected".into(),
+    };
+    let replay = service
+        .start(
+            "practice",
+            serde_json::from_value(body.clone()).unwrap(),
+            actor.clone(),
+        )
+        .unwrap();
+    assert_eq!(serde_json::to_value(replay).unwrap(), first);
+    let mut changed = body;
+    changed["job_id"] = json!("different");
+    assert_eq!(
+        service
+            .start("practice", serde_json::from_value(changed).unwrap(), actor)
+            .unwrap_err()
+            .error,
+        "key-reused"
+    );
+}
+
+#[tokio::test]
+async fn failed_start_recording_never_releases_a_job_to_the_driver() {
+    let mut h = harness();
+    let (_, body) = ready_start(&mut h, "failed-recording").await;
+    let records = h._dir.path().join("private/executions");
+    std::fs::remove_dir(&records).unwrap();
+    std::fs::write(&records, b"not a directory").unwrap();
+    let (status, reply) = send(&h.app, page("POST", "/api/v1/cutters/practice/start", body)).await;
+    assert_eq!(
+        (status, reply["error"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("recording-failed")),
+        "{reply}"
+    );
+    assert!(
+        lock(&h.app.service.cutters[0].shared)
+            .take_pending()
+            .is_none()
+    );
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    assert!(
+        h.sim.with_machine(|m| m.trace().is_empty()),
+        "no drawing after persistence failure"
+    );
+}
+
+#[test]
+fn stop_preempts_a_start_blocked_on_record_persistence() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut h = harness();
+    let (_, body) = runtime.block_on(ready_start(&mut h, "blocked-recording"));
+    let service = h.app.service.clone();
+    let journal = service.journal.clone();
+    let storage = journal.hold_writes_for_fixture();
+    let (sent, received) = std::sync::mpsc::channel();
+    let starter = {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            let result = service.start(
+                "practice",
+                serde_json::from_value(body).unwrap(),
+                cameo_pi_core::cutter::Actor {
+                    user: None,
+                    client: "test".into(),
+                },
+            );
+            sent.send(result).unwrap();
+        })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while lock(&service.cutters[0].shared).view().execution.is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Start never reached staging"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        received.try_recv().is_err(),
+        "no successful acknowledgement before sync"
+    );
+    h.worker.step();
+    assert!(h.sim.with_machine(|m| m.trace().is_empty()));
+    assert!(matches!(
+        service.stop("practice").unwrap(),
+        cameo_pi_core::cutter::Answer::Stopping { .. }
+    ));
+    drop(storage);
+    assert!(
+        received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .is_ok()
+    );
+    starter.join().unwrap();
+    h.worker.step();
+    assert!(
+        h.sim.with_machine(|m| m.trace().is_empty()),
+        "Stop during persistence wins before any drawing"
     );
 }

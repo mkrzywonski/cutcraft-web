@@ -305,10 +305,6 @@ async fn main() -> ExitCode {
 async fn run(options: Options) -> Result<(), String> {
     let boot = keys::random_hex(4);
     let private = options.data.join("private");
-    let (journal, records) =
-        Journal::open(private.join("executions")).map_err(|e| e.to_string())?;
-    let journal = Arc::new(journal);
-
     let mut cutters = Vec::new();
     let mut links: Vec<(Shared, Option<Simulator>)> = Vec::new();
     if options.practice {
@@ -335,19 +331,9 @@ async fn run(options: Options) -> Result<(), String> {
         });
         links.push((shared, None));
     }
-    // Starts already recorded keep their answers after a restart (spec §9.1).
-    for record in &records {
-        if let Some(entry) = cutters.iter().find(|c| c.id == record.cutter) {
-            lock(&entry.shared).remember(
-                record.key.clone(),
-                record.fingerprint.clone(),
-                record.answer(),
-            );
-        }
-    }
-
     let service =
         Arc::new(Service::new(boot.clone(), &options.data, cutters).map_err(|e| e.message)?);
+    let journal = service.journal.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
     for (shared, sim) in links {
         match sim {

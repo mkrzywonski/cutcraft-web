@@ -139,6 +139,7 @@ pub struct Service {
     /// Shared by every Start path; the updater closes admission before draining.
     pub updates: cameo_pi_core::update::UpdateGate,
     pub library: Library,
+    pub(crate) journal: Arc<cameo_pi_core::journal::Journal>,
     pub(crate) copies: crate::copies::Store,
     pub cutters: Vec<CutterEntry>,
     pub keys: Keys,
@@ -184,7 +185,20 @@ impl Service {
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
         let users = Users::open(&data.join("private"))
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        let (journal, records) =
+            cameo_pi_core::journal::Journal::open(data.join("private/executions"))
+                .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        for record in records {
+            if let Some(entry) = cutters.iter().find(|c| c.id == record.cutter) {
+                lock(&entry.shared).remember(
+                    record.key.clone(),
+                    record.fingerprint.clone(),
+                    record.answer(),
+                );
+            }
+        }
         Ok(Self {
+            journal: Arc::new(journal),
             boot,
             updates: cameo_pi_core::update::UpdateGate::default(),
             library,
@@ -361,10 +375,32 @@ impl Service {
         };
         // Plan validation is outside the gate. Stop never takes it. Replays above remain
         // available during draining, because they cannot start another execution.
-        Ok(self
+        let (answer, staged) = self
             .updates
-            .admit_start(|| lock(&entry.shared).start(request))
-            .map_err(|_| update_waiting())??)
+            .admit_start(|| lock(&entry.shared).stage_start(request))
+            .map_err(|_| update_waiting())??;
+        if let Some(execution) = staged {
+            if let Err(e) = self.journal.started(cutter, &execution) {
+                lock(&entry.shared).abort_start(&execution.id);
+                return Err(ApiError::new(
+                    503,
+                    "recording-failed",
+                    format!("The cut could not be recorded safely; nothing was sent ({e})."),
+                ));
+            }
+            if !lock(&entry.shared).commit_start(&execution.id) {
+                self.journal
+                    .ended(
+                        &execution.id,
+                        &cameo_pi_core::cutter::Ended::NotRun {
+                            reason: "Start authorization changed before the cut could be released."
+                                .into(),
+                        },
+                    )
+                    .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+            }
+        }
+        Ok(answer)
     }
 
     /// The updater must check this again immediately before a graceful restart.
@@ -378,6 +414,8 @@ impl Service {
     }
 
     pub fn start_result(&self, cutter: &str, key: &str) -> Result<Answer> {
+        // A lookup cannot acknowledge a Start before its execution record is synced.
+        let _acceptance = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
         lock(&self.cutter(cutter)?.shared)
             .start_result(key)
             .ok_or_else(|| {

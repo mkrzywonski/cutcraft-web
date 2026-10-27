@@ -200,6 +200,7 @@ pub enum Refusal {
     KeyReused,
     NotCutting,
     StopFirst,
+    RecordingFailed,
     NotFound,
     /// Only a mat that is loaded but wasn't seen loading can be confirmed fresh.
     NothingToConfirm {
@@ -243,6 +244,7 @@ impl Refusal {
             }
             Self::NotCutting => "Nothing is cutting.".into(),
             Self::StopFirst => "Stop the cut first.".into(),
+            Self::RecordingFailed => "The cut could not be recorded safely; nothing was sent. Check the server storage.".into(),
             Self::NotFound => "Not found.".into(),
             Self::NothingToConfirm { mat: Mat::None } => "No mat is loaded.".into(),
             Self::NothingToConfirm { mat: Mat::Used(_) } => {
@@ -297,6 +299,7 @@ enum Activity {
 }
 
 /// An accepted execution, for the device side to run.
+#[derive(Clone)]
 pub struct Execution {
     pub id: String,
     pub kind: Kind,
@@ -375,6 +378,9 @@ pub struct Cutter {
     action_epoch: u64,
     progress: Option<Progress>,
     pending: Option<Execution>,
+    /// The service must sync a staged Start before the device worker may take it.
+    pending_ready: bool,
+    pending_generation: Option<u64>,
     /// Idempotency keys: the request's fingerprint and what it got.
     keys: HashMap<String, (String, Result<Answer, Refusal>)>,
     /// Executions finished since last collected, for history and records.
@@ -398,6 +404,8 @@ impl Cutter {
             action_epoch: 1,
             progress: None,
             pending: None,
+            pending_ready: false,
+            pending_generation: None,
             keys: HashMap::new(),
             finished: Vec::new(),
             confirmed: None,
@@ -546,7 +554,75 @@ impl Cutter {
     }
 
     pub fn take_pending(&mut self) -> Option<Execution> {
+        if !self.pending_ready {
+            return None;
+        }
         self.pending.take()
+    }
+
+    /// Stage under the cutter lock, then sync the returned record without holding that lock.
+    /// The service serializes Start/replay/lookup through its acceptance transaction.
+    pub fn stage_start(
+        &mut self,
+        request: StartRequest,
+    ) -> Result<(Answer, Option<Execution>), Refusal> {
+        if let Some(answer) = self.replay_start(&request.key, &request.action()) {
+            return answer.map(|answer| (answer, None));
+        }
+        let answer = self.start(request)?;
+        let execution = self
+            .pending
+            .as_ref()
+            .expect("a new Start has a pending execution")
+            .clone();
+        self.pending_ready = false;
+        Ok((answer, Some(execution)))
+    }
+
+    /// Release only the same staged execution. A disconnect can have cancelled it meanwhile;
+    /// Stop's control flag is retained, so committing never revokes a Stop received during sync.
+    pub fn commit_start(&mut self, id: &str) -> bool {
+        if self.pending.as_ref().is_none_or(|p| p.id != id)
+            || !matches!(&self.activity, Activity::Running { execution, .. } if execution == id)
+        {
+            return false;
+        }
+        if !self
+            .pending_generation
+            .is_some_and(|generation| self.observer.mat() == Mat::Fresh(generation))
+            || !self.observer.loaded()
+        {
+            let execution = self.pending.take().expect("checked above");
+            execution.controls.stop();
+            self.pending_ready = false;
+            self.finished(
+                id,
+                Outcome::Refused {
+                    reason: "The mat changed while Start was being recorded.".into(),
+                },
+            );
+            return false;
+        }
+        self.pending_ready = true;
+        true
+    }
+
+    /// Failed persistence cannot leave a job available for the worker to send.
+    pub fn abort_start(&mut self, id: &str) {
+        if self.pending.as_ref().is_some_and(|p| p.id == id) {
+            let execution = self.pending.take().expect("checked above");
+            execution.controls.stop();
+            self.pending_ready = false;
+            self.finished(
+                id,
+                Outcome::Refused {
+                    reason: Refusal::RecordingFailed.message(),
+                },
+            );
+            if let Some((_, answer)) = self.keys.get_mut(&execution.key) {
+                *answer = Err(Refusal::RecordingFailed);
+            }
+        }
     }
 
     /// Progress from the driver; ignored unless it belongs to the current execution.
@@ -852,6 +928,8 @@ impl Cutter {
             controls: controls.clone(),
             stopping: false,
         };
+        self.pending_ready = true;
+        self.pending_generation = Some(request.generation);
         self.pending = Some(Execution {
             id: execution.clone(),
             kind: request.kind,
@@ -1654,5 +1732,49 @@ mod tests {
             c.observe(31.0 + f64::from(i) * 0.5, Reading::Ready);
         }
         assert!(c.start(before).is_err(), "made for the old mat");
+    }
+    #[test]
+    fn a_staged_start_cannot_be_taken_before_recording_and_retains_stop() {
+        let mut c = ready_cutter();
+        let request = request(&c, Kind::Main, None, "staged");
+        let (_, execution) = c.stage_start(request).unwrap();
+        let execution = execution.unwrap();
+        assert!(c.take_pending().is_none());
+        c.stop().unwrap();
+        assert!(c.commit_start(&execution.id));
+        let pending = c.take_pending().unwrap();
+        assert!(
+            pending.controls.stopping(),
+            "persistence completion never revokes Stop"
+        );
+    }
+
+    #[test]
+    fn abort_or_disconnect_cannot_release_a_staged_start() {
+        for disconnect in [false, true] {
+            let mut c = ready_cutter();
+            let request = request(&c, Kind::Main, None, "staged");
+            let (_, execution) = c.stage_start(request).unwrap();
+            let execution = execution.unwrap();
+            if disconnect {
+                c.disconnected();
+            } else {
+                c.abort_start(&execution.id);
+            }
+            assert!(!c.commit_start(&execution.id));
+            assert!(c.take_pending().is_none());
+        }
+    }
+    #[test]
+    fn a_mat_change_during_recording_cancels_the_staged_execution() {
+        let mut c = ready_cutter();
+        let request = request(&c, Kind::Main, None, "staged");
+        let (_, execution) = c.stage_start(request).unwrap();
+        let execution = execution.unwrap();
+        c.observe(20.0, Reading::NoMedia);
+        c.observe(20.5, Reading::NoMedia);
+        assert!(!c.commit_start(&execution.id));
+        assert!(c.take_pending().is_none());
+        assert!(c.view().execution.is_none());
     }
 }

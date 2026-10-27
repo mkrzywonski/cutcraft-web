@@ -48,8 +48,32 @@ new library revision and closing the source design. Other tests cover store rest
 HTTP/MCP transport parity, absent/stale designs, changed keys and path rejection.
 The process-worker script exercises creation and loading of copies too.
 
-This does not yet persist queue positions or fix the accepted-Start-before-driver
-crash window; those belong to the durable cutter-authority slice below.
+This does not yet persist queue positions; that remains cutter-authority work.
+
+## Third slice: durable Start admission (0.9.0)
+
+Start stages its execution under the cutter lock, then releases that lock while
+syncing the execution record. The device worker cannot take a staged job. Only a
+successful sync releases it and permits a successful Start acknowledgement. Lookup
+serializes with acceptance, so it cannot announce success early either.
+
+Stop does not take the acceptance or journal lock. Its control flag survives
+persistence completion. A disconnect or observed mat change during persistence
+cancels release; failed storage leaves no job available to the driver. Driver-side
+recording is idempotent and never overwrites a terminal record. The first terminal
+outcome is retained.
+
+Execution records are owned by the service and recovered there, independently of
+sessions and ordinary library history. Restart restores request answers, marks
+unfinished records interrupted and never restores pending motion. Schema-1 records
+are explicit; the imported unversioned form remains readable as schema 1. Damaged,
+unreadable or unsupported records fail startup rather than silently dropping keys.
+
+Regressions cover restart immediately after acknowledgement before the driver takes
+the job, source-library removal, changed-body replay, failed record writes, mat
+change/disconnection and Stop while persistence is deliberately blocked. The latter
+checks that no drawing occurs before sync or after the intervening Stop. These are
+simulator/software checks; they do not establish target-Pi load latency.
 
 ## Next slices required by the spec
 
