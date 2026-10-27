@@ -229,7 +229,48 @@ check("a late, older geometry answer never replaces the newer plan", stale === n
   JSON.stringify({ expected: newerId, got: stale && stale.geometry }));
 await page("window.fetch = __realFetch");
 
-// 9. Nothing broke the rules.
+// 9. From Grok's re-review: a failed geometry fetch must not leave the older plan drawn, and the
+// page asks again.
+await page(`(() => {
+  window.__failOneGeometry = true;
+  window.fetch = async (...args) => {
+    const url = String(args[0]?.url || args[0]);
+    if (url.endsWith("/api/geometry") && __failOneGeometry) {
+      __failOneGeometry = false;
+      return new Response("worker stopped", { status: 500 });
+    }
+    return __realFetch(...args);
+  };
+})()`);
+const shownBefore = (await state()).drawn_geometry;
+const failed = await placeElsewhere(90, "failed-fetch-placement");
+const failedId = failed.design.geometry.id;
+let oldDrawn = false;
+for (const end = Date.now() + 600; Date.now() < end; ) {
+  const seen = await state();
+  if (seen.revision === failed.revision && seen.drawn_geometry === shownBefore) { oldDrawn = true; break; }
+  await sleep(30);
+}
+check("after a failed geometry fetch the older plan isn't drawn", !oldDrawn, shownBefore);
+s = await until("the plan fetched again after the failure", (t) => t.drawn_geometry === failedId);
+check("a failed geometry fetch is retried", s.drawn_geometry === failedId);
+await page("window.fetch = __realFetch");
+
+// 10. From Grok's re-review: a page that speaks another protocol version reaches the reload screen.
+await page(`(() => {
+  window.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const headers = new Headers(request.headers);
+    if (headers.has("x-cutcraft-protocol")) headers.set("x-cutcraft-protocol", "99");
+    return __realFetch(new Request(request, { headers }));
+  };
+})()`);
+await key("m");
+s = await until("the reload screen", (t) => t.reload === true);
+check("another protocol version shows the reload screen", s.reload === true);
+await page("window.fetch = __realFetch");
+
+// 11. Nothing broke the rules.
 const csp = await page("window.__csp");
 check("no CSP violations", csp.length === 0, JSON.stringify(csp));
 const errors = await page("window.__errors");

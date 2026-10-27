@@ -93,6 +93,8 @@ pub struct App {
     last_drop: Option<Value>,
     drag_start: Option<Value>,
     drop_at: Option<f64>,
+    /// When the plan was last asked for again ([`App::retry_geometry`]).
+    geometry_tried: f64,
 }
 
 impl App {
@@ -114,6 +116,7 @@ impl App {
             last_drop: None,
             drag_start: None,
             drop_at: None,
+            geometry_tried: 0.0,
         };
         app.check_signed_in();
         app
@@ -128,6 +131,9 @@ impl App {
         self.spawn(async move {
             match net::request("GET", "/api/snapshot", None, None, &[]).await {
                 Ok(a) if a.status == 401 => shared.borrow_mut().signed_in = Some(false),
+                Ok(a) if state::protocol_refused(a.status, &a.body) => {
+                    shared.borrow_mut().reload = true
+                }
                 Ok(a) if a.status == 200 => {
                     shared.borrow_mut().signed_in = Some(true);
                     if let Ok(text) = String::from_utf8(a.body) {
@@ -237,6 +243,10 @@ impl App {
                         Err(e) => sh.note(format!("{}: unreadable answer {e}", request.id)),
                     }
                 }
+                // Another protocol version: the page must reload (Grok's re-review).
+                Ok(a) if state::protocol_refused(a.status, &a.body) => {
+                    shared.borrow_mut().reload = true;
+                }
                 // The answer was lost (or never came): ask by key, never send it again blindly.
                 other => {
                     let why = match other {
@@ -291,6 +301,12 @@ impl App {
             "cut_ready": design.map(|d| d.cut_ready),
             "material": design.and_then(|d| d.sheet.as_ref()).map(|s| s.material.clone()),
             "geometry": sh.geometry.as_ref().map(|g| g.id.clone()),
+            // What the mat may draw: only the plan the latest snapshot asks for.
+            "drawn_geometry": sh
+                .geometry
+                .as_ref()
+                .filter(|g| state::geometry_is_current(sh.snapshot.as_ref(), g))
+                .map(|g| g.id.clone()),
             "art_box_mm": sh.geometry.as_ref().and_then(|g| g.art_box_mm),
             "picture": sh.picture.as_ref().map(|p| p.key.clone()),
             "lost_reply": sh.lost_reply,
@@ -344,7 +360,13 @@ fn apply_snapshot(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, text: &str)
         drop(sh);
         let (shared, ctx) = (shared.clone(), ctx.clone());
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(a) = net::request("GET", "/api/geometry", None, None, &[]).await
+            let answer = net::request("GET", "/api/geometry", None, None, &[]).await;
+            if let Ok(a) = &answer
+                && state::protocol_refused(a.status, &a.body)
+            {
+                shared.borrow_mut().reload = true;
+            }
+            if let Ok(a) = answer
                 && a.status == 200
                 && let Ok(g) = serde_json::from_slice::<Geometry>(&a.body)
             {
@@ -494,6 +516,7 @@ impl eframe::App for App {
             });
         }
         self.keys(ui);
+        self.retry_geometry();
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status(ui));
         egui::CentralPanel::default()
@@ -658,13 +681,44 @@ impl App {
         }
     }
 
+    /// A plan the snapshot wants but the page doesn't have, and isn't fetching (a failed
+    /// fetch): asked for again, at most once a second (Grok's re-review).
+    fn retry_geometry(&mut self) {
+        let now = net::now_ms();
+        let text = {
+            let sh = self.shared.borrow();
+            let wanted = sh.snapshot.as_ref().and_then(state::wanted_geometry);
+            let missing = wanted.is_some()
+                && sh.geometry_loading.is_none()
+                && sh.geometry.as_ref().map(|g| g.id.as_str()) != wanted;
+            if !missing || now - self.geometry_tried < 1000.0 {
+                return;
+            }
+            sh.snapshot
+                .as_ref()
+                .and_then(|s| serde_json::to_string(s).ok())
+        };
+        self.geometry_tried = now;
+        if let Some(text) = text {
+            // The snapshot isn't newer than itself, so this only starts the fetch.
+            apply_snapshot(&self.shared, &self.ctx, &text);
+        }
+        self.ctx
+            .request_repaint_after(std::time::Duration::from_millis(1000));
+    }
+
     fn placeholder(&self, ui: &mut egui::Ui, rect: egui::Rect) -> bool {
         let sh = self.shared.borrow();
         let text = if let Some(b) = &sh.busy {
             b.clone()
         } else if sh.snapshot.as_ref().is_none_or(|s| s.design.is_none()) {
             "Open a design, or drop one here.".into()
-        } else if sh.geometry.is_none() {
+        } else if !sh
+            .geometry
+            .as_ref()
+            .is_some_and(|g| state::geometry_is_current(sh.snapshot.as_ref(), g))
+        {
+            // Not drawn: no plan yet, or one for an older revision (Grok's re-review).
             "Planning…".into()
         } else {
             return false;
@@ -694,7 +748,11 @@ impl App {
                 .as_ref()
                 .and_then(|s| s.design.as_ref())
                 .and_then(|d| d.art.clone());
-            (art, sh.geometry.clone())
+            let current = sh
+                .geometry
+                .clone()
+                .filter(|g| state::geometry_is_current(sh.snapshot.as_ref(), g));
+            (art, current)
         };
         let (Some(art), Some(geometry)) = (art, geometry) else {
             return;
@@ -816,7 +874,13 @@ impl App {
         if self.placeholder(ui, rect) {
             return;
         }
-        let Some(geometry) = self.shared.borrow().geometry.clone() else {
+        let current = {
+            let sh = self.shared.borrow();
+            sh.geometry
+                .clone()
+                .filter(|g| state::geometry_is_current(sh.snapshot.as_ref(), g))
+        };
+        let Some(geometry) = current else {
             return;
         };
         let Some(mat) = geometry.mat.clone() else {

@@ -60,7 +60,12 @@ for id in rows.list materials.list mats.list plan.sheet; do
   reply=$(cmd "$id" '{}' "read-$id" "$inc" "")
   grep -q "$work" <<<"$reply" && { echo "     $id reply contains a server path"; leaks=$((leaks + 1)); }
 done
-check "no allowed reply contains a server path" "$leaks" 0
+# And the replies of the edits used above, and of history.
+rev=$(c $B/api/snapshot | field "['revision']")
+for reply in "$r1" "$(c $B/api/lookup/k5)" "$(cmd history.undo '{}' undo-scan "$inc" "$rev")"; do
+  grep -q "$work" <<<"$reply" && { echo "     an edit's reply contains a server path"; leaks=$((leaks + 1)); }
+done
+check "no read, edit or history reply contains a server path" "$leaks" 0
 # Codex's review: two designs of the same size both start at revision 1.
 red='<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"><rect x="10" y="10" width="50" height="40" fill="#ff0000"/></svg>'
 blue=${red//#ff0000/#0000ff}

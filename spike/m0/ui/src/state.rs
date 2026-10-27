@@ -39,6 +39,16 @@ pub fn snapshot_is_newer(shown: Option<&SessionSnapshot>, new: &SessionSnapshot)
     shown.is_none_or(|old| old.incarnation != new.incarnation || old.revision <= new.revision)
 }
 
+/// The server refused the request because the page speaks another protocol version (HTTP 409
+/// with `protocol-version`): the page must reload, not treat it as a lost reply.
+pub fn protocol_refused(status: u16, body: &[u8]) -> bool {
+    status == 409
+        && serde_json::from_slice::<serde_json::Value>(body).is_ok_and(|v| {
+            v["code"] == cutcraft_web_protocol::codes::PROTOCOL
+                || v["error"] == cutcraft_web_protocol::codes::PROTOCOL
+        })
+}
+
 /// A server speaking another protocol version: the page must reload.
 pub fn needs_reload(snapshot: &SessionSnapshot) -> bool {
     snapshot.protocol != PROTOCOL_VERSION
@@ -113,6 +123,21 @@ mod tests {
         assert!(picture_is_current(Some(&s), "i-blue-1-1"));
         assert!(!picture_is_current(Some(&s), "i-red-1-1"));
         assert!(!picture_is_current(Some(&snapshot(2, None)), "i-blue-1-1"));
+    }
+
+    /// From Grok's re-review: a refused request must reach the reload screen, not the
+    /// lost-reply path.
+    #[test]
+    fn a_protocol_refusal_is_recognised_and_nothing_else_is() {
+        let refused = br#"{"answer":"refused","code":"protocol-version","message":"Reload"}"#;
+        assert!(protocol_refused(409, refused));
+        assert!(protocol_refused(
+            409,
+            br#"{"error":"protocol-version","message":"Reload"}"#
+        ));
+        assert!(!protocol_refused(503, refused));
+        assert!(!protocol_refused(409, br#"{"code":"stale-revision"}"#));
+        assert!(!protocol_refused(409, b"not json"));
     }
 
     #[test]

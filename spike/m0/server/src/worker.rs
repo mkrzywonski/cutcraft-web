@@ -22,7 +22,8 @@ const MEMORY_LIMIT: u64 = 1536 * 1024 * 1024;
 /// commands that take paths (`design.open`, `project.save`, `export`…) are reached only through
 /// the server, which resolves its own identifiers (spec §6).
 ///
-/// Every reply here is checked for server paths by `protocol-check.sh`. `app.status` and
+/// `protocol-check.sh` scans the replies of the reads, `sheet.set`, `sheet.place` and
+/// `history.undo` for server paths. `app.status` and
 /// `prepare.report` are left out: their replies carry server file paths, and the snapshot gives
 /// what a browser needs of them (Codex's review of milestone 0).
 const ALLOWED: &[&str] = &[

@@ -198,8 +198,24 @@ Grok (`/home/mike/ai-talk/grok-review-m0-m1-2026-10-26.md`) and Codex
 - **P2: `app.status` handed the browser a server file path.**
   - **Removed:** `app.status` and `prepare.report` are off the allowlist, since the snapshot covers
     what they gave.
-  - **Checked:** the protocol check now inspects every allowed reply for server paths.
+  - **Checked:** the protocol check scans the replies of the reads, `sheet.set`, `sheet.place`
+    and `history.undo` for server paths.
 - **Checks now:** 30 protocol checks, 21 browser checks, 10 unit tests.
+
+**From Grok's re-review** (`/home/mike/ai-talk/grok-review-m0-m1-rereview-2026-10-26.md`):
+
+- **P2: a protocol-version refusal (409) was treated as a lost reply,** so the reload screen
+  never showed.
+  - **The fix:** every request path now recognises it (`state::protocol_refused`, tested) and
+    shows "CutCraft was updated. Reload this page."
+  - **Tested end to end:** a browser check rewrites the page's version and expects the reload
+    screen.
+- **P2: a failed geometry fetch left the previous plan on the mat.** Now the mat and the overlay
+  draw only the plan the latest snapshot asks for, and a failed fetch is retried about once a
+  second. A browser check fails one fetch and expects neither the old plan nor a stuck page.
+- **P3:** the path scan's wording now says what it covers. The she/her names in tests are fixed
+  on `claude/m1`.
+- **Checks now:** 30 protocol checks, 24 browser checks, 11 unit tests.
 
 **From Grok, fixed in the commit before:**
 
