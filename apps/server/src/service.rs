@@ -209,17 +209,26 @@ impl Service {
                 .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
         for record in &records {
             if let Some(entry) = cutters.iter().find(|c| c.id == record.cutter) {
-                lock(&entry.shared).remember(
-                    record.key.clone(),
-                    record.fingerprint.clone(),
-                    record.answer(),
-                );
+                if record.start_refused {
+                    lock(&entry.shared).remember_start_refusal(
+                        record.key.clone(),
+                        record.fingerprint.clone(),
+                        record.execution.clone(),
+                    );
+                } else {
+                    lock(&entry.shared).remember(
+                        record.key.clone(),
+                        record.fingerprint.clone(),
+                        record.answer(),
+                    );
+                }
             }
         }
         let consumed: std::collections::HashSet<String> = records
             .iter()
             .filter(|record| {
                 record.kind == "main"
+                    && !record.start_refused
                     && record
                         .outcome
                         .as_ref()
@@ -408,8 +417,9 @@ impl Service {
             generation: body.generation,
             action_epoch: body.action_epoch,
         };
-        if let Some(answer) = lock(&entry.shared).replay_start(&body.key, &action) {
-            return Ok(answer?);
+        let replay = lock(&entry.shared).replay_start(&body.key, &action);
+        if let Some(answer) = replay {
+            return self.confirmed_start_result(answer);
         }
         if self.updates.waiting() {
             return Err(update_waiting());
@@ -460,19 +470,32 @@ impl Service {
                 );
                 return Err(error);
             }
-            if !lock(&entry.shared).commit_start(&execution.id) {
-                self.journal
-                    .ended(
-                        &execution.id,
-                        &cameo_pi_core::cutter::Ended::NotRun {
-                            reason: "Start authorization changed before the cut could be released."
-                                .into(),
-                        },
-                    )
-                    .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+            let committed = lock(&entry.shared).commit_start(&execution.id);
+            if !committed {
+                lock(&entry.shared).remember_start_refusal(
+                    execution.key.clone(),
+                    execution.fingerprint.clone(),
+                    execution.id.clone(),
+                );
+                return self.confirmed_start_result(Err(Refusal::StartCancelled {
+                    execution: execution.id,
+                }));
             }
         }
         Ok(answer)
+    }
+
+    /// A definitive pre-release refusal is returned only after its receipt is synced.
+    /// Replays retry a failed write rather than claiming durability or reporting Started.
+    fn confirmed_start_result(
+        &self,
+        result: std::result::Result<Answer, Refusal>,
+    ) -> Result<Answer> {
+        if let Err(Refusal::StartCancelled { execution }) = &result {
+            self.journal.start_refused(execution)
+                .map_err(|e| ApiError::new(503, "recording-failed", format!("Nothing was sent, but the cancelled Start could not be recorded safely ({e}). Retry this request.")))?;
+        }
+        result.map_err(Into::into)
     }
 
     /// The updater must check this again immediately before a graceful restart.
@@ -488,6 +511,10 @@ impl Service {
     pub fn start_result(&self, cutter: &str, key: &str) -> Result<Answer> {
         // A lookup cannot acknowledge a Start before its execution record is synced.
         let _acceptance = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let refusal = lock(&self.cutter(cutter)?.shared).start_refusal(key);
+        if let Some(refusal) = refusal {
+            return self.confirmed_start_result(Err(refusal));
+        }
         lock(&self.cutter(cutter)?.shared)
             .start_result(key)
             .ok_or_else(|| {

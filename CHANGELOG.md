@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.13.1 — 2026-10-27
+
+- Return a durable refusal when a mat change or disconnect cancels Start before release; retries and lookup preserve it across restart. Failed receipt writes remain retryable storage errors and never report Started.
+
 ## 0.13.0 — 2026-10-27
 
 - Drain active cuts on SIGTERM/Ctrl-C, continue serving Stop and this version’s assets, then checkpoint workers/queues and join device/history threads before restart.

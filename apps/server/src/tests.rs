@@ -3113,3 +3113,156 @@ async fn slow_preview_bodies_hold_bounded_slots_without_blocking_stop() {
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
+
+#[test]
+fn a_start_cancelled_before_release_replays_a_durable_refusal() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    for disconnect in [false, true] {
+        let mut h = harness();
+        let (_, body) = runtime.block_on(ready_start(&mut h, "cancelled-before-release"));
+        let service = h.app.service.clone();
+        let journal = service.journal.clone();
+        let storage = journal.hold_writes_for_fixture();
+        let starter = {
+            let service = service.clone();
+            let body = body.clone();
+            std::thread::spawn(move || {
+                service.start(
+                    "practice",
+                    serde_json::from_value(body).unwrap(),
+                    cameo_pi_core::cutter::Actor {
+                        user: None,
+                        client: "test".into(),
+                    },
+                )
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while lock(&service.cutters[0].shared).view().execution.is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        if disconnect {
+            lock(&service.cutters[0].shared).disconnected();
+        } else {
+            h.sim.unload();
+            h.worker.step();
+            h.worker.step();
+        }
+        drop(storage);
+        assert_eq!(
+            starter.join().unwrap().unwrap_err().error,
+            "start-cancelled"
+        );
+        let actor = cameo_pi_core::cutter::Actor {
+            user: None,
+            client: "retry".into(),
+        };
+        assert_eq!(
+            service
+                .start(
+                    "practice",
+                    serde_json::from_value(body.clone()).unwrap(),
+                    actor.clone()
+                )
+                .unwrap_err()
+                .error,
+            "start-cancelled"
+        );
+        assert_eq!(
+            service
+                .start_result("practice", "cancelled-before-release")
+                .unwrap_err()
+                .error,
+            "start-cancelled"
+        );
+        assert!(lock(&service.cutters[0].shared).take_pending().is_none());
+        for _ in 0..3 {
+            h.worker.step();
+        }
+        assert!(h.sim.with_machine(|m| m.trace().is_empty()));
+        // Even a cached negative answer needs its durable receipt. A missing record
+        // reports storage failure until it can be confirmed, never Started or a new run.
+        let record = std::fs::read_dir(h._dir.path().join("private/executions"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .unwrap();
+        let saved = std::fs::read(&record).unwrap();
+        std::fs::remove_file(&record).unwrap();
+        assert_eq!(
+            service
+                .start_result("practice", "cancelled-before-release")
+                .unwrap_err()
+                .error,
+            "recording-failed"
+        );
+        assert_eq!(
+            service
+                .start(
+                    "practice",
+                    serde_json::from_value(body.clone()).unwrap(),
+                    actor.clone()
+                )
+                .unwrap_err()
+                .error,
+            "recording-failed"
+        );
+        std::fs::write(&record, saved).unwrap();
+        assert_eq!(
+            service
+                .start_result("practice", "cancelled-before-release")
+                .unwrap_err()
+                .error,
+            "start-cancelled"
+        );
+        let dir = h._dir;
+        drop(h.worker);
+        drop(h.app);
+        drop(service);
+        drop(journal);
+        let shared = Arc::new(Mutex::new(Cutter::new(
+            "practice",
+            "Practice Cameo",
+            "after",
+        )));
+        let restored = Service::new(
+            "after".into(),
+            dir.path(),
+            vec![CutterEntry {
+                id: "practice".into(),
+                shared: shared.clone(),
+                simulator: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            restored
+                .start_result("practice", "cancelled-before-release")
+                .unwrap_err()
+                .error,
+            "start-cancelled"
+        );
+        assert_eq!(
+            restored
+                .start(
+                    "practice",
+                    serde_json::from_value(body.clone()).unwrap(),
+                    actor.clone()
+                )
+                .unwrap_err()
+                .error,
+            "start-cancelled"
+        );
+        let mut changed = body;
+        changed["generation"] = json!(999);
+        assert_eq!(
+            restored
+                .start("practice", serde_json::from_value(changed).unwrap(), actor)
+                .unwrap_err()
+                .error,
+            "key-reused"
+        );
+        assert!(lock(&shared).take_pending().is_none());
+    }
+}

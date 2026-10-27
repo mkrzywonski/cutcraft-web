@@ -212,6 +212,9 @@ pub enum Refusal {
     NotCutting,
     StopFirst,
     RecordingFailed,
+    StartCancelled {
+        execution: String,
+    },
     NotFound,
     /// Only a mat that is loaded but wasn't seen loading can be confirmed fresh.
     NothingToConfirm {
@@ -255,6 +258,7 @@ impl Refusal {
             }
             Self::NotCutting => "Nothing is cutting.".into(),
             Self::StopFirst => "Stop the cut first.".into(),
+            Self::StartCancelled { .. } => "Start was cancelled because the cutter or mat changed before sending. Nothing was sent. Check the cutter and start again with a new request.".into(),
             Self::RecordingFailed => "The cut could not be recorded safely; nothing was sent. Check the server storage.".into(),
             Self::NotFound => "Not found.".into(),
             Self::NothingToConfirm { mat: Mat::None } => "No mat is loaded.".into(),
@@ -909,6 +913,20 @@ impl Cutter {
             Ok(answer @ Answer::Started { .. }) => Some(answer.clone()),
             _ => None,
         })
+    }
+
+    /// A staged Start cancelled before release must replay its refusal, not Started.
+    pub fn remember_start_refusal(&mut self, key: String, fingerprint: String, execution: String) {
+        self.keys.insert(
+            key,
+            (fingerprint, Err(Refusal::StartCancelled { execution })),
+        );
+    }
+
+    pub fn start_refusal(&self, key: &str) -> Option<Refusal> {
+        self.keys
+            .get(key)
+            .and_then(|(_, answer)| answer.as_ref().err().cloned())
     }
 
     /// Seeds the answer to an idempotency key from a durable record (after a restart).

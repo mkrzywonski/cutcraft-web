@@ -1,6 +1,6 @@
 # M3 implementation status
 
-Implementation and simulator acceptance are complete through 0.13.0. Independent
+Implementation and simulator acceptance are complete through 0.13.0, with the review fix in 0.13.1. Independent
 review is pending; integration to main waits for two non-author approvals.
 See `docs/reviews/m3-author-evidence.md` for the test matrix and target-Pi results.
 
@@ -181,3 +181,11 @@ The implementation is ready for independent review. **Do not merge until two
 non-author reviews have closed the safety/persistence changes.** M4/M5 layouts,
 M6 full MCP parity, M7 migration/backups and M8 packaging remain their own milestones;
 the earlier M2 carryovers are not claimed complete here.
+
+## Review follow-up (0.13.1)
+
+Grok #100 identified an incorrect Started answer when authorization changed before
+release. The fix retains a durable start-cancelled refusal across retry, lookup and
+restart; storage errors stay retryable and no motion is restored. New regressions
+cover mat unload/disconnection during persistence and terminal-write ordering.
+Independent review closure remains pending.

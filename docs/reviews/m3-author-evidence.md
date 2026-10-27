@@ -79,3 +79,38 @@ opened and no real cutter moved. HTTP round-trip timings conservatively include
 local client overhead; they measure acknowledgement, never physical stopping.
 These targeted runs are not a soak test, a filesystem-failure latency guarantee,
 or acceptance of the future desktop/compact layouts and packages.
+
+## Grok review follow-up — 0.13.1
+
+Grok's review (#100) found that a mat change/disconnect during Start persistence
+prevented motion but still returned/replayed Started. The service now returns
+`start-cancelled`, retaining that result for retries and lookup. An additive
+`start_refused` field records the refusal atomically with the execution outcome;
+older records default to false and retain their original answers. Recovery never
+creates a runnable. First terminal outcomes still win over late writes.
+
+The refusal is returned only after syncing the receipt. If that write fails,
+retry/lookup retry persistence and report a storage failure rather than claiming a
+confirmed refusal or returning Started. Sync is retried even if the prior rename
+succeeded but its directory sync failed. Disk work holds no cutter mutex; Stop's
+separate control and persistence path is unchanged.
+
+The deterministic service regression blocks Start persistence, then either unloads
+the simulated mat or disconnects the cutter. It checks the original refusal,
+retry, lookup, restart, changed-body rejection, missing receipt storage and no
+motion. Journal tests cover both orders of terminal/refusal writes, restart and
+older records without the new field. The existing Stop-during-blocked-persistence
+regression continues to expect the accepted execution with Stop already set.
+
+The fix requires Grok's re-check and the remaining independent approval before
+integration. This report does not close the review on the reviewer's behalf.
+
+0.13.1 verification: workspace fmt, Clippy with warnings denied, **440 Rust tests**
+and build passed; protocol wasm Clippy, cargo-deny and the real worker script passed.
+The desktop HTTPS isolation harness passed (Stop ≤57.904 ms, peak RSS 278.38 MiB).
+The release Pi 5 HTTPS harness passed with two 2,000-shape sessions: Stop 6.372,
+5.404, 3.676 and 3.246 ms; peak RSS 172.59 MiB; two workers maximum. Both heavy
+opens completed, cancellation and memory-failure recovery passed, and update drain
+refused new Start while retaining Stop. The transient test service exited cleanly.
+These are simulator results; no USB or physical cutter was used. Layout and backup
+code did not change; the earlier browser/backup evidence remains separate.

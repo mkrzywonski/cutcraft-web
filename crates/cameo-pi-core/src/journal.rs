@@ -33,6 +33,9 @@ pub struct Record {
     pub started: u64,
     /// `None` until the execution ends.
     pub outcome: Option<serde_json::Value>,
+    /// Start was durably staged but never released; its result is a refusal.
+    #[serde(default)]
+    pub start_refused: bool,
 }
 
 fn record_schema() -> u32 {
@@ -47,7 +50,7 @@ impl Record {
         }
     }
 
-    /// The answer the original Start got, for its idempotency key.
+    /// The successful Start answer. Recovery must check `start_refused` first.
     pub fn answer(&self) -> Answer {
         Answer::Started {
             execution: self.execution.clone(),
@@ -368,7 +371,30 @@ impl Journal {
             digest: execution.run.digest.clone(),
             started: now(),
             outcome: None,
+            start_refused: false,
         })
+    }
+
+    /// Atomically retain a pre-release refusal with the execution outcome. Existing
+    /// terminal outcomes still win; neither a late driver write nor restart loses the refusal.
+    pub fn start_refused(&self, execution: &str) -> std::io::Result<()> {
+        let _transaction = self.transaction.lock().unwrap_or_else(|p| p.into_inner());
+        let mut record: Record = serde_json::from_slice(&fs::read(self.path(execution))?)
+            .map_err(std::io::Error::other)?;
+        // Retry the sync even if a previous rename succeeded but its directory sync failed.
+        record.start_refused = true;
+        if record.outcome.is_none() {
+            record.outcome = Some(
+                serde_json::to_value(Ended::NotRun {
+                    reason: crate::cutter::Refusal::StartCancelled {
+                        execution: execution.into(),
+                    }
+                    .message(),
+                })
+                .map_err(std::io::Error::other)?,
+            );
+        }
+        self.write(&record)
     }
 
     /// Completes a record with how the execution ended.
@@ -519,6 +545,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_release_refusal_survives_terminal_write_order_and_restart() {
+        for terminal_first in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (journal, _) = Journal::open(dir.path()).unwrap();
+            let execution = execution("exec-cancelled");
+            journal.started("cutter", &execution).unwrap();
+            if terminal_first {
+                journal.ended(&execution.id, &Ended::Stopped).unwrap();
+            }
+            journal.start_refused(&execution.id).unwrap();
+            journal.ended(&execution.id, &Ended::Finished).unwrap();
+            journal.start_refused(&execution.id).unwrap();
+            let (_, records) = Journal::open(dir.path()).unwrap();
+            assert!(records[0].start_refused);
+            assert_eq!(
+                records[0].outcome.as_ref().unwrap()["ended"],
+                if terminal_first { "stopped" } else { "not-run" }
+            );
+        }
+    }
+
+    #[test]
     fn legacy_execution_records_remain_readable_and_damaged_records_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
         let (journal, _) = Journal::open(dir.path()).unwrap();
@@ -528,9 +576,11 @@ mod tests {
         let mut legacy: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         legacy.as_object_mut().unwrap().remove("schema_version");
+        legacy.as_object_mut().unwrap().remove("start_refused");
         fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let (_, records) = Journal::open(dir.path()).unwrap();
         assert_eq!(records[0].schema_version, 1);
+        assert!(!records[0].start_refused);
         assert_eq!(records[0].outcome.as_ref().unwrap()["ended"], "interrupted");
         fs::write(&path, b"damaged").unwrap();
         assert!(Journal::open(dir.path()).is_err());
