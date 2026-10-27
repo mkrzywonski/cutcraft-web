@@ -178,8 +178,30 @@ Open `https://localhost:8443`.
 
 ## 7. Review
 
-Grok reviewed `e6cf4c4` (`/home/mike/ai-talk/grok-review-m0-m1-2026-10-26.md`). Fixed in the next
-commit:
+Grok (`/home/mike/ai-talk/grok-review-m0-m1-2026-10-26.md`) and Codex
+(`/home/mike/ai-talk/cutcraft-web-m0-m1-code-review-2026-10-26.md`) reviewed `e6cf4c4`.
+
+**From Codex:**
+
+- **P1: two designs could share a picture address.** Both start at revision 1, so the browser
+  could cache and show the first design's artwork over the second's cut lines.
+  - **The fix:** artwork now has an identity (`ArtView::id`): the session load, the source file's
+    hash, the project revision and the resize. Pictures are asked for, checked on the server, and
+    installed and drawn in the page only by that identity.
+  - **Protocol version 2:** the change isn't additive, so the version went up.
+- **P1: a late, older geometry answer could replace a newer placement.** This is Grok's finding
+  too, fixed as below. Codex's controlled Chromium test is now part of `browser-check.mjs`.
+- **P1: an edit sent without a revision bypassed the stale-change check.**
+  - **The fix:** the worker refuses any command the registry doesn't class as a read if it has no
+    revision (`revision-required`).
+  - **Tested:** for both edits and reads.
+- **P2: `app.status` handed the browser a server file path.**
+  - **Removed:** `app.status` and `prepare.report` are off the allowlist, since the snapshot covers
+    what they gave.
+  - **Checked:** the protocol check now inspects every allowed reply for server paths.
+- **Checks now:** 30 protocol checks, 21 browser checks, 10 unit tests.
+
+**From Grok, fixed in the commit before:**
 
 - **P1: a late geometry answer could put an older plan back on the mat.**
   - **The fix:** the page now shows a geometry only if it's the one the latest snapshot asks for

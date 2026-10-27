@@ -28,6 +28,8 @@ enum Screen {
 
 struct Picture {
     key: String,
+    /// The artwork it shows ([`ArtView::id`](cutcraft_web_protocol::ArtView)).
+    art: String,
     /// In the design's own mm.
     region: [f64; 4],
     texture: egui::TextureHandle,
@@ -724,7 +726,13 @@ impl App {
         self.overlay_view = Some((r, view));
         // The picture: whatever we have, scaled to where it belongs, until a new one arrives.
         let painter = ui.painter_at(rect);
-        if let Some(p) = &self.shared.borrow().picture {
+        if let Some(p) = self
+            .shared
+            .borrow()
+            .picture
+            .as_ref()
+            .filter(|p| p.art == art.id)
+        {
             let s = art.scale;
             let a = view.to_screen(r, [p.region[0] * s, p.region[1] * s]);
             let b = view.to_screen(r, [p.region[2] * s, p.region[3] * s]);
@@ -754,7 +762,7 @@ impl App {
         let (region, width, height) =
             view::picture_for(view, r, ui.ctx().pixels_per_point(), art.scale);
         let request = PictureRequest {
-            design_revision: art.design_revision,
+            art: art.id.clone(),
             region,
             zoom_step: view.zoom_step(),
             width,
@@ -780,12 +788,17 @@ impl App {
                     let colour = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
                     let texture = ctx.load_texture("artwork", colour, egui::TextureOptions::LINEAR);
                     let mut sh = shared.borrow_mut();
-                    sh.picture_ms = Some(a.ms);
-                    sh.picture = Some(Picture {
-                        key,
-                        region: request.region,
-                        texture,
-                    });
+                    // Only for the artwork shown now: a late picture of another design, or of
+                    // an older revision, is dropped (Codex's review of milestone 0).
+                    if state::picture_is_current(sh.snapshot.as_ref(), &request.art) {
+                        sh.picture_ms = Some(a.ms);
+                        sh.picture = Some(Picture {
+                            key,
+                            art: request.art.clone(),
+                            region: request.region,
+                            texture,
+                        });
+                    }
                 }
                 shared.borrow_mut().picture_loading = None;
                 ctx.request_repaint();

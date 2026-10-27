@@ -104,7 +104,7 @@ measured.cached_load_to_running_ms = Math.round(cached.ready_at_ms);
 // 3. Upload the authored fixture, as a drop or the file picker does.
 const svg = await fs.readFile(fixture, "utf8");
 const uploaded = await page(`fetch("/api/upload?name=star-and-ring.svg", { method: "POST",
-  headers: { "x-cutcraft": "1", "x-cutcraft-protocol": "1" }, body: ${JSON.stringify(svg)} }).then(r => r.status)`);
+  headers: { "x-cutcraft": "1", "x-cutcraft-protocol": "2" }, body: ${JSON.stringify(svg)} }).then(r => r.status)`);
 check("upload", uploaded === 200, `HTTP ${uploaded}`);
 let s = await until("the design, cut-ready, with its geometry", (s) => s.design && s.cut_ready && s.geometry && s.mat_view);
 check("Make cut-ready ran in the worker", s.cut_ready === true);
@@ -180,7 +180,56 @@ check("the picture region shrank with the zoom", (() => {
   return Number(b.get("x1")) - Number(b.get("x0")) < Number(a.get("x1")) - Number(a.get("x0"));
 })(), `${firstPicture} → ${s.picture}`);
 
-// 8. Nothing broke the rules.
+// 8. From Codex's review: hold back one geometry answer while another device makes two
+// placements; releasing the old answer must not put the older plan back on the mat.
+await page(`(() => {
+  window.__realFetch = window.fetch.bind(window);
+  window.__holdOneGeometry = true;
+  window.fetch = async (...args) => {
+    const response = await __realFetch(...args);
+    const url = String(args[0]?.url || args[0]);
+    if (url.endsWith("/api/geometry") && __holdOneGeometry) {
+      __holdOneGeometry = false;
+      const bytes = await response.arrayBuffer();
+      await new Promise((resolve) => { window.__releaseGeometry = resolve; });
+      return new Response(bytes, { status: response.status, headers: response.headers });
+    }
+    return response;
+  };
+})()`);
+const H = `{ "x-cutcraft": "1", "x-cutcraft-protocol": "2", "content-type": "application/json" }`;
+async function placeElsewhere(x, key) {
+  return page(`(async () => {
+    const s = await __realFetch("/api/snapshot", { headers: ${H} }).then(r => r.json());
+    const answer = await __realFetch("/api/command", { method: "POST", headers: ${H},
+      body: JSON.stringify({ id: "sheet.place", params: { x: ${x}, y: 30 }, key: ${JSON.stringify(key)},
+        incarnation: s.incarnation, revision: s.revision }) }).then(r => r.json());
+    if (answer.answer !== "applied") throw new Error(JSON.stringify(answer));
+    return __realFetch("/api/snapshot", { headers: ${H} }).then(r => r.json());
+  })()`);
+}
+await key("c");
+await placeElsewhere(30, "older-placement");
+const held = Date.now() + 10000;
+while (!(await page("!!window.__releaseGeometry"))) {
+  if (Date.now() > held) throw new Error("the older geometry request wasn't captured");
+  await sleep(50);
+}
+const newer = await placeElsewhere(60, "newer-placement");
+const newerId = newer.design.geometry.id;
+await until("the newer placement on the mat", (t) => t.geometry === newerId);
+await page("window.__releaseGeometry()");
+let stale = null;
+for (const end = Date.now() + 3000; Date.now() < end; ) {
+  const seen = await state();
+  if (seen.geometry !== newerId) { stale = seen; break; }
+  await sleep(50);
+}
+check("a late, older geometry answer never replaces the newer plan", stale === null,
+  JSON.stringify({ expected: newerId, got: stale && stale.geometry }));
+await page("window.fetch = __realFetch");
+
+// 9. Nothing broke the rules.
 const csp = await page("window.__csp");
 check("no CSP violations", csp.length === 0, JSON.stringify(csp));
 const errors = await page("window.__errors");

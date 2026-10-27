@@ -21,9 +21,11 @@ const MEMORY_LIMIT: u64 = 1536 * 1024 * 1024;
 /// The registry commands a browser may send in milestone 0. Everything else is refused:
 /// commands that take paths (`design.open`, `project.save`, `export`…) are reached only through
 /// the server, which resolves its own identifiers (spec §6).
+///
+/// Every reply here is checked for server paths by `protocol-check.sh`. `app.status` and
+/// `prepare.report` are left out: their replies carry server file paths, and the snapshot gives
+/// what a browser needs of them (Codex's review of milestone 0).
 const ALLOWED: &[&str] = &[
-    "app.status",
-    "prepare.report",
     "prepare.decide",
     "rows.list",
     "cut.include",
@@ -46,6 +48,8 @@ struct Worker {
     /// slice; durable with the draft checkpoint in milestone 2.
     keys: HashMap<String, (CommandRequest, CommandReply)>,
     name: Option<String>,
+    /// The registry's read commands: only these may come without a revision.
+    reads: Vec<&'static str>,
 }
 
 pub fn run(area: &Path) -> Result<(), String> {
@@ -58,8 +62,16 @@ pub fn run(area: &Path) -> Result<(), String> {
         .map_err(|e| format!("setting the memory limit: {e}"))?;
     let area = std::fs::canonicalize(area).map_err(|e| format!("{}: {e}", area.display()))?;
     let roots = Roots::new(Some(&area), None)?;
+    let controller = Controller::headless(roots);
+    let reads = controller
+        .commands()
+        .into_iter()
+        .filter(|c| c.authority == cutcraft_control::Authority::Read)
+        .map(|c| c.id)
+        .collect();
     let mut worker = Worker {
-        controller: Controller::headless(roots),
+        reads,
+        controller,
         area,
         incarnation: crate::random_hex(8),
         keys: HashMap::new(),
@@ -153,6 +165,13 @@ impl Worker {
         if !ALLOWED.contains(&c.id.as_str()) {
             return refused(codes::FORBIDDEN, format!("{} isn't available here.", c.id));
         }
+        // Every change names the revision it was made against (spec §7); only reads may not.
+        if c.revision.is_none() && !self.reads.contains(&c.id.as_str()) {
+            return refused(
+                codes::REVISION_REQUIRED,
+                "This change didn't say which version of the project it was made on.",
+            );
+        }
         let params = if c.params.is_null() {
             json!({})
         } else {
@@ -216,7 +235,7 @@ impl Worker {
                     geometry: Some(GeometryRef {
                         id: geometry_id(project.revision, plan.as_ref()),
                     }),
-                    art: art_view(open),
+                    art: art_view(open, &self.incarnation),
                     sheet: sheet.map(|sh| SheetView {
                         material: sh.material.name.clone(),
                         mat: sh.mat_profile().name.clone(),
@@ -320,8 +339,8 @@ impl Worker {
         }
         let s = self.controller.snapshot()?;
         let open = s.design.as_ref().ok_or("No design is open.")?;
-        if open.project.revision != p.design_revision {
-            return Err("stale design revision".into());
+        if art_view(open, &self.incarnation).map(|a| a.id) != Some(p.art.clone()) {
+            return Err("that picture isn't of the design open now".into());
         }
         let view = cutcraft_control::source_view(open)?;
         let rgba = view.render(p.region, p.width, p.height)?;
@@ -357,7 +376,7 @@ fn geometry_id(revision: u64, plan: Option<&cutcraft_path::CutPlan>) -> String {
 
 /// Where to show the artwork, as the desktop fits it: the page, grown to any art outside it,
 /// in millimetres as resized.
-fn art_view(open: &cutcraft_control::OpenDesign) -> Option<ArtView> {
+fn art_view(open: &cutcraft_control::OpenDesign, incarnation: &str) -> Option<ArtView> {
     let project = &open.project;
     let lines = cutcraft_path::assembly(project)
         .into_iter()
@@ -387,7 +406,13 @@ fn art_view(open: &cutcraft_control::OpenDesign) -> Option<ArtView> {
         }
         None => lines?,
     };
+    let source = &project.prepared.source_sha256;
     Some(ArtView {
+        id: format!(
+            "{incarnation}-{}-{}-{scale}",
+            &source[..source.len().min(16)],
+            project.revision
+        ),
         design_revision: project.revision,
         bounds,
         scale,

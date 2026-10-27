@@ -16,7 +16,7 @@ CUTCRAFT_WEB_PASSWORD=pc target/release/cutcraft-web-m0 serve --data "$work/data
 server_pid=$!
 B=https://127.0.0.1:$port
 for _ in $(seq 50); do curl -sk -o /dev/null "$B/" && break; sleep 0.1; done
-c() { curl -sk -b "$work/jar" -c "$work/jar" -H 'x-cutcraft-protocol: 1' "$@"; }
+c() { curl -sk -b "$work/jar" -c "$work/jar" -H 'x-cutcraft-protocol: 2' "$@"; }
 code() { c -o /dev/null -w '%{http_code}' "$@"; }
 failures=0
 check() { if [[ $2 == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: got $2, wanted $3"; failures=$((failures + 1)); fi; }
@@ -47,10 +47,29 @@ check "a lost reply comes back as 503" "$(cmd sheet.place '{"x":20,"y":10}' k5 "
 check "…and is found by its key, applied" "$(c $B/api/lookup/k5 | field "['answer']")" applied
 check "…and was applied once" "$(c $B/api/geometry | field "['art_box_mm'][0]")" "32.7"
 check "an unknown key is not applied" "$(c $B/api/lookup/never | field "['answer']")" not_applied
-rev=$(c $B/api/snapshot | field "['design']['art']['design_revision']")
-check "a picture for the current revision" "$(code "$B/api/picture?design_revision=$rev&x0=0&y0=0&x1=80&y1=60&zoom_step=0&width=200&height=150")" 200
-check "a picture for an old revision is refused" "$(code "$B/api/picture?design_revision=999&x0=0&y0=0&x1=80&y1=60&zoom_step=0&width=200&height=150")" 404
-check "an oversized picture is refused" "$(code "$B/api/picture?design_revision=$rev&x0=0&y0=0&x1=80&y1=60&zoom_step=0&width=9999&height=150")" 404
+art=$(c $B/api/snapshot | field "['design']['art']['id']")
+pic() { echo "$B/api/picture?art=$1&x0=0&y0=0&x1=80&y1=60&zoom_step=0&width=$2&height=150"; }
+check "a picture of the design open now" "$(code "$(pic "$art" 200)")" 200
+check "a picture of no current design is refused" "$(code "$(pic "nope" 200)")" 404
+check "an oversized picture is refused" "$(code "$(pic "$art" 9999)")" 404
+check "an edit without a revision is refused" "$(cmd sheet.place '{"x":30,"y":30}' k7 "$inc" "" | field "['code']")" revision-required
+check "a read without a revision is answered" "$(cmd rows.list '{}' k8 "$inc" "" | field "['answer']")" applied
+check "app.status (server paths) isn't available to a browser" "$(cmd app.status '{}' k9 "$inc" "" | field "['code']")" forbidden
+leaks=0
+for id in rows.list materials.list mats.list plan.sheet; do
+  reply=$(cmd "$id" '{}' "read-$id" "$inc" "")
+  grep -q "$work" <<<"$reply" && { echo "     $id reply contains a server path"; leaks=$((leaks + 1)); }
+done
+check "no allowed reply contains a server path" "$leaks" 0
+# Codex's review: two designs of the same size both start at revision 1.
+red='<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"><rect x="10" y="10" width="50" height="40" fill="#ff0000"/></svg>'
+blue=${red//#ff0000/#0000ff}
+art_red=$(c -H 'x-cutcraft: 1' --data-binary "$red" "$B/api/upload?name=red.svg" | field "['design']['art']['id']")
+art_blue=$(c -H 'x-cutcraft: 1' --data-binary "$blue" "$B/api/upload?name=blue.svg" | field "['design']['art']['id']")
+check "two designs at the same revision have different artwork identities" "$([[ $art_red != "$art_blue" ]] && echo yes)" yes
+check "the first design's picture is refused once the second is open" "$(code "$(pic "$art_red" 200)")" 404
+check "the second design's picture is served" "$(code "$(pic "$art_blue" 200)")" 200
+inc=$(c $B/api/snapshot | field "['incarnation']")
 printf '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10' >"$work/broken.svg"
 check "a broken design is refused, plainly" "$(code -H 'x-cutcraft: 1' --data-binary @"$work/broken.svg" "$B/api/upload?name=b.svg")" 422
 worker=$(pgrep -a cutcraft-web-m0 | grep "worker --area $work" | cut -d' ' -f1)

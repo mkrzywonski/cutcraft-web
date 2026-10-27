@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -61,6 +61,8 @@ pub mod codes {
     pub const KEY_REUSED: &str = "key-reused";
     /// The client speaks another protocol version: reload the page.
     pub const PROTOCOL: &str = "protocol-version";
+    /// A change must name the revision it was made against.
+    pub const REVISION_REQUIRED: &str = "revision-required";
     /// Not allowed for this person.
     pub const FORBIDDEN: &str = "forbidden";
 }
@@ -115,6 +117,10 @@ pub struct GeometryRef {
 /// for in the design's own millimetres (before resizing), which is that divided by `scale`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArtView {
+    /// Names everything a picture depends on: the session load, the opened source file, the
+    /// project revision and the resize. Two designs never share one, so a picture is never
+    /// shown for the wrong design (Codex's review of milestone 0).
+    pub id: String,
     /// The design revision pictures are rendered from.
     pub design_revision: u64,
     /// What to fit: the page, grown to any art outside it, in mm as resized: [x0, y0, x1, y1].
@@ -182,7 +188,8 @@ pub struct Stroke {
 /// can cache it and a stale one is never mistaken for the current one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PictureRequest {
-    pub design_revision: u64,
+    /// The artwork's identity ([`ArtView::id`]).
+    pub art: String,
     /// The region, in the design's own mm (before resizing): [x0, y0, x1, y1].
     pub region: [f64; 4],
     /// The zoom, rounded to a step, as the desktop app rounds it.
@@ -199,8 +206,8 @@ impl PictureRequest {
     pub fn query(&self) -> String {
         let [x0, y0, x1, y1] = self.region;
         format!(
-            "design_revision={}&x0={x0}&y0={y0}&x1={x1}&y1={y1}&zoom_step={}&width={}&height={}",
-            self.design_revision, self.zoom_step, self.width, self.height
+            "art={}&x0={x0}&y0={y0}&x1={x1}&y1={y1}&zoom_step={}&width={}&height={}",
+            self.art, self.zoom_step, self.width, self.height
         )
     }
 }
@@ -292,7 +299,7 @@ mod tests {
             WorkerRequest::Snapshot,
             WorkerRequest::Lookup { key: "k".into() },
             WorkerRequest::Picture(PictureRequest {
-                design_revision: 2,
+                art: "i-abc-2-1".into(),
                 region: [0.0, 0.0, 100.0, 50.0],
                 zoom_step: -3,
                 width: 800,

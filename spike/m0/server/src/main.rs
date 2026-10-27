@@ -479,7 +479,7 @@ async fn geometry(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
 
 #[derive(serde::Deserialize)]
 struct PictureQuery {
-    design_revision: u64,
+    art: String,
     x0: f64,
     y0: f64,
     x1: f64,
@@ -499,7 +499,7 @@ async fn picture(
         return status(StatusCode::UNAUTHORIZED, "Sign in first.");
     }
     let request = PictureRequest {
-        design_revision: q.design_revision,
+        art: q.art,
         region: [q.x0, q.y0, q.x1, q.y1],
         zoom_step: q.zoom_step,
         width: q.width,

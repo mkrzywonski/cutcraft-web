@@ -18,6 +18,21 @@ pub fn geometry_is_current(latest: Option<&SessionSnapshot>, got: &Geometry) -> 
     latest.and_then(wanted_geometry) == Some(got.id.as_str())
 }
 
+/// The identity of the artwork the snapshot shows, if any.
+pub fn art_id(snapshot: &SessionSnapshot) -> Option<&str> {
+    snapshot
+        .design
+        .as_ref()
+        .and_then(|d| d.art.as_ref())
+        .map(|a| a.id.as_str())
+}
+
+/// A picture is installed, and drawn, only for the artwork the latest snapshot shows: another
+/// design (even at the same revision) or a late answer never paints over it.
+pub fn picture_is_current(latest: Option<&SessionSnapshot>, art: &str) -> bool {
+    latest.and_then(art_id) == Some(art)
+}
+
 /// Whether a snapshot may replace the one shown: not one from an older revision of the same
 /// session load.
 pub fn snapshot_is_newer(shown: Option<&SessionSnapshot>, new: &SessionSnapshot) -> bool {
@@ -80,6 +95,24 @@ mod tests {
         let mut reloaded = snapshot(0, None);
         reloaded.incarnation = "j".into();
         assert!(snapshot_is_newer(Some(&shown), &reloaded));
+    }
+
+    /// From Codex's review of milestone 0: two different designs both start at revision 1, so
+    /// a picture must be told apart by the artwork's identity, not the revision.
+    #[test]
+    fn a_picture_of_another_design_is_never_current() {
+        let mut s = snapshot(1, Some("1-a"));
+        if let Some(d) = s.design.as_mut() {
+            d.art = Some(cutcraft_web_protocol::ArtView {
+                id: "i-blue-1-1".into(),
+                design_revision: 1,
+                bounds: [0.0, 0.0, 80.0, 60.0],
+                scale: 1.0,
+            });
+        }
+        assert!(picture_is_current(Some(&s), "i-blue-1-1"));
+        assert!(!picture_is_current(Some(&s), "i-red-1-1"));
+        assert!(!picture_is_current(Some(&snapshot(2, None)), "i-blue-1-1"));
     }
 
     #[test]
