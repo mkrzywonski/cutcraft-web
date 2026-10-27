@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.6.2 — 2026-10-26
+
+- Finish M2 review fixes: establish the initial design snapshot and subscription under the publication gate, and coalesce slow SSE readers to the newest full snapshot.
+- Serialize cross-session list reloads without holding the originating session lock; regression checks cover simultaneous catalog edits.
+- Explain automatic draft recovery after worker failure, and report a planning failure as unavailable rather than a missing HTTP resource.
+
 ## 0.6.1 — 2026-10-26
 
 - Fix M2 Open/Save retries to use the original complete request, before stale checks or source resolution; scope save keys to their person.

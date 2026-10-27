@@ -22,9 +22,9 @@ use cutcraft_web_protocol::{
 };
 use futures_util::Stream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio_stream::StreamExt as _;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::WatchStream;
 
 use crate::http::{App, Caller};
 use crate::people::{self, Principal};
@@ -194,7 +194,7 @@ struct Session {
     retired: std::sync::atomic::AtomicBool,
     link: tokio::sync::Mutex<Option<Link>>,
     /// Snapshots as they change, for this principal's pages.
-    live: broadcast::Sender<String>,
+    live: watch::Sender<String>,
 }
 
 /// Every principal's design session.
@@ -235,7 +235,7 @@ impl Sessions {
             operations: tokio::sync::Mutex::new(()),
             retired: std::sync::atomic::AtomicBool::new(false),
             link: tokio::sync::Mutex::new(None),
-            live: broadcast::channel(16).0,
+            live: watch::channel(String::new()).0,
         });
         sessions.insert(principal.id.clone(), session.clone());
         Ok(session)
@@ -268,7 +268,7 @@ impl Sessions {
                     Err(ApiError::new(
                         503,
                         "worker-stopped",
-                        format!("The design stopped working ({e}). Open it again."),
+                        format!("The design worker stopped ({e}). CutCraft will recover the last draft on the next request."),
                     ))
                 }
             }
@@ -326,20 +326,20 @@ impl Sessions {
             .filter(|(id, _)| **id != changed_by.id)
             .map(|(id, s)| (id.clone(), s.clone()))
             .collect();
-        for (_, session) in others {
-            let mut link = session.link.lock().await;
-            let Some(worker) = link.as_mut() else {
+        for (id, session) in others {
+            let _operation = session.operations.lock().await;
+            if session.link.lock().await.is_none() {
                 continue;
+            }
+            let principal = Principal {
+                id,
+                name: String::new(),
             };
-            match worker.ask(&WorkerRequest::ReloadLists).await {
-                Ok(WorkerReply::Snapshot(s)) => {
-                    if let Ok(text) = serde_json::to_string(&s) {
-                        let _ = session.live.send(text);
-                    }
-                }
-                Ok(_) => {}
-                // It stopped: the next request starts a fresh one, which reads the lists anyway.
-                Err(_) => *link = None,
+            if let Ok(WorkerReply::Snapshot(s)) =
+                self.ask(&principal, WorkerRequest::ReloadLists).await
+                && let Ok(text) = serde_json::to_string(&s)
+            {
+                session.live.send_replace(text);
             }
         }
     }
@@ -349,7 +349,7 @@ impl Sessions {
         if let Ok(WorkerReply::Snapshot(s)) = self.ask(principal, WorkerRequest::Snapshot).await
             && let (Ok(text), Ok(session)) = (serde_json::to_string(&s), self.session(principal))
         {
-            let _ = session.live.send(text);
+            session.live.send_replace(text);
         }
     }
 }
@@ -421,6 +421,8 @@ pub async fn command(
     let reply = app.design.ask(&p, WorkerRequest::Command(body)).await?;
     if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
         app.design.publish(&p).await;
+        // Never hold this session while acquiring another session's operation lock.
+        drop(_operation);
         if lists {
             app.design.reload_lists_except(&p).await;
         }
@@ -484,7 +486,7 @@ pub async fn geometry(
     let p = who(&caller, &headers, &uri)?;
     match app.design.ask(&p, WorkerRequest::Geometry).await? {
         WorkerReply::Geometry(g) => Ok(Json(g).into_response()),
-        WorkerReply::Failed { message } => Err(ApiError::new(404, "not-found", message)),
+        WorkerReply::Failed { message } => Err(ApiError::new(422, "plan-unavailable", message)),
         _ => Err(unexpected()),
     }
 }
@@ -604,17 +606,19 @@ pub async fn live(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let p = who(&caller, &headers, &uri)?;
     let session = app.design.session(&p)?;
-    let changes = BroadcastStream::new(session.live.subscribe());
+    // Initial snapshot and subscription share the mutation/publication gate. A queued
+    // older snapshot can therefore never follow this initial, newer snapshot.
+    let operation = session.operations.lock().await;
     let first = match app.design.ask(&p, WorkerRequest::Snapshot).await? {
-        WorkerReply::Snapshot(s) => serde_json::to_string(&s).unwrap_or_default(),
-        _ => String::new(),
+        WorkerReply::Snapshot(s) => serde_json::to_string(&s).map_err(storage)?,
+        WorkerReply::Failed { message } => return Err(ApiError::new(503, "worker", message)),
+        _ => return Err(unexpected()),
     };
+    let changes = WatchStream::from_changes(session.live.subscribe());
+    drop(operation);
     let initial = tokio_stream::once(Ok(Event::default().event("snapshot").data(first)));
-    // A slow page skips to the latest (spec §18: coalesced).
-    let rest = changes.filter_map(|item| {
-        item.ok()
-            .map(|t| Ok(Event::default().event("snapshot").data(t)))
-    });
+    // A slow page retains only the latest full snapshot, regardless of how many edits occur.
+    let rest = changes.map(|text| Ok(Event::default().event("snapshot").data(text)));
     let checks =
         tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(5)))
             .map(|_| None);

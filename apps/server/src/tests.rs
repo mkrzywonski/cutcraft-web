@@ -2028,6 +2028,19 @@ async fn a_material_saved_by_one_person_reaches_everyone_elses_session() {
         "{alexs}"
     );
     assert!(h.app.service.lists.join("materials.json").is_file());
+    let s = now(&h.app, sam).await;
+    let a = now(&h.app, alex).await;
+    let sam_edit = json!({"id":"materials.save_current", "params":{"name":"Concurrent A"}, "key":"m2", "incarnation":s["incarnation"], "revision":s["revision"]});
+    let alex_edit = json!({"id":"materials.save_current", "params":{"name":"Concurrent B"}, "key":"m3", "incarnation":a["incarnation"], "revision":a["revision"]});
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(
+            post_design(&h.app, "/api/v1/design/command", sam_edit, sam),
+            post_design(&h.app, "/api/v1/design/command", alex_edit, alex)
+        )
+    })
+    .await
+    .expect("cross-session reloads must not deadlock");
+    assert!(result.0["answer"] == "applied" || result.1["answer"] == "applied");
 }
 
 /// A lost library Open reply can be retried with the identical browser request.
@@ -2249,5 +2262,59 @@ async fn a_revoked_persons_design_stream_ends_before_the_next_event() {
     assert!(
         next.unwrap().is_none(),
         "revoked streams end rather than waiting for another private snapshot"
+    );
+}
+
+#[tokio::test]
+async fn a_slow_design_stream_coalesces_to_the_latest_snapshot() {
+    let h = harness();
+    open_star(&h.app, None).await;
+    set_material(&h.app, "before-subscribe", "Permanent", None).await;
+    let mut response = send_raw(
+        &h.app,
+        design("GET", "/api/v1/design/live", Body::empty(), None),
+    )
+    .await;
+    let initial = response
+        .body_mut()
+        .frame()
+        .await
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    let initial = String::from_utf8(initial.to_vec()).unwrap();
+    let initial: Value = serde_json::from_str(
+        initial
+            .trim()
+            .strip_prefix("event: snapshot\ndata: ")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(initial["revision"], now(&h.app, None).await["revision"]);
+    set_material(&h.app, "stream-edit-1", "Removable", None).await;
+    set_material(&h.app, "stream-edit-2", "Permanent", None).await;
+    set_material(&h.app, "stream-edit-3", "Siser EasyWeed", None).await;
+    let latest = now(&h.app, None).await;
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        response.body_mut().frame(),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap()
+    .into_data()
+    .unwrap();
+    let next = String::from_utf8(next.to_vec()).unwrap();
+    let next: Value =
+        serde_json::from_str(next.trim().strip_prefix("event: snapshot\ndata: ").unwrap()).unwrap();
+    assert_eq!(
+        next["revision"], latest["revision"],
+        "skip older buffered snapshots"
+    );
+    assert_eq!(
+        next["design"]["sheet"]["material"],
+        latest["design"]["sheet"]["material"]
     );
 }

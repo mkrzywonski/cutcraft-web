@@ -1,7 +1,7 @@
 # M2 review and fixes
 
 Reviewed the M2 implementation through the household-list follow-up (0.6.0).
-The fixes are in 0.6.1. This is the author's implementation evidence; independent
+The fixes are in 0.6.1 and 0.6.2. This is the author's implementation evidence; independent
 review remains a separate acceptance gate.
 
 ## Findings addressed
@@ -58,3 +58,16 @@ Passed: workspace formatting, Clippy with warnings denied, workspace tests and b
 warnings); the real process-worker design checks, browser checks, and scratch SSH
 backup/restore checks. These are local simulator/software checks, not Pi latency,
 memory-pressure or hardware acceptance evidence.
+
+## Independent review follow-up (0.6.2)
+
+Grok's review of 0.6.0 independently identified the Save interleaving, household
+adoption and revision-publication races fixed in 0.6.1. Its additional P2 findings
+are addressed: the initial SSE snapshot and subscription share the publication
+gate, watch channels coalesce slow readers to the newest snapshot, and a worker
+failure explains automatic recovery. A planning failure is HTTP 422 rather than
+404. Previous-draft filenames already gained a random suffix and synced writes in
+0.6.1. Household retirement retains a small tombstone to refuse in-flight old
+requests; the worker is detached. General idle eviction belongs to M3. Shared-list
+reloads deliberately advance the snapshot revision because available choices
+changed; stale commands refresh rather than applying against outdated choices.
