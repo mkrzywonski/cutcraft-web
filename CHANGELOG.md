@@ -4,6 +4,14 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.11.0 — 2026-10-27
+
+- Persist queue order, current turn and accepted Queue receipts independently of the library and preparation sessions; replay accepted requests before mutable revision checks.
+- Restore waiting jobs without mat/test authorization or runnable state. Main-cut turns already consumed by durable execution records cannot return after a stale queue checkpoint.
+- Fence late queue snapshots with their own monotonic revision, and checkpoint explicit queue actions, job updates, Start admission and shutdown.
+- Lock the authority directory so a second server cannot claim the same state; reject damaged execution outcomes instead of guessing queue recovery.
+- Add restart, duplicate-request, late-snapshot and exclusive-authority regressions.
+
 ## 0.10.0 — 2026-10-27
 
 - Persist outstanding Stop intent separately from Start record writes, so Stop can be acknowledged while Start persistence is blocked.

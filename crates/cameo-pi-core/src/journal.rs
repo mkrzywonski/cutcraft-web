@@ -158,6 +158,9 @@ impl Journal {
                     "unsupported execution record schema",
                 ));
             }
+            if let Some(ended) = &record.outcome {
+                serde_json::from_value::<Ended>(ended.clone()).map_err(std::io::Error::other)?;
+            }
             if record.outcome.is_none() {
                 let ended = Ended::Interrupted {
                     reason: "cameo-pi stopped while this was running; what was cut is uncertain"

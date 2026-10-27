@@ -11,6 +11,7 @@ mod http;
 mod keys;
 mod mcp;
 mod people;
+mod queues;
 mod service;
 #[cfg(test)]
 mod tests;
@@ -193,8 +194,11 @@ fn launch<L: Link + Send + 'static>(
     let service = service.clone();
     std::thread::spawn(move || {
         for finished in rx {
-            let name = lock(&shared).name().to_owned();
-            service.record_finished(&name, &finished, "cameo-pi");
+            let (id, name) = {
+                let state = lock(&shared);
+                (state.id().to_owned(), state.name().to_owned())
+            };
+            service.record_finished(&id, &name, &finished, "cameo-pi");
         }
     });
 }
@@ -402,6 +406,7 @@ async fn run(options: Options) -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
     });
+    let queue_checkpoint = app.service.clone();
     let names = app.names.0.clone();
     let listener = tokio::net::TcpListener::bind(&options.listen)
         .await
@@ -450,6 +455,7 @@ async fn run(options: Options) -> Result<(), String> {
         );
         serve_tls(listener, router, config).await;
     }
+    queue_checkpoint.persist_queues().map_err(|e| e.message)?;
     shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }

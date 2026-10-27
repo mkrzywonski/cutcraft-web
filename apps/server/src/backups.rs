@@ -2217,11 +2217,9 @@ mod tests {
             !service.backup_due(),
             "new library work does not restart failures"
         );
-        let restarted = Service::new("test".into(), _dir.path(), vec![]).unwrap();
-        assert!(
-            !restarted.backup_due(),
-            "a restart does not restart failures"
-        );
+        drop(service);
+        let service = Service::new("test".into(), _dir.path(), vec![]).unwrap();
+        assert!(!service.backup_due(), "a restart does not restart failures");
         service.backup_configure(json!({"every":"change"})).unwrap();
         assert!(service.backup_due());
     }

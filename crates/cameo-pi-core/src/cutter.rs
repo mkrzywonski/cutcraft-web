@@ -16,7 +16,7 @@ use crate::mat::{Belief, Mat, Observer, Reading};
 use crate::runnable::Runnable;
 
 /// Who asked: the user (when users exist) and the device, browser or program (spec §14.1).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
     pub user: Option<String>,
     pub client: String,
@@ -139,7 +139,7 @@ pub struct StopIntent {
 }
 
 /// What an accepted request did.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "answer")]
 pub enum Answer {
     Started {
@@ -266,7 +266,7 @@ impl Refusal {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     pub id: String,
     pub job: JobRef,
@@ -278,11 +278,27 @@ pub struct Turn {
     pub tests: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Queued {
     pub turn: String,
     pub job: JobRef,
     pub actor: Actor,
+}
+
+/// Durable queue state only: no live execution, controls, transport or mat authorization.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QueueState {
+    pub sequence: u64,
+    pub turn: Option<Turn>,
+    pub waiting: Vec<Queued>,
+    pub receipts: Vec<QueueReceipt>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QueueReceipt {
+    pub key: String,
+    pub fingerprint: String,
+    pub answer: Answer,
 }
 
 #[derive(Clone, Debug)]
@@ -326,7 +342,7 @@ pub struct Execution {
 }
 
 /// How an execution ended, as recorded in the job's history.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "ended")]
 pub enum Ended {
     Finished,
@@ -387,6 +403,7 @@ pub struct Cutter {
     turn: Option<Turn>,
     queue: VecDeque<Queued>,
     action_epoch: u64,
+    queue_revision: u64,
     progress: Option<Progress>,
     pending: Option<Execution>,
     /// The service must sync a staged Start before the device worker may take it.
@@ -416,6 +433,7 @@ impl Cutter {
             turn: None,
             queue: VecDeque::new(),
             action_epoch: 1,
+            queue_revision: 1,
             progress: None,
             pending: None,
             pending_ready: false,
@@ -436,6 +454,7 @@ impl Cutter {
 
     fn advance(&mut self) {
         self.action_epoch += 1;
+        self.queue_revision += 1;
     }
 
     pub fn name(&self) -> &str {
@@ -852,6 +871,7 @@ impl Cutter {
         let answer = f(self);
         // Refusals aren't remembered: the same action may be asked for again once things change.
         if answer.is_ok() {
+            self.queue_revision += 1;
             self.keys
                 .insert(key.to_owned(), (fingerprint, answer.clone()));
         }
@@ -1001,9 +1021,119 @@ impl Cutter {
         })
     }
 
+    pub fn queue_state(&self) -> QueueState {
+        QueueState {
+            sequence: self.queue_revision,
+            turn: self.turn.clone(),
+            waiting: self.queue.iter().cloned().collect(),
+            receipts: self
+                .keys
+                .iter()
+                .filter_map(|(key, (fingerprint, answer))| match answer {
+                    Ok(answer @ Answer::Queued { .. }) if fingerprint.starts_with("queue-v1|") => {
+                        Some(QueueReceipt {
+                            key: key.clone(),
+                            fingerprint: fingerprint.clone(),
+                            answer: answer.clone(),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// A restart restores waiting turns, never a runnable. Main cuts already accepted (other
+    /// than known not-run attempts) have consumed their turn. Old mat/test authorizations vanish.
+    pub fn restore_queue(
+        &mut self,
+        mut state: QueueState,
+        consumed: &std::collections::HashSet<String>,
+    ) -> Result<(), String> {
+        let mut ids = std::collections::HashSet::new();
+        for id in state
+            .turn
+            .iter()
+            .map(|turn| &turn.id)
+            .chain(state.waiting.iter().map(|turn| &turn.turn))
+        {
+            if id.is_empty() || !ids.insert(id.clone()) {
+                return Err("duplicate queue turn identity".into());
+            }
+        }
+        for receipt in state.receipts {
+            if !matches!(receipt.answer, Answer::Queued { .. })
+                || !receipt.fingerprint.starts_with("queue-v1|")
+            {
+                return Err("invalid queue receipt".into());
+            }
+            if let Some((fingerprint, _)) = self.keys.get(&receipt.key)
+                && *fingerprint != receipt.fingerprint
+            {
+                return Err("queue receipt conflicts with an accepted request".into());
+            }
+            self.remember(receipt.key, receipt.fingerprint, receipt.answer);
+        }
+        state.waiting.retain(|turn| !consumed.contains(&turn.turn));
+        self.queue = state.waiting.into();
+        self.turn = state.turn.filter(|turn| !consumed.contains(&turn.id));
+        if self.turn.is_none()
+            && let Some(next) = self.queue.pop_front()
+        {
+            self.turn = Some(Turn {
+                id: next.turn,
+                job: next.job,
+                actor: next.actor,
+                mat: None,
+                taken: Vec::new(),
+                tests: 0,
+            });
+        }
+        if let Some(turn) = self.turn.as_mut() {
+            turn.mat = None;
+            turn.taken.clear();
+            turn.tests = 0;
+        }
+        self.advance();
+        Ok(())
+    }
+
     /// Queue a job (spec §8.4). On a free cutter it becomes the current turn at once.
     pub fn queue(&mut self, job: JobRef, actor: Actor, key: &str) -> Result<Answer, Refusal> {
-        let fingerprint = format!("queue|{}|{}", job.job_id, job.revision);
+        let seen = Some(job.revision);
+        self.queue_requested(job, actor, key, seen)
+    }
+
+    pub fn replay_queue(
+        &self,
+        job_id: &str,
+        seen: Option<u32>,
+        key: &str,
+    ) -> Option<Result<Answer, Refusal>> {
+        let fingerprint = format!(
+            "queue-v1|{}",
+            serde_json::to_string(&(job_id, seen)).expect("queue identity serializes")
+        );
+        self.keys.get(key).map(|(first, answer)| {
+            if *first == fingerprint {
+                answer.clone()
+            } else {
+                Err(Refusal::KeyReused)
+            }
+        })
+    }
+
+    pub fn queue_requested(
+        &mut self,
+        job: JobRef,
+        actor: Actor,
+        key: &str,
+        seen: Option<u32>,
+    ) -> Result<Answer, Refusal> {
+        let fingerprint = format!(
+            "queue-v1|{}",
+            serde_json::to_string(&(&job.job_id, seen)).expect("queue identity serializes")
+        );
         self.once(key, fingerprint, |cutter| {
             let turn = cutter.new_id("turn");
             if cutter.turn.is_none() {
@@ -1277,6 +1407,7 @@ impl Cutter {
     pub fn remove(&mut self, turn: &str) -> Result<Answer, Refusal> {
         if let Some(index) = self.queue.iter().position(|q| q.turn == turn) {
             self.queue.remove(index);
+            self.queue_revision += 1;
             return Ok(Answer::Removed {
                 turn: turn.to_owned(),
             });

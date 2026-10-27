@@ -101,10 +101,26 @@ recovery with the source removed, no resumed drawing, stable Start reconciliatio
 and quiet-state confirmation of a startup batch. Hardware Stop timing and the
 200 ms acknowledgement target under Pi load remain separate acceptance gates.
 
+## Fifth slice: persistent queue authority (0.11.0)
+
+Queue order, the current turn and original Queue request results are atomically
+checkpointed outside the cutter lock. A dedicated sequence prevents a delayed
+checkpoint from replacing a newer queue. Queue, release, skip, removal, job updates,
+Start admission and shutdown all checkpoint; completed executions also checkpoint
+on the service's history thread, away from the device worker.
+
+Startup restores waiting turns and original results, clears old mat/test authority,
+and restores no runnable. Main-cut turns consumed by execution records are removed
+even if the last queue checkpoint predates completion or interruption. Known not-run
+attempts may remain waiting. A data-directory lock prevents two authorities from
+writing or claiming the same state. Corrupt queue/record formats fail closed.
+
+Tests exercise waiting-turn order and attribution, duplicate/reused keys after
+restart, stale checkpoints, consumed turns and exclusive directory ownership.
+
 ## Next slices required by the spec
 
-- Persist queue positions through updates/restart, and independently review the
-  accepted-request/Stop/terminal-record changes against the complete fault matrix.
+- Independently review the complete cutter-authority fault matrix.
 - Bound heavy preparation concurrency, evict/unload idle workers safely, and add
   backpressure/cancellation. Measure Stop under malformed and heavy imports,
   memory pressure, slow readers and worker failures on the target Pi.

@@ -136,6 +136,8 @@ enum UploadKey {
 
 pub struct Service {
     pub boot: String,
+    _authority: std::fs::File,
+    queues: crate::queues::Store,
     /// Shared by every Start path; the updater closes admission before draining.
     pub updates: cameo_pi_core::update::UpdateGate,
     pub library: Library,
@@ -180,6 +182,23 @@ fn job_ref(id: &str, revision: u32) -> JobRef {
 
 impl Service {
     pub fn new(boot: String, data: &Path, cutters: Vec<CutterEntry>) -> Result<Self> {
+        std::fs::create_dir_all(data.join("private"))
+            .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        let authority = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(data.join("private/authority.lock"))
+            .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        authority.try_lock().map_err(|_| {
+            ApiError::new(
+                503,
+                "authority-in-use",
+                "Another server already owns this data directory.",
+            )
+        })?;
+        let queues = crate::queues::Store::open(data.join("private/queues"))?;
         let library = Library::open(data)?;
         let keys = Keys::open(&data.join("private"))
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
@@ -188,13 +207,31 @@ impl Service {
         let (journal, records) =
             cameo_pi_core::journal::Journal::open(data.join("private/executions"))
                 .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
-        for record in records {
+        for record in &records {
             if let Some(entry) = cutters.iter().find(|c| c.id == record.cutter) {
                 lock(&entry.shared).remember(
                     record.key.clone(),
                     record.fingerprint.clone(),
                     record.answer(),
                 );
+            }
+        }
+        let consumed: std::collections::HashSet<String> = records
+            .iter()
+            .filter(|record| {
+                record.kind == "main"
+                    && record
+                        .outcome
+                        .as_ref()
+                        .is_some_and(|ended| ended["ended"] != "not-run")
+            })
+            .map(|record| record.turn.clone())
+            .collect();
+        for entry in &cutters {
+            if let Some(state) = queues.load(&entry.id)? {
+                lock(&entry.shared)
+                    .restore_queue(state, &consumed)
+                    .map_err(|e| ApiError::new(500, "queue-recovery", e))?;
             }
         }
         for stop in journal
@@ -213,6 +250,8 @@ impl Service {
             }
         }
         Ok(Self {
+            _authority: authority,
+            queues,
             journal: Arc::new(journal),
             boot,
             updates: cameo_pi_core::update::UpdateGate::default(),
@@ -268,6 +307,12 @@ impl Service {
     ) -> Result<Answer> {
         let entry = self.cutter(cutter)?;
         let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let replay = lock(&entry.shared).replay_queue(job_id, seen, key);
+        if let Some(answer) = replay {
+            let answer = answer?;
+            self.persist_queue(cutter)?;
+            return Ok(answer);
+        }
         let current = if crate::copies::is_copy(job_id) {
             self.copies.get(job_id, 1)?.view.revision
         } else {
@@ -277,7 +322,9 @@ impl Service {
             return Err(Refusal::StaleRevision.into());
         }
         let job = job_ref(job_id, current);
-        Ok(lock(&entry.shared).queue(job, actor, key)?)
+        let answer = lock(&entry.shared).queue_requested(job, actor, key, seen)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
     }
 
     /// The test cut or main cut for a stored revision, encoded for the cutter (spec §5.5).
@@ -403,6 +450,16 @@ impl Service {
                     format!("The cut could not be recorded safely; nothing was sent ({e})."),
                 ));
             }
+            if let Err(error) = self.persist_queue(cutter) {
+                lock(&entry.shared).abort_start(&execution.id);
+                let _ = self.journal.ended(
+                    &execution.id,
+                    &cameo_pi_core::cutter::Ended::NotRun {
+                        reason: "The queue could not be recorded before sending.".into(),
+                    },
+                );
+                return Err(error);
+            }
             if !lock(&entry.shared).commit_start(&execution.id) {
                 self.journal
                     .ended(
@@ -482,13 +539,34 @@ impl Service {
         Ok(lock(&self.cutter(cutter)?.shared).resume()?)
     }
     pub fn release(&self, cutter: &str, turn: &str) -> Result<Answer> {
-        Ok(lock(&self.cutter(cutter)?.shared).release(turn)?)
+        let _revision = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let answer = lock(&self.cutter(cutter)?.shared).release(turn)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
     }
     pub fn skip(&self, cutter: &str, turn: &str) -> Result<Answer> {
-        Ok(lock(&self.cutter(cutter)?.shared).skip(turn)?)
+        let _revision = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let answer = lock(&self.cutter(cutter)?.shared).skip(turn)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
     }
     pub fn remove(&self, cutter: &str, turn: &str) -> Result<Answer> {
-        Ok(lock(&self.cutter(cutter)?.shared).remove(turn)?)
+        let _revision = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let answer = lock(&self.cutter(cutter)?.shared).remove(turn)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
+    }
+
+    pub(crate) fn persist_queue(&self, cutter: &str) -> Result<()> {
+        let state = lock(&self.cutter(cutter)?.shared).queue_state();
+        self.queues.save(cutter, &self.boot, state)
+    }
+
+    pub(crate) fn persist_queues(&self) -> Result<()> {
+        for entry in &self.cutters {
+            self.persist_queue(&entry.id)?;
+        }
+        Ok(())
     }
 
     /// The practice cutter's virtual mat (spec §6).
@@ -518,7 +596,16 @@ impl Service {
     }
 
     /// Records an ended execution in its job's history (the job may have been deleted since).
-    pub fn record_finished(&self, cutter_name: &str, finished: &Finished, by: &str) {
+    pub fn record_finished(
+        &self,
+        cutter_id: &str,
+        cutter_name: &str,
+        finished: &Finished,
+        by: &str,
+    ) {
+        if self.persist_queue(cutter_id).is_err() {
+            eprintln!("cutcraft-web: the queue checkpoint could not be written");
+        }
         let ended = match &finished.ended {
             cameo_pi_core::cutter::Ended::Finished => "finished",
             cameo_pi_core::cutter::Ended::Stopped => "stopped",
@@ -864,6 +951,7 @@ impl Service {
                 let details = self.library.add_revision(id, &files, meta, by)?;
                 for entry in &self.cutters {
                     lock(&entry.shared).job_updated(id, details.current_revision);
+                    self.persist_queue(&entry.id)?;
                 }
                 Ok(details)
             }

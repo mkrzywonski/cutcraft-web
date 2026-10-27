@@ -2914,3 +2914,140 @@ async fn an_outstanding_stop_survives_restart_and_source_deletion_without_resumi
         "stop confirmation does not rewrite the uncertain cut outcome"
     );
 }
+
+#[tokio::test]
+async fn waiting_turns_and_original_queue_results_survive_restart_without_mat_authorization() {
+    let mut h = harness();
+    let (id, _) = ready_start(&mut h, "queue-recovery").await;
+    let actor = cameo_pi_core::cutter::Actor {
+        user: Some("Tester".into()),
+        client: "phone".into(),
+    };
+    let first = h
+        .app
+        .service
+        .queue("practice", &id, Some(1), actor.clone(), "queue-first")
+        .unwrap();
+    let second = h
+        .app
+        .service
+        .queue("practice", &id, Some(1), actor.clone(), "queue-second")
+        .unwrap();
+    let second_id = match &second {
+        cameo_pi_core::cutter::Answer::Queued { turn, .. } => turn.clone(),
+        _ => panic!(),
+    };
+    let dir = h._dir;
+    drop(h.worker);
+    drop(h.app);
+    let shared = Arc::new(Mutex::new(Cutter::new(
+        "practice",
+        "Practice Cameo",
+        "after",
+    )));
+    let service = Service::new(
+        "after".into(),
+        dir.path(),
+        vec![CutterEntry {
+            id: "practice".into(),
+            shared: shared.clone(),
+            simulator: None,
+        }],
+    )
+    .unwrap();
+    let view = lock(&shared).view();
+    assert_eq!(view.queue.len(), 1);
+    assert_eq!(view.queue[0].turn, second_id);
+    assert_eq!(view.queue[0].actor, actor);
+    assert!(view.turn.as_ref().unwrap().mat.is_none());
+    assert!(!view.mat_loaded);
+    assert!(lock(&shared).take_pending().is_none());
+    assert_eq!(
+        service
+            .queue("practice", &id, Some(1), actor.clone(), "queue-first")
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        service
+            .queue("practice", &id, Some(1), actor.clone(), "queue-second")
+            .unwrap(),
+        second
+    );
+    assert_eq!(
+        lock(&shared).view().queue.len(),
+        1,
+        "retry does not enqueue twice"
+    );
+    assert_eq!(
+        service
+            .queue("practice", &id, None, actor, "queue-second")
+            .unwrap_err()
+            .error,
+        "key-reused"
+    );
+}
+
+#[tokio::test]
+async fn a_main_start_consumed_before_queue_checkpoint_cannot_return_after_restart() {
+    let mut h = harness();
+    let (id, mut body) = ready_start(&mut h, "consumed-turn").await;
+    let actor = cameo_pi_core::cutter::Actor {
+        user: None,
+        client: "phone".into(),
+    };
+    let current = h
+        .app
+        .service
+        .queue("practice", &id, Some(1), actor.clone(), "active")
+        .unwrap();
+    let next = h
+        .app
+        .service
+        .queue("practice", &id, Some(1), actor, "next")
+        .unwrap();
+    let cameo_pi_core::cutter::Answer::Queued { turn, .. } = current else {
+        panic!()
+    };
+    let view = lock(&h.app.service.cutters[0].shared).view();
+    body["turn"] = json!(turn);
+    body["action_epoch"] = json!(view.action_epoch);
+    let (status, reply) = send(&h.app, page("POST", "/api/v1/cutters/practice/start", body)).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let dir = h._dir;
+    drop(h.worker);
+    drop(h.app);
+    let shared = Arc::new(Mutex::new(Cutter::new(
+        "practice",
+        "Practice Cameo",
+        "after",
+    )));
+    let service = Service::new(
+        "after".into(),
+        dir.path(),
+        vec![CutterEntry {
+            id: "practice".into(),
+            shared: shared.clone(),
+            simulator: None,
+        }],
+    )
+    .unwrap();
+    let cameo_pi_core::cutter::Answer::Queued { turn: next, .. } = next else {
+        panic!()
+    };
+    assert_eq!(lock(&shared).view().turn.as_ref().unwrap().id, next);
+    assert!(lock(&shared).take_pending().is_none());
+    assert!(service.start_result("practice", "consumed-turn").is_ok());
+}
+
+#[test]
+fn a_second_server_cannot_take_the_same_authority_directory() {
+    let h = harness();
+    assert_eq!(
+        Service::new("other".into(), h._dir.path(), vec![])
+            .err()
+            .unwrap()
+            .error,
+        "authority-in-use"
+    );
+}
