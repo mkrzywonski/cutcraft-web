@@ -19,7 +19,7 @@ server_pid=$!
 B=http://127.0.0.1:$port
 for _ in $(seq 50); do curl -s -o /dev/null "$B/" -H 'Host: localhost' && break; sleep 0.1; done
 H=(-H 'Host: localhost' -H 'Origin: http://localhost' -H 'Cookie: cpi_csrf=t' -H 'x-csrf-token: t'
-  -H 'x-cutcraft-protocol: 3')
+  -H 'x-cutcraft-protocol: 4')
 c() { curl -s "${H[@]}" "$@"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "${H[@]}" "$@"; }
 failures=0
@@ -55,6 +55,18 @@ check "opening over unsaved work asks first" "$(open_upload "$id" o2 | field "['
 save_as=$(post save "{\"key\":\"s1\",\"incarnation\":\"$(now | field "['incarnation']")\",\"revision\":$(now | field "['revision']"),\"as\":{\"folder\":[],\"name\":\"One inch\"}}")
 check "Save As publishes a library project" "$(field "['answer']" <<<"$save_as")" applied
 check "…and nothing is unsaved" "$(now | field "['design']['unsaved']")" False
+
+# Preparing a copy goes through the registry in the real child. It is independently stored.
+copied=$(cmd cut.copy '{}' copy1)
+copy_id=$(field "['value']['copy']['id']" <<<"$copied")
+copy_digest=$(field "['value']['copy']['digest']" <<<"$copied")
+check "cut.copy prepares an immutable copy" "$(field "['answer']" <<<"$copied")" applied
+cmd sheet.adjust '{"force":22}' copy_edit >/dev/null
+copy2=$(cmd cut.copy '{}' copy2)
+check "a later edit makes a different cut copy" "$([[ $(field "['value']['copy']['digest']" <<<"$copy2") != "$copy_digest" ]] && echo yes)" yes
+check "the loading view still names the original copy" "$(c "$B/api/v1/jobs/$copy_id" | field "['revision']['digest']")" "$copy_digest"
+check "copy previews are available" "$(code "$B/api/v1/jobs/$copy_id/revisions/1/preview")" 200
+check "a cut copy does not expose the source project" "$(code "$B/api/v1/jobs/$copy_id/revisions/1/project")" 404
 
 # A worker that crashes after its draft comes back from it; a change after the draft is lost and
 # looked up as not applied.

@@ -1189,6 +1189,16 @@ fn registry() -> Vec<Spec> {
             "Press the Simulated Cameo's Load Mat or Unload button."
         ),
         spec!(
+            "cut.copy",
+            "Prepare cut copy",
+            None,
+            None,
+            Read,
+            Design,
+            NoParams,
+            "An immutable current-sheet project and plan, without queuing or moving a cutter."
+        ),
+        spec!(
             "cut.sheet",
             "Cut",
             Some("Cut"),
@@ -2597,6 +2607,37 @@ impl Controller {
             "device.load" => {
                 let p: LoadParams = decode(params)?;
                 self.sim_load(p.media)
+            }
+            "cut.copy" => {
+                decode::<NoParams>(params)?;
+                let design = self.design()?;
+                if !design.project.prepared.cut_ready {
+                    return Err(CommandError::new(
+                        "not-cut-ready",
+                        "Review the design's issues before cutting.",
+                    ));
+                }
+                let mut project = design.project.clone();
+                project.sheets.truncate(1);
+                let sheet = project
+                    .sheets
+                    .first()
+                    .ok_or_else(|| CommandError::failed("There is nothing to cut."))?;
+                let plan =
+                    cutcraft_path::plan_sheet(&project, &sheet.id).map_err(CommandError::failed)?;
+                if !plan.valid {
+                    return Err(CommandError::new(
+                        "not-cut-ready",
+                        "Review the sheet's cutting problems first.",
+                    ));
+                }
+                let file = ProjectFile::new(
+                    project,
+                    Path::new(&design.path),
+                    &design.bytes,
+                    crate::APP_BUILD,
+                );
+                value(json!({"project": file, "plan": plan}))
             }
             "cut.sheet" => {
                 decode::<NoParams>(params)?;
@@ -4054,6 +4095,10 @@ pub(crate) fn result_schema(id: &str) -> Value {
             ("estimate_s", N, "Estimated time from hypothesised speeds."),
             ("bounds_mm", AN, "Where it cuts on the mat."),
             ("origin", S, "Who chose it."),
+        ]),
+        "cut.copy" => fields(&[
+            ("project", O, "Current-sheet project."),
+            ("plan", O, "Its cut plan."),
         ]),
         "cut.start" => fields(&[
             ("started", B, "The device worker started."),

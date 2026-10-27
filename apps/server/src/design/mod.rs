@@ -354,6 +354,137 @@ impl Sessions {
     }
 }
 
+/// Durable copy receipts also fence keys after a worker/session loses its checkpoint.
+async fn replay(
+    app: &App,
+    p: &Principal,
+    request: &CommandRequest,
+) -> Result<Option<CommandReply>, ApiError> {
+    if let WorkerReply::Replay {
+        result: Some(reply),
+    } = app
+        .design
+        .ask(p, WorkerRequest::Replay(request.clone()))
+        .await?
+    {
+        return Ok(Some(reply));
+    }
+    let (service, owner, key) = (app.service.clone(), p.id.clone(), request.key.clone());
+    let stored = tokio::task::spawn_blocking(move || service.copies.lookup(&owner, &key))
+        .await
+        .map_err(storage)??;
+    Ok(stored.map(|first| {
+        if first.request == *request {
+            first.reply()
+        } else {
+            CommandReply::Refused {
+                code: codes::KEY_REUSED.into(),
+                message: "That change was already made differently.".into(),
+            }
+        }
+    }))
+}
+
+/// The shared action behind the browser command and MCP. No queue or motion is implied.
+pub(crate) async fn prepare_copy(
+    app: App,
+    p: Principal,
+    body: cutcraft_web_protocol::CopyRequest,
+) -> Result<CommandReply, ApiError> {
+    tokio::spawn(async move {
+        if body.key.is_empty() || body.key.len() > 256 || body.incarnation.len() > 128 {
+            return Err(ApiError::bad_request(
+                "Give a valid request key and project incarnation.",
+            ));
+        }
+        let session = app.design.session(&p)?;
+        let _operation = session.operations.lock().await;
+        let request = CommandRequest {
+            id: "cut.copy".into(),
+            params: serde_json::json!({}),
+            key: body.key,
+            incarnation: body.incarnation,
+            revision: Some(body.revision),
+        };
+        if let Some(reply) = replay(&app, &p, &request).await? {
+            return Ok(reply);
+        }
+        let WorkerReply::Snapshot(now) = app.design.ask(&p, WorkerRequest::Snapshot).await? else {
+            return Err(unexpected());
+        };
+        let refuse = |code: &str, message: &str| CommandReply::Refused {
+            code: code.into(),
+            message: message.into(),
+        };
+        if now.incarnation != request.incarnation {
+            return Ok(refuse(
+                codes::STALE_INCARNATION,
+                "This project was reopened. Refresh it before cutting.",
+            ));
+        }
+        if now.revision != body.revision {
+            return Ok(refuse(
+                codes::STALE_REVISION,
+                "This project changed. Review it before cutting.",
+            ));
+        }
+        let (name, project, plan) = match app.design.ask(&p, WorkerRequest::Export).await? {
+            WorkerReply::Export {
+                name,
+                project,
+                plan,
+                ..
+            } => (name, project, plan),
+            WorkerReply::Failed { message } => {
+                return Ok(CommandReply::Refused {
+                    code: "not-cut-ready".into(),
+                    message,
+                });
+            }
+            _ => return Err(unexpected()),
+        };
+        let (service, owner, fingerprint) = (app.service.clone(), p.id.clone(), request.clone());
+        let reply = tokio::task::spawn_blocking(move || {
+            service.copies.prepare(
+                &owner,
+                fingerprint,
+                name,
+                project.as_bytes(),
+                plan.as_bytes(),
+                &service.machine,
+            )
+        })
+        .await
+        .map_err(storage)??;
+        if matches!(reply, CommandReply::Applied { .. }) {
+            // The copy's own receipt remains authoritative even if the worker dies here.
+            let _ = app
+                .design
+                .ask(
+                    &p,
+                    WorkerRequest::Remember {
+                        request,
+                        answer: reply.clone(),
+                    },
+                )
+                .await;
+        }
+        Ok(reply)
+    })
+    .await
+    .map_err(storage)?
+}
+
+pub(crate) async fn session_status(
+    app: &App,
+    p: &Principal,
+) -> Result<cutcraft_web_protocol::SessionSnapshot, ApiError> {
+    match app.design.ask(p, WorkerRequest::Snapshot).await? {
+        WorkerReply::Snapshot(snapshot) => Ok(snapshot),
+        _ => Err(unexpected()),
+    }
+}
+
 /// Spec §13: the browser and the server must speak the same protocol; another version is told
 /// to reload, before anything reaches a worker.
 fn same_protocol(headers: &HeaderMap, uri: &Uri) -> Result<(), ApiError> {
@@ -415,8 +546,37 @@ pub async fn command(
     Json(body): Json<CommandRequest>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
+    if body.id == "cut.copy" {
+        if body.params != serde_json::json!({}) && !body.params.is_null() {
+            return Err(ApiError::bad_request(
+                "Prepare cut copy takes no parameters.",
+            ));
+        }
+        let Some(revision) = body.revision else {
+            return Ok(refusal(
+                codes::REVISION_REQUIRED,
+                "Name the project revision before cutting.",
+            ));
+        };
+        return Ok(Json(
+            prepare_copy(
+                app,
+                p,
+                cutcraft_web_protocol::CopyRequest {
+                    key: body.key,
+                    incarnation: body.incarnation,
+                    revision,
+                },
+            )
+            .await?,
+        )
+        .into_response());
+    }
     let session = app.design.session(&p)?;
     let _operation = session.operations.lock().await;
+    if let Some(reply) = replay(&app, &p, &body).await? {
+        return Ok(Json(reply).into_response());
+    }
     let lists = LIST_EDITS.contains(&body.id.as_str());
     let reply = app.design.ask(&p, WorkerRequest::Command(body)).await?;
     if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
@@ -449,8 +609,8 @@ pub async fn lookup(
     {
         WorkerReply::Lookup(cutcraft_web_protocol::KeyLookup::NotApplied) => {
             let service = app.service.clone();
-            let key = format!("design-save:{}:{}", p.id, key);
-            let receipt = tokio::task::spawn_blocking(move || service.library.receipt(&key))
+            let save_key = format!("design-save:{}:{}", p.id, key);
+            let receipt = tokio::task::spawn_blocking(move || service.library.receipt(&save_key))
                 .await
                 .map_err(storage)?
                 .map_err(storage)?;
@@ -467,7 +627,21 @@ pub async fn lookup(
                         }
                     }
                 }
-                None => cutcraft_web_protocol::KeyLookup::NotApplied,
+                None => {
+                    let (service, owner, key) = (app.service.clone(), p.id.clone(), key);
+                    match tokio::task::spawn_blocking(move || service.copies.lookup(&owner, &key))
+                        .await
+                        .map_err(storage)??
+                    {
+                        Some(copy) => match copy.reply() {
+                            CommandReply::Applied { revision, value } => {
+                                cutcraft_web_protocol::KeyLookup::Applied { revision, value }
+                            }
+                            _ => unreachable!(),
+                        },
+                        None => cutcraft_web_protocol::KeyLookup::NotApplied,
+                    }
+                }
             };
             Ok(Json(result).into_response())
         }
@@ -714,13 +888,7 @@ async fn open_inner(app: App, p: Principal, body: OpenBody) -> Result<Response, 
         incarnation: body.incarnation.clone(),
         revision: Some(body.revision),
     };
-    if let WorkerReply::Replay {
-        result: Some(reply),
-    } = app
-        .design
-        .ask(&p, WorkerRequest::Replay(fingerprint.clone()))
-        .await?
-    {
+    if let Some(reply) = replay(&app, &p, &fingerprint).await? {
         return Ok(Json(reply).into_response());
     }
     let source = match (body.design, body.project) {
@@ -836,13 +1004,7 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
         incarnation: body.incarnation.clone(),
         revision: Some(body.revision),
     };
-    if let WorkerReply::Replay {
-        result: Some(reply),
-    } = app
-        .design
-        .ask(&p, WorkerRequest::Replay(fingerprint.clone()))
-        .await?
-    {
+    if let Some(reply) = replay(&app, &p, &fingerprint).await? {
         return Ok(Json(reply).into_response());
     }
     let receipt_key = format!("design-save:{}:{}", p.id, body.key);

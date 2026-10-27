@@ -5,6 +5,7 @@
 
 mod adjusting;
 mod backups;
+mod copies;
 mod design;
 mod http;
 mod keys;

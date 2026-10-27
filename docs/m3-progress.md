@@ -22,10 +22,37 @@ Stop during drain, waiting for settling, and a queued turn remaining without an
 execution. They use the virtual-clock simulator. They do not establish the 200 ms
 Stop acknowledgement target under preparation or memory pressure.
 
+## Second slice: immutable cut copies (0.8.0)
+
+The shared controller registry's `cut.copy` command validates and exports only the
+current sheet's project and plan. The preparation worker uses that command; generic
+worker commands cannot return its raw project/source payload to a browser.
+
+HTTP `POST /api/v1/design/command` with `id: "cut.copy"`, empty params and the usual
+key/incarnation/revision, and MCP `design_cut_copy`, call the same action. MCP
+`design_status` supplies the current session identity. Preparation does not queue
+or move anything: existing queue and Start calls explicitly name the returned
+`value.copy.id` at revision 1. Layout integration follows in M4/M5.
+
+Copies and their original request receipts are one atomic schema-1 record in
+private cutter-service storage, independent of drafts and the editable library.
+Retries return the first result before checking current session state. Reused keys
+with a changed body are refused, including after losing the worker checkpoint.
+Copy IDs are scoped to the principal and request key, never filesystem paths.
+
+Queue, loading metadata, preview, geometry and Start resolve the same copy. Library
+saves cannot advance it. Original project/artwork downloads are refused; only the
+chosen sheet's cut preview is shared. The simulator regression compares the actual
+execution record's digest with the original copy after changing force, saving a
+new library revision and closing the source design. Other tests cover store restart,
+HTTP/MCP transport parity, absent/stale designs, changed keys and path rejection.
+The process-worker script exercises creation and loading of copies too.
+
+This does not yet persist queue positions or fix the accepted-Start-before-driver
+crash window; those belong to the durable cutter-authority slice below.
+
 ## Next slices required by the spec
 
-- Freeze the current sheet and its plan into a validated immutable cut copy; name
-  that copy throughout queue/loading/Start so later session edits cannot change it.
 - Review and extend durable cutter records for accepted requests, Stop intent and
   terminal outcomes independently of sessions and deletable history. Exercise
   restart, lost replies, Stop racing Start and interrupted executions.

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -231,6 +231,28 @@ impl PictureRequest {
     }
 }
 
+/// Prepare the current sheet for cutting, without queuing or starting motion.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopyRequest {
+    pub key: String,
+    pub incarnation: String,
+    pub revision: u64,
+}
+
+/// The immutable copy named by queue, loading preview and Start. Its stored revision is 1.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CutCopy {
+    pub id: String,
+    pub name: String,
+    pub revision: u32,
+    pub project_revision: u64,
+    pub sheet: String,
+    pub material: String,
+    pub mirrored: bool,
+    pub digest: String,
+}
+
 /// The privileged contract between the server and its preparation workers (spec §5), one JSON
 /// line each way. Kept apart from the browser's: nothing here is reachable from a page, which
 /// only ever reaches the server's own routes (Codex's review of the development standard).
@@ -247,6 +269,11 @@ pub mod worker {
     pub enum WorkerRequest {
         Command(CommandRequest),
         Replay(CommandRequest),
+        /// Record an already durable server-side action, without marking the project edited.
+        Remember {
+            request: CommandRequest,
+            answer: CommandReply,
+        },
         Lookup {
             key: String,
         },
@@ -378,6 +405,19 @@ mod tests {
         use crate::worker::WorkerRequest;
         for request in [
             WorkerRequest::Snapshot,
+            WorkerRequest::Remember {
+                request: CommandRequest {
+                    id: "cut.copy".into(),
+                    params: json!({}),
+                    key: "copy".into(),
+                    incarnation: "i".into(),
+                    revision: Some(1),
+                },
+                answer: CommandReply::Applied {
+                    revision: 1,
+                    value: json!({"copy":{"id":"copy-test"}}),
+                },
+            },
             WorkerRequest::Lookup { key: "k".into() },
             WorkerRequest::Picture(PictureRequest {
                 art: "i-abc-2-1".into(),

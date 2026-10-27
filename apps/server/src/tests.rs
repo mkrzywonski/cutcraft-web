@@ -1264,6 +1264,28 @@ async fn an_ai_tool_works_through_mcp_with_a_key() {
         "{names:?}"
     );
 
+    assert!(names.contains(&"design_status") && names.contains(&"design_cut_copy"));
+    open_star(&h.app, None).await;
+    let (_, _, status) = call(&mcp_router, tool(90, "design_status", json!({}))).await;
+    let snapshot = &status["result"]["structuredContent"]["result"];
+    let args = json!({"key":"mcp-copy", "incarnation":snapshot["incarnation"], "revision":snapshot["revision"]});
+    let (_, _, prepared) = call(&mcp_router, tool(91, "design_cut_copy", args.clone())).await;
+    assert_ne!(prepared["result"]["isError"], true, "{prepared}");
+    assert!(
+        prepared["result"]["structuredContent"]["result"]["value"]["copy"]["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("copy-")
+    );
+    let replay = post_design(
+        &h.app,
+        "/api/v1/design/command",
+        json!({"id":"cut.copy", "params":{},
+        "key":"mcp-copy", "incarnation":args["incarnation"], "revision":args["revision"]}),
+        None,
+    )
+    .await;
+    assert_eq!(replay, prepared["result"]["structuredContent"]["result"]);
     let (_, _, cutters) = call(&mcp_router, tool(3, "cutters", json!({}))).await;
     assert_eq!(
         cutters["result"]["structuredContent"]["result"]["cutters"][0]["id"],
@@ -2422,5 +2444,238 @@ async fn update_drain_keeps_start_replay_and_stop_available() {
         (status, refused["error"].as_str()),
         (StatusCode::CONFLICT, Some("update-waiting")),
         "drain stays closed: {refused}"
+    );
+}
+
+async fn cut_copy(app: &App, key: &str) -> Value {
+    let s = now(app, None).await;
+    post_design(
+        app,
+        "/api/v1/design/command",
+        json!({"id":"cut.copy", "params":{},
+        "key":key, "incarnation":s["incarnation"], "revision":s["revision"]}),
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_cut_copy_survives_edits_library_revisions_and_closing_the_design() {
+    let mut h = harness();
+    open_star(&h.app, None).await;
+    let s = now(&h.app, None).await;
+    let saved = post_design(
+        &h.app,
+        "/api/v1/design/save",
+        json!({"key":"copy-source-save", "incarnation":s["incarnation"],
+        "revision":s["revision"], "as":{"name":"Copy source"}}),
+        None,
+    )
+    .await;
+    assert_eq!(saved["answer"], "applied", "{saved}");
+    let first = cut_copy(&h.app, "first-copy").await;
+    assert_eq!(first["answer"], "applied", "{first}");
+    let copy = &first["value"]["copy"];
+    let id = copy["id"].as_str().unwrap();
+    let original = h.app.service.stored_plan(id, 1).unwrap();
+    assert!(
+        h.app.service.cutters_view()[0]["view"]["turn"].is_null(),
+        "preparation does not queue or move"
+    );
+    let (_, queued) = send(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/cutters/practice/queue",
+            json!({"job_id":id, "revision":1, "key":"copy-queue"}),
+        ),
+    )
+    .await;
+    let s = now(&h.app, None).await;
+    assert_eq!(
+        post_design(
+            &h.app,
+            "/api/v1/design/command",
+            json!({"id":"sheet.adjust", "params":{"force":22},
+        "key":"copy-edit", "incarnation":s["incarnation"], "revision":s["revision"]}),
+            None
+        )
+        .await["answer"],
+        "applied"
+    );
+    let s = now(&h.app, None).await;
+    assert_eq!(
+        post_design(
+            &h.app,
+            "/api/v1/design/save",
+            json!({"key":"copy-save-again", "incarnation":s["incarnation"],
+        "revision":s["revision"]}),
+            None
+        )
+        .await["answer"],
+        "applied"
+    );
+    let second = cut_copy(&h.app, "second-copy").await;
+    assert_ne!(second["value"]["copy"]["id"], copy["id"]);
+    assert_ne!(second["value"]["copy"]["digest"], copy["digest"]);
+    assert_eq!(
+        h.app.service.stored_plan(id, 1).unwrap().material.force,
+        original.material.force
+    );
+    let turn = lock(&h.app.service.cutters[0].shared).view().turn.unwrap();
+    assert_eq!(turn.job.job_id, id);
+    assert_eq!(turn.job.revision, 1);
+    let loading = h.app.service.job(id, Some(1)).unwrap();
+    assert_eq!(loading["immutable"], true);
+    assert_eq!(loading["revision"]["digest"], copy["digest"]);
+    assert!(h.app.service.download(id, 1, "preview").is_ok());
+    assert!(h.app.service.download(id, 1, "project").is_err());
+    assert!(h.app.service.download(id, 1, "design").is_err());
+    assert!(h.app.service.copies.get(id, 2).is_err());
+    let s = now(&h.app, None).await;
+    assert_eq!(
+        post_design(
+            &h.app,
+            "/api/v1/design/command",
+            json!({"id":"design.close", "params":{},
+        "key":"close-copy-source", "incarnation":s["incarnation"], "revision":s["revision"]}),
+            None
+        )
+        .await["answer"],
+        "applied"
+    );
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.unload();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.load(Media::Mat12x12);
+    for _ in 0..9 {
+        h.worker.step();
+    }
+    let view = lock(&h.app.service.cutters[0].shared).view();
+    let cameo_pi_core::mat::Mat::Fresh(generation) = view.mat else {
+        panic!("not fresh");
+    };
+    let (status, started) = send(&h.app, page("POST", "/api/v1/cutters/practice/start", json!({"boot":"t", "kind":"main", "turn":queued["turn"],
+        "job_id":id, "revision":1, "generation":generation, "action_epoch":view.action_epoch, "key":"copy-start"}))).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    h.worker.step();
+    let records: Vec<cameo_pi_core::journal::Record> =
+        std::fs::read_dir(h._dir.path().join("private/executions"))
+            .unwrap()
+            .map(|entry| {
+                serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap()
+            })
+            .collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].job_id, id);
+    assert_eq!(
+        records[0].digest,
+        copy["digest"].as_str().unwrap(),
+        "the actual driver runs the original copy, not the edited project"
+    );
+}
+
+#[tokio::test]
+async fn http_and_mcp_replay_the_same_copy_after_losing_the_worker_checkpoint() {
+    let mut h = harness();
+    open_star(&h.app, None).await;
+    let s = now(&h.app, None).await;
+    let draft = h.app.service.people.join("household/drafts/session.json");
+    let before_copy = std::fs::read(&draft).unwrap();
+    let args =
+        json!({"key":"shared-copy", "incarnation":s["incarnation"], "revision":s["revision"]});
+    let request = json!({"id":"cut.copy", "params":{}, "key":"shared-copy", "incarnation":s["incarnation"], "revision":s["revision"]});
+    let first = post_design(&h.app, "/api/v1/design/command", request.clone(), None).await;
+    let caller = crate::http::Caller {
+        actor: cameo_pi_core::cutter::Actor {
+            user: None,
+            client: "copy-test".into(),
+        },
+        identity: crate::users::Identity::Open,
+        session: None,
+        key: None,
+    };
+    let tools = crate::mcp::Tools::new(h.app.clone());
+    assert_eq!(
+        tools
+            .invoke("design_cut_copy", args.clone(), caller.clone())
+            .await
+            .unwrap(),
+        first
+    );
+    std::fs::write(&draft, before_copy).unwrap();
+    h.app.design = Arc::new(crate::design::Sessions::new(
+        crate::design::Mode::Thread,
+        h.app.service.people.clone(),
+        h.app.service.lists.clone(),
+    ));
+    assert_ne!(now(&h.app, None).await["incarnation"], s["incarnation"]);
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/command", request.clone(), None).await,
+        first
+    );
+    let (_, found) = send(
+        &h.app,
+        design(
+            "GET",
+            "/api/v1/design/lookup/shared-copy",
+            Body::empty(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(found, first);
+    let tools = crate::mcp::Tools::new(h.app.clone());
+    assert_eq!(
+        tools
+            .invoke("design_cut_copy", args.clone(), caller.clone())
+            .await
+            .unwrap(),
+        first
+    );
+    let mut changed = request;
+    changed["revision"] = json!(999);
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/command", changed, None).await["code"],
+        "key-reused"
+    );
+    let current = now(&h.app, None).await;
+    let edit = json!({"id":"sheet.adjust", "params":{"force":22}, "key":"shared-copy", "incarnation":current["incarnation"], "revision":current["revision"]});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/command", edit, None).await["code"],
+        "key-reused"
+    );
+    let status = tools
+        .invoke("design_status", json!({}), caller)
+        .await
+        .unwrap();
+    assert_eq!(status["revision"], current["revision"]);
+}
+
+#[tokio::test]
+async fn an_absent_or_stale_design_never_publishes_a_copy() {
+    let h = harness();
+    let empty = cut_copy(&h.app, "empty-copy").await;
+    assert_eq!(empty["code"], "not-cut-ready", "{empty}");
+    let s = open_star(&h.app, None).await;
+    set_material(&h.app, "copy-stale-edit", "Removable", None).await;
+    let stale = post_design(
+        &h.app,
+        "/api/v1/design/command",
+        json!({"id":"cut.copy", "params":{},
+        "key":"stale-copy", "incarnation":s["incarnation"], "revision":s["revision"]}),
+        None,
+    )
+    .await;
+    assert_eq!(stale["code"], "stale-revision", "{stale}");
+    assert_eq!(
+        std::fs::read_dir(h._dir.path().join("private/cut-copies"))
+            .unwrap()
+            .count(),
+        0
     );
 }

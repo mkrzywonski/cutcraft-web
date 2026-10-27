@@ -54,6 +54,7 @@ const KEPT_PREVIOUS: usize = 10;
 /// replies can carry server paths, they belong to the desktop app or the whole server, or they
 /// drive a cutter, which goes through the cutter service from milestone 3.
 const REFUSED: &[&str] = &[
+    "cut.copy",
     // Replies with server paths: the snapshot gives a browser what it needs of them.
     "app.status",
     "app.engine_check",
@@ -322,6 +323,26 @@ impl Worker {
                 Ok(()) => WorkerReply::Replay { result: None },
                 Err(message) => WorkerReply::Failed { message },
             },
+            WorkerRequest::Remember { request, answer } => {
+                if let Some(reply) = self.replay(&request) {
+                    return WorkerReply::Command(reply);
+                }
+                if request.incarnation != self.incarnation
+                    || request.revision
+                        != Some(self.controller.snapshot().map_or(0, |s| s.revision))
+                {
+                    return WorkerReply::Command(refused(
+                        codes::STALE_REVISION,
+                        "The project changed before the action finished.",
+                    ));
+                }
+                self.record(request, &answer);
+                self.changed();
+                if let Err(e) = self.checkpoint() {
+                    eprintln!("cameo-pi worker: the action's draft couldn't be written: {e}");
+                }
+                WorkerReply::Command(answer)
+            }
             WorkerRequest::Replay(c) => WorkerReply::Replay {
                 result: self.replay(&c),
             },
@@ -580,24 +601,14 @@ impl Worker {
     /// The open project as a `.cutcraft` file and its first sheet's plan, for the server to save
     /// in the library (spec §11).
     fn export(&self) -> Result<WorkerReply, String> {
-        let s = self.controller.snapshot()?;
-        let open = s.design.as_ref().ok_or("No design is open.")?;
-        let file = ProjectFile::new(
-            open.project.clone(),
-            Path::new(&open.path),
-            &open.bytes,
-            cutcraft_control::APP_BUILD,
-        );
-        let sheet = open
-            .project
-            .sheets
-            .first()
-            .ok_or("There is nothing to cut.")?;
-        let plan = cutcraft_path::plan_sheet(&open.project, &sheet.id)?;
+        let output = self
+            .controller
+            .execute(Origin::User, "cut.copy", json!({}), None)
+            .map_err(|e| e.message)?;
         Ok(WorkerReply::Export {
             name: self.name.clone().unwrap_or_else(|| "Design".into()),
-            project: serde_json::to_string(&file).map_err(|e| e.to_string())?,
-            plan: serde_json::to_string(&plan).map_err(|e| e.to_string())?,
+            project: serde_json::to_string(&output.value["project"]).map_err(|e| e.to_string())?,
+            plan: serde_json::to_string(&output.value["plan"]).map_err(|e| e.to_string())?,
             saved: self.saved.clone(),
         })
     }

@@ -30,7 +30,7 @@ pub fn service(app: App) -> StreamableHttpService<Tools, LocalSessionManager> {
         // Programs only: a request with any browser Origin is refused.
         .enforce_origin_validation();
     StreamableHttpService::new(
-        move || Ok(Tools { app: app.clone() }),
+        move || Ok(Tools::new(app.clone())),
         Arc::new(LocalSessionManager::default()),
         config,
     )
@@ -65,6 +65,24 @@ fn folder(description: &str) -> Value {
 }
 
 const TOOLS: &[ToolSpec] = &[
+    ToolSpec {
+        name: "design_status",
+        title: "Current design",
+        description: "Your current design session, incarnation and revision. Use before design_cut_copy.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({}),
+        required: &[],
+    },
+    ToolSpec {
+        name: "design_cut_copy",
+        title: "Prepare cut copy",
+        description: "Prepare a validated immutable copy of your current sheet (the shared cut.copy command). Returns copy.id for cut_queue and cut_start, revision 1. Does not queue or move a cutter. Later design edits cannot change it.",
+        read_only: false,
+        destructive: false,
+        properties: || json!({"key": s("Unique key for this cut copy; retain it for retries."), "incarnation": s("From design_status."), "revision": i("The design_status revision reviewed.")}),
+        required: &["key", "incarnation", "revision"],
+    },
     ToolSpec {
         name: "cutters",
         title: "Cutters and their state",
@@ -404,6 +422,39 @@ fn key(args: &Value) -> String {
 }
 
 impl Tools {
+    pub(crate) fn new(app: App) -> Self {
+        Self { app }
+    }
+
+    pub(crate) async fn invoke(&self, name: &str, args: Value, caller: Caller) -> Out {
+        if matches!(name, "design_status" | "design_cut_copy") {
+            let principal = caller
+                .principal()
+                .ok_or_else(|| ApiError::new(401, "login", "Log in first."))?;
+            if name == "design_status" {
+                return serde_json::to_value(
+                    crate::design::session_status(&self.app, &principal).await?,
+                )
+                .map_err(|e| ApiError::bad_request(e.to_string()));
+            }
+            let request =
+                serde_json::from_value(args).map_err(|e| ApiError::bad_request(e.to_string()))?;
+            return match crate::design::prepare_copy(self.app.clone(), principal, request).await? {
+                cutcraft_web_protocol::CommandReply::Applied { revision, value } => {
+                    Ok(json!({"answer":"applied", "revision":revision, "value":value}))
+                }
+                cutcraft_web_protocol::CommandReply::Refused { code, message } => {
+                    Err(ApiError::new(409, &code, message))
+                }
+            };
+        }
+        let tools = self.clone();
+        let name = name.to_owned();
+        tokio::task::spawn_blocking(move || tools.run(&name, &args, &caller))
+            .await
+            .map_err(|e| ApiError::new(500, "internal", e.to_string()))?
+    }
+
     fn run(&self, name: &str, args: &Value, caller: &Caller) -> Out {
         let service = &self.app.service;
         Ok(match name {
@@ -604,7 +655,7 @@ impl ServerHandler for Tools {
         ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("cameo-pi", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "cameo-pi, a network cut server for Silhouette Cameo cutters. Start with cutters and library_list. To cut: job_send a prepared sheet (or pick a library job), cut_queue it, and when it's the cutter's current turn and its mat is fresh, cut_start with the values cutters shows. Cutting moves the machine: tell the person what you're about to cut, and let them load the material. cut_stop stops at once.",
+                "cameo-pi, a network cut server for Silhouette Cameo cutters. Use design_status and design_cut_copy to prepare an immutable copy of the current sheet without motion, then cut_queue its copy.id at revision 1. Or start with cutters and library_list. To cut: job_send a prepared sheet (or pick a library job), cut_queue it, and when it's the cutter's current turn and its mat is fresh, cut_start with the values cutters shows. Cutting moves the machine: tell the person what you're about to cut, and let them load the material. cut_stop stops at once.",
             )
     }
 
@@ -626,7 +677,7 @@ impl ServerHandler for Tools {
                     ToolAnnotations::with_title(t.title)
                         .read_only(t.read_only)
                         .destructive(t.destructive)
-                        .idempotent(t.read_only)
+                        .idempotent(t.read_only || t.name == "design_cut_copy")
                         .open_world(false),
                 )
             })
@@ -649,10 +700,7 @@ impl ServerHandler for Tools {
             .ok_or_else(|| ErrorData::internal_error("no caller", None))?;
         let args = Value::Object(request.arguments.unwrap_or_default());
         let name = request.name.to_string();
-        let tools = self.clone();
-        let result = tokio::task::spawn_blocking(move || tools.run(&name, &args, &caller))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let result = self.invoke(&name, args, caller).await;
         Ok(match result {
             Ok(value) => CallToolResult::structured(json!({ "result": value })),
             Err(error) => CallToolResult::structured_error(json!({

@@ -139,6 +139,7 @@ pub struct Service {
     /// Shared by every Start path; the updater closes admission before draining.
     pub updates: cameo_pi_core::update::UpdateGate,
     pub library: Library,
+    pub(crate) copies: crate::copies::Store,
     pub cutters: Vec<CutterEntry>,
     pub keys: Keys,
     pub users: Users,
@@ -187,6 +188,7 @@ impl Service {
             boot,
             updates: cameo_pi_core::update::UpdateGate::default(),
             library,
+            copies: crate::copies::Store::open(data.join("private/cut-copies"))?,
             cutters,
             keys,
             users,
@@ -237,11 +239,15 @@ impl Service {
     ) -> Result<Answer> {
         let entry = self.cutter(cutter)?;
         let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
-        let details = self.library.details(job_id)?;
-        if seen.is_some_and(|r| r != details.current_revision) {
+        let current = if crate::copies::is_copy(job_id) {
+            self.copies.get(job_id, 1)?.view.revision
+        } else {
+            self.library.details(job_id)?.current_revision
+        };
+        if seen.is_some_and(|r| r != current) {
             return Err(Refusal::StaleRevision.into());
         }
-        let job = job_ref(job_id, details.current_revision);
+        let job = job_ref(job_id, current);
         Ok(lock(&entry.shared).queue(job, actor, key)?)
     }
 
@@ -253,17 +259,35 @@ impl Service {
         job_id: &str,
         revision: u32,
     ) -> Result<Runnable> {
-        let project_path = self
-            .library
-            .revision_file(job_id, revision, "project.cutcraft")?;
-        let plan_path = self.library.revision_file(job_id, revision, "plan.json")?;
-        let project = ProjectFile::open(&project_path).map_err(ApiError::bad_request)?;
-        let text =
-            std::fs::read(&plan_path).map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
-        let plan: CutPlan = serde_json::from_slice(&text)
-            .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        let (project, plan, digest) = if crate::copies::is_copy(job_id) {
+            let stored = self.copies.get(job_id, revision)?;
+            (stored.project, stored.plan, Some(stored.view.digest))
+        } else {
+            let project_path = self
+                .library
+                .revision_file(job_id, revision, "project.cutcraft")?;
+            let plan_path = self.library.revision_file(job_id, revision, "plan.json")?;
+            let project = ProjectFile::open(&project_path).map_err(ApiError::bad_request)?;
+            let text = std::fs::read(&plan_path)
+                .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+            let plan: CutPlan = serde_json::from_slice(&text)
+                .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+            (project, plan, None)
+        };
         // Pacing from the Pi's own profile, never the uploaded project's.
         let machine = &self.machine;
+        if let Some(expected) = digest {
+            let original = Runnable::new(&plan, &CAMEO_1, machine).map_err(|_| {
+                ApiError::new(422, "damaged-copy", "The cut copy's plan is invalid.")
+            })?;
+            if original.digest != expected {
+                return Err(ApiError::new(
+                    422,
+                    "damaged-copy",
+                    "The cut copy no longer matches its validated plan.",
+                ));
+            }
+        }
         let plan = match kind {
             Kind::Main => plan,
             Kind::Test => {
@@ -290,10 +314,11 @@ impl Service {
                     .map_err(ApiError::bad_request)?
             }
         };
-        Runnable::new(&plan, &CAMEO_1, machine).map_err(|problems| {
+        let run = Runnable::new(&plan, &CAMEO_1, machine).map_err(|problems| {
             let lines: Vec<String> = problems.iter().map(|d| d.message.clone()).collect();
             ApiError::bad_request(lines.join("; "))
-        })
+        })?;
+        Ok(run)
     }
 
     pub fn start(&self, cutter: &str, body: StartBody, actor: Actor) -> Result<Answer> {
@@ -314,7 +339,12 @@ impl Service {
             return Err(update_waiting());
         }
         // A page showing an older revision than the job's current one starts nothing (spec §9.2).
-        if self.library.details(&body.job_id)?.current_revision != body.revision {
+        let current = if crate::copies::is_copy(&body.job_id) {
+            self.copies.get(&body.job_id, 1)?.view.revision
+        } else {
+            self.library.details(&body.job_id)?.current_revision
+        };
+        if current != body.revision {
             return Err(Refusal::StaleRevision.into());
         }
         let run = self.runnable(entry, body.kind, &body.job_id, body.revision)?;
@@ -521,6 +551,9 @@ impl Service {
     }
 
     pub(crate) fn stored_plan(&self, id: &str, revision: u32) -> Result<CutPlan> {
+        if crate::copies::is_copy(id) {
+            return Ok(self.copies.get(id, revision)?.plan);
+        }
         let path = self.library.revision_file(id, revision, "plan.json")?;
         let bytes =
             std::fs::read(path).map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
@@ -530,6 +563,18 @@ impl Service {
     /// A job's details, and one revision with its loading steps: the current revision unless
     /// another is asked for, so a cutter page describes exactly the revision its turn cuts.
     pub fn job(&self, id: &str, revision: Option<u32>) -> Result<Value> {
+        if crate::copies::is_copy(id) {
+            let copy = self.copies.get(id, revision.unwrap_or(1))?;
+            let plan = &copy.plan;
+            return Ok(json!({
+                "immutable": true, "copy": copy.view,
+                "details": {"id":id, "name":copy.view.name, "current_revision":1, "notes":"", "history":[], "times_cut":0},
+                "folder": [], "revision": {"revision":1, "material":plan.material.name, "mat":plan.mat,
+                    "size_mm":plan.design_size_mm, "estimate_s":plan.estimate_s, "digest":copy.view.digest},
+                "settings": null, "material_drift": null,
+                "steps": loading_steps(plan), "loaded_steps":setup_steps(plan), "mirror":plan.mirror, "blade":plan.material.blade,
+            }));
+        }
         let details = self.library.details(id)?;
         let number = revision.unwrap_or(details.current_revision);
         let revision = self.library.revision(id, number)?;
@@ -754,6 +799,25 @@ impl Service {
         revision: u32,
         what: &str,
     ) -> Result<(String, String, Vec<u8>)> {
+        if crate::copies::is_copy(id) {
+            // Only the current sheet's preview is shared at the cutter. Original artwork and
+            // project/source bytes remain private, including sheets not chosen for cutting.
+            if !matches!(what, "preview" | "thumb" | "cut-lines") {
+                return Err(ApiError::not_found());
+            }
+            let copy = self.copies.get(id, revision)?;
+            let svg = cutcraft_path::preview_svg(&copy.plan);
+            let bytes = if what == "thumb" {
+                thumbnail(&svg, copy.plan.bounds_mm).into_bytes()
+            } else {
+                svg.into_bytes()
+            };
+            return Ok((
+                format!("{}.svg", copy.view.name),
+                "image/svg+xml".into(),
+                bytes,
+            ));
+        }
         let read = |file: &str| -> Result<Vec<u8>> {
             let path = self.library.revision_file(id, revision, file)?;
             std::fs::read(path).map_err(|e| ApiError::new(500, "storage", e.to_string()))

@@ -4,6 +4,14 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.8.0 — 2026-10-27
+
+- Add validated immutable cut copies through the shared `cut.copy` registry command; preparation never queues or moves a cutter.
+- Keep each copy and its keyed request receipt atomically in private cutter-service storage. Worker/session recovery replays the same result and refuses changed request bodies.
+- Queue, loading details, preview and Start resolve the copy ID at revision 1; design edits, later library revisions and closing the design cannot retarget it. Original artwork/project downloads remain private.
+- Add MCP `design_status` and `design_cut_copy` using the same action as HTTP; protocol 4 updates the worker contract and older clients must reload.
+- Cover original-plan execution with the virtual-clock simulator, store restart, lost checkpoints, HTTP/MCP transport parity, stale requests and path rejection. Broader M3 durability/isolation gates remain open.
+
 ## 0.7.0 — 2026-10-26
 
 - Start M3 with a shared update-drain admission guard: new Starts are refused while draining, accepted Start requests still replay, queued turns wait, and Stop remains independent.
