@@ -1,0 +1,2 @@
+# Source hashes in golden reports must not depend on checkout line endings.
+*.svg text eol=lf

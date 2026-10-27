@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "engine_revision": "fa4e42762bf4e2b81d60c1043b2b729223d07fe7",
+  "source_sha256": "de1cc5d43b715c690bb89b01b4cb1a6caf8b472566ce3793d70ba72ebef2a73c",
+  "format": "svg",
+  "stage": "import_inspection",
+  "cut_ready": false,
+  "restored_editing_data": false,
+  "preview_only": false,
+  "declared_svg_size_mm": [25.4, 25.4],
+  "pages": [
+    {
+      "id": "page/0",
+      "width_mm": 25.4,
+      "height_mm": 25.4
+    }
+  ],
+  "objects": [
+    {
+      "source_id": "source/0",
+      "kind": "layer",
+      "excluded": null
+    },
+    {
+      "source_id": "source/0/0",
+      "kind": "path",
+      "excluded": null
+    }
+  ],
+  "fonts": [],
+  "diagnostics": [
+    {
+      "code": "preparation.pending",
+      "severity": "blocking",
+      "message": "Import inspection only. Page selection, conversion decisions, geometry preparation and validation are not implemented yet.",
+      "source_ids": []
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+[package]
+name = "cameo-pi"
+description = "The cameo-pi server: cutters, the job library, the web interface and the protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+argon2 = { workspace = true }
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+cameo-pi-core.workspace = true
+cutcraft-device.workspace = true
+cutcraft-job.workspace = true
+cutcraft-path.workspace = true
+cutcraft-sim.workspace = true
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+rmcp = { workspace = true }
+base64 = { workspace = true }
+russh = { workspace = true }
+russh-sftp = { workspace = true }
+age = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+cutcraft-station.workspace = true
+cameo-pi-core = { workspace = true, features = ["fixtures"] }
+tempfile.workspace = true
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[lints]
+workspace = true

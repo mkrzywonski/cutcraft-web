@@ -3,6 +3,7 @@ name = "cutcraft-web-protocol"
 description = "The contract between the browser, the server and its preparation workers (spec §13)"
 version.workspace = true
 edition.workspace = true
+publish.workspace = true
 license.workspace = true
 
 [dependencies]

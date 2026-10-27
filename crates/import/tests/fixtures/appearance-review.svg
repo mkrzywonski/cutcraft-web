@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2in" height="1in" viewBox="0 0 192 96">
+  <defs>
+    <linearGradient id="fade"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient>
+    <clipPath id="trim"><rect x="0" y="0" width="150" height="96"/></clipPath>
+  </defs>
+  <g clip-path="url(#trim)">
+    <path d="M5 5H180V90H5Z" fill="url(#fade)" stroke="black" stroke-width="2" opacity="0.5"/>
+  </g>
+</svg>

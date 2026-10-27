@@ -12,7 +12,9 @@ It replaces two earlier projects by the same developer, and brings their code in
 On a computer it looks and works like CutCraft. A phone gets its own thumb-friendly pages, with the
 same capabilities.
 
-**Status:** the [specification](docs/spec.md) is final (version 1). Milestone 0, a first working slice, is under way.
+**Status:** the [specification](docs/spec.md) is final (version 1). Milestone 0's working slice is
+built ([report](docs/m0-report.md)), and milestone 1 brought the earlier projects' code in
+([provenance](docs/provenance.md)).
 
 ## License
 

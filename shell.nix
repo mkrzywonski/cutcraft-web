@@ -28,5 +28,7 @@ pkgs.mkShell {
     pkgs.zig
     # The Debian package (scripts/build-deb.sh, scripts/apt-repo.sh).
     pkgs.dpkg
+    # Licences, advisories and dependency sources (deny.toml, docs/development.md §3.3).
+    pkgs.cargo-deny
   ];
 }

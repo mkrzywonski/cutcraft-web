@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>cameo-pi</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <h1 id="title">cameo-pi</h1>
+  <span id="connection" class="dot" title="Live updates"></span>
+</header>
+<div id="banner" hidden></div>
+<main id="view" aria-live="polite"></main>
+<nav class="tabs" id="tabs" hidden>
+  <a href="#/cutters" data-tab="cutters">Cutters</a>
+  <a href="#/library" data-tab="library">Library</a>
+  <a href="#/settings" data-tab="settings">Settings</a>
+</nav>
+<noscript><p class="pad">cameo-pi needs JavaScript in this browser.</p></noscript>
+</body>
+</html>

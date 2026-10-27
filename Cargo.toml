@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/protocol"]
+members = ["crates/*", "apps/*"]
 # The milestone 0 spike builds against local checkouts of the old repositories; it is its own
-# workspace and is replaced in milestone 1 (spec §5.2).
+# workspace and is retired once its findings are taken up (docs/m0-report.md).
 exclude = ["spike"]
 
 [workspace.package]
@@ -10,10 +10,79 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
+repository = "https://github.com/mkrzywonski/cutcraft-web"
+# Nothing here goes to crates.io.
+publish = false
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Imported crates (docs/provenance.md).
+cutcraft-device = { path = "crates/device" }
+cutcraft-import = { path = "crates/import" }
+cutcraft-job = { path = "crates/job" }
+cutcraft-path = { path = "crates/path" }
+cutcraft-control = { path = "crates/control" }
+cutcraft-sim = { path = "crates/sim" }
+cutcraft-station = { path = "crates/station" }
+cameo-pi-core = { path = "crates/cameo-pi-core" }
+cutcraft-web-protocol = { path = "crates/protocol" }
+# The design engine: the one external code dependency, pinned to a full commit.
+vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-render = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-color = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-svg = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-cad = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-pathops = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-effects = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-pdf = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-trace = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+vectorcraft-text = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
+kurbo = "0.13"
+roxmltree = "0.21"
+# Resolved to the craft-libs revision patched below, as the engine uses.
+hayro-syntax = "0.7"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
+nusb = "=0.2.7"
+serde = { version = "1", features = ["derive", "rc"] }
+# Exact float parsing, as cameo-pi had it: a project read back plans exactly as it was planned.
+# Cargo unifies features, so CutCraft's crates get it too (docs/provenance.md).
+serde_json = { version = "1", features = ["float_roundtrip"] }
+schemars = "1.2.3"
+vello_cpu = { version = "0.2", default-features = false, features = ["std", "png", "u8_pipeline"] }
+directories = "6"
+tempfile = "3"
+base64 = "0.22"
+getrandom = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal", "fs", "io-util", "io-std"] }
+tokio-util = "0.7"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+axum = { version = "0.8", features = ["multipart"] }
+# HTTPS on hyper with rustls on ring, both as server and as the station client.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service"] }
+http-body-util = "0.1"
+# Bonjour discovery (_cameo-pi._tcp), pure Rust.
+mdns-sd = "0.21"
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest", "transport-io"] }
+# Backups over SFTP, optionally encrypted with age. Established libraries, no crypto of ours.
+russh = { version = "0.64", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "3"
+age = { version = "0.11", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+
+# Cargo only applies patches from the root workspace: VectorCraft's PDF backend overrides at the
+# pinned engine revision, as CutCraft had them.
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -22,3 +91,9 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+strip = "symbols"

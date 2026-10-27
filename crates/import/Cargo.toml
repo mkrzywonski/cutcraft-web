@@ -1,0 +1,31 @@
+[package]
+name = "cutcraft-import"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+vectorcraft-engine.workspace = true
+vectorcraft-doc.workspace = true
+vectorcraft-render.workspace = true
+vectorcraft-color.workspace = true
+vectorcraft-svg.workspace = true
+vectorcraft-cad.workspace = true
+vectorcraft-pathops.workspace = true
+vectorcraft-text.workspace = true
+vectorcraft-pdf.workspace = true
+vectorcraft-effects.workspace = true
+cutcraft-job.workspace = true
+kurbo.workspace = true
+image.workspace = true
+vectorcraft-trace.workspace = true
+roxmltree.workspace = true
+hayro-syntax.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

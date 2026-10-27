@@ -1,0 +1,16 @@
+[package]
+name = "cutcraft-device"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cutcraft-job.workspace = true
+cutcraft-path.workspace = true
+nusb.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

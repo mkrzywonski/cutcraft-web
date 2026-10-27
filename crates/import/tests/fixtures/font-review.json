@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "engine_revision": "fa4e42762bf4e2b81d60c1043b2b729223d07fe7",
+  "source_sha256": "c158685f0c3eec378dbf66ccf67f7f62fbf22ea1cb48e4ed1462eb9b66759d00",
+  "format": "svg",
+  "stage": "import_inspection",
+  "cut_ready": false,
+  "restored_editing_data": false,
+  "preview_only": false,
+  "declared_svg_size_mm": [50.8, 25.4],
+  "pages": [
+    {
+      "id": "page/0",
+      "width_mm": 50.8,
+      "height_mm": 25.4
+    }
+  ],
+  "objects": [
+    {
+      "source_id": "source/0",
+      "kind": "layer",
+      "excluded": null
+    },
+    {
+      "source_id": "source/0/0",
+      "kind": "text",
+      "excluded": null
+    },
+    {
+      "source_id": "source/0/1",
+      "kind": "text",
+      "excluded": "hidden"
+    }
+  ],
+  "fonts": [
+    {
+      "family": "CutCraft Deliberately Missing Fixture Font",
+      "style": "Regular",
+      "status": "missing",
+      "resolved": {
+        "family": "Source Sans 3",
+        "style": "Regular"
+      },
+      "missing_glyphs": 0,
+      "source_ids": [
+        "source/0/0"
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "text.needs_outlines",
+      "severity": "blocking",
+      "message": "Text must be converted to shapes after fonts are resolved.",
+      "source_ids": [
+        "source/0/0"
+      ]
+    },
+    {
+      "code": "font.unresolved",
+      "severity": "blocking",
+      "message": "Review font CutCraft Deliberately Missing Fixture Font Regular: substitution or missing glyphs must be resolved before outlining.",
+      "source_ids": [
+        "source/0/0"
+      ]
+    },
+    {
+      "code": "font.environment_unverified",
+      "severity": "blocking",
+      "message": "Installed-font discovery and font fingerprints are not validated on every target platform. Inspect the reported font resolution before preparation.",
+      "source_ids": []
+    },
+    {
+      "code": "preparation.pending",
+      "severity": "blocking",
+      "message": "Import inspection only. Page selection, conversion decisions, geometry preparation and validation are not implemented yet.",
+      "source_ids": []
+    }
+  ]
+}

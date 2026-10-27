@@ -1,0 +1,29 @@
+[package]
+name = "cutcraft-control"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cutcraft-import.workspace = true
+cutcraft-device.workspace = true
+cutcraft-path.workspace = true
+cutcraft-station.workspace = true
+cutcraft-sim = { workspace = true, optional = true }
+base64.workspace = true
+serde.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+tempfile.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+
+[features]
+# The Simulated Cameo as a device (spec §7.4). Never part of her release build.
+dev-automation = ["dep:cutcraft-sim"]
+
+[lints]
+workspace = true

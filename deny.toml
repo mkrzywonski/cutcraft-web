@@ -1,0 +1,56 @@
+# cargo deny check (docs/development.md §3.3): what ships may only use these licences, come from
+# these sources, and carry no known advisories.
+
+[graph]
+all-features = false
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "MPL-2.0",
+  "CC0-1.0",
+  "BSL-1.0",
+  "0BSD",
+  "CDLA-Permissive-2.0",
+  "OFL-1.1",
+  # The Independent JPEG Group licence (jpeg-encoder, through VectorCraft's PDF output):
+  # permissive, asking for credit in the documentation. Listed in docs/provenance.md.
+  "IJG",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Two majors of one crate are reported, not refused: VectorCraft's stack has a few.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# crates.io, and the pinned engine and its patched PDF crates. Nothing from the retired
+# CutCraft or cameo-pi repositories (spec §5.2).
+allow-git = [
+  "https://github.com/storytold/vectorcraft",
+  "https://github.com/storytold/craft-libs",
+]
+
+[advisories]
+yanked = "deny"
+# Unmaintained crates we depend on directly fail; deeper ones (compile-time macro helpers inside
+# age's translations) are reported.
+unmaintained = "workspace"
+ignore = [
+  # Marvin: RSA private-key operations aren't constant-time, and there's no fix yet. Not
+  # reachable here: the backup key is Ed25519 (apps/server/src/backups.rs), so RSA only verifies a
+  # backup computer's host key, a public-key operation. Revisit if RSA keys are ever generated or
+  # loaded.
+  { id = "RUSTSEC-2023-0071", reason = "RSA only verifies host keys; our own key is Ed25519" },
+]
