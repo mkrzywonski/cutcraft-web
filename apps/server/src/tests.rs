@@ -2029,3 +2029,225 @@ async fn a_material_saved_by_one_person_reaches_everyone_elses_session() {
     );
     assert!(h.app.service.lists.join("materials.json").is_file());
 }
+
+/// A lost library Open reply can be retried with the identical browser request.
+#[tokio::test]
+async fn library_open_and_save_replay_the_original_request_after_later_edits() {
+    let h = harness();
+    open_star(&h.app, None).await;
+    let s = now(&h.app, None).await;
+    let save = json!({"key":"save-retry", "incarnation":s["incarnation"], "revision":s["revision"], "as":{"folder":[], "name":"Replay star"}});
+    let first = post_design(&h.app, "/api/v1/design/save", save.clone(), None).await;
+    assert_eq!(first["answer"], "applied", "{first}");
+    let saved = now(&h.app, None).await["design"]["saved"].clone();
+    set_material(&h.app, "later-edit", "Removable", None).await;
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", save.clone(), None).await,
+        first
+    );
+    assert_eq!(now(&h.app, None).await["design"]["unsaved"], true);
+    let mut changed = save;
+    changed["as"]["name"] = json!("Different");
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", changed, None).await["code"],
+        "key-reused"
+    );
+    let s = now(&h.app, None).await;
+    let open = json!({"project":{"job":saved["job"]}, "key":"library-retry", "incarnation":s["incarnation"], "revision":s["revision"], "replace_unsaved":true});
+    let first = post_design(&h.app, "/api/v1/design/open", open.clone(), None).await;
+    assert_eq!(first["answer"], "applied", "{first}");
+    set_material(&h.app, "another-edit", "Permanent", None).await;
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", open.clone(), None).await,
+        first
+    );
+    assert_eq!(now(&h.app, None).await["design"]["unsaved"], true);
+    let mut changed = open;
+    changed["replace_unsaved"] = json!(false);
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", changed, None).await["code"],
+        "key-reused"
+    );
+}
+
+#[tokio::test]
+async fn a_published_save_survives_losing_the_session_acknowledgement() {
+    let mut h = harness();
+    open_star(&h.app, None).await;
+    let draft = h.app.service.people.join("household/drafts/session.json");
+    let before_save = std::fs::read(&draft).unwrap();
+    let s = now(&h.app, None).await;
+    let body = json!({"key":"durable-save", "incarnation":s["incarnation"], "revision":s["revision"], "as":{"name":"Durable star"}});
+    let first = post_design(&h.app, "/api/v1/design/save", body.clone(), None).await;
+    assert_eq!(first["answer"], "applied", "{first}");
+    let job = now(&h.app, None).await["design"]["saved"]["job"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Reproduce a crash after publishing but before checkpointing the session's Save result.
+    std::fs::write(&draft, before_save).unwrap();
+    h.app.design = std::sync::Arc::new(crate::design::Sessions::new(
+        crate::design::Mode::Thread,
+        h.app.service.people.clone(),
+        h.app.service.lists.clone(),
+    ));
+    assert_ne!(now(&h.app, None).await["incarnation"], s["incarnation"]);
+    let (_, lookup) = send(
+        &h.app,
+        design(
+            "GET",
+            "/api/v1/design/lookup/durable-save",
+            Body::empty(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(lookup, first);
+
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", body.clone(), None).await,
+        first
+    );
+    assert_eq!(
+        h.app
+            .service
+            .library
+            .details(&job)
+            .unwrap()
+            .current_revision,
+        1
+    );
+    let receipt_key = "design-save:household:durable-save";
+    assert!(
+        h.app
+            .service
+            .library
+            .receipt(receipt_key)
+            .unwrap()
+            .is_some()
+    );
+    let mut changed = body;
+    changed["as"]["name"] = json!("Another star");
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", changed, None).await["code"],
+        "key-reused"
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_saves_of_one_library_base_publish_only_one_revision() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let sam = users.create_first("Sam", "correct horse").unwrap();
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+    open_star(&h.app, Some(&sam)).await;
+    let s = now(&h.app, Some(&sam)).await;
+    let save = json!({"key":"seed", "incarnation":s["incarnation"], "revision":s["revision"], "as":{"name":"Shared star"}});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", save, Some(&sam)).await["answer"],
+        "applied"
+    );
+    let job = now(&h.app, Some(&sam)).await["design"]["saved"]["job"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let a = now(&h.app, Some(&alex)).await;
+    let open = json!({"project":{"job":job}, "key":"open", "incarnation":a["incarnation"], "revision":a["revision"]});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", open, Some(&alex)).await["answer"],
+        "applied"
+    );
+    set_material(&h.app, "sam-edit", "Removable", Some(&sam)).await;
+    set_material(&h.app, "alex-edit", "Permanent", Some(&alex)).await;
+    let s = now(&h.app, Some(&sam)).await;
+    let a = now(&h.app, Some(&alex)).await;
+    // The same client key is valid for different people.
+    let sb = json!({"key":"save", "incarnation":s["incarnation"], "revision":s["revision"]});
+    let ab = json!({"key":"save", "incarnation":a["incarnation"], "revision":a["revision"]});
+    let (s, a) = tokio::join!(
+        post_design(&h.app, "/api/v1/design/save", sb, Some(&sam)),
+        post_design(&h.app, "/api/v1/design/save", ab, Some(&alex))
+    );
+    assert!(
+        s["answer"] == "applied" && a["code"] == "saved-elsewhere"
+            || a["answer"] == "applied" && s["code"] == "saved-elsewhere",
+        "{s} / {a}"
+    );
+    assert_eq!(
+        h.app
+            .service
+            .library
+            .details(&job)
+            .unwrap()
+            .current_revision,
+        2
+    );
+}
+
+#[tokio::test]
+async fn first_admin_inherits_the_latest_household_draft() {
+    let h = harness();
+    open_star(&h.app, None).await;
+    set_material(&h.app, "before-adoption", "Removable", None).await;
+    let response = send_raw(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/users/first",
+            json!({"name":"Sam", "password":"correct horse"}),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = session_from(&response);
+    let inherited = now(&h.app, Some(&session)).await;
+    assert!(
+        inherited["design"]["sheet"]["material"]
+            .as_str()
+            .unwrap()
+            .starts_with("Removable")
+    );
+    assert_eq!(inherited["design"]["unsaved"], true);
+    assert!(!h.app.service.people.join("household").exists());
+}
+
+#[tokio::test]
+async fn a_revoked_persons_design_stream_ends_before_the_next_event() {
+    let h = harness();
+    h.app
+        .service
+        .users
+        .create_first("Sam", "correct horse")
+        .unwrap();
+    let users = &h.app.service.users;
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+    let mut response = send_raw(
+        &h.app,
+        design("GET", "/api/v1/design/live", Body::empty(), Some(&alex)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.body_mut().frame().await.unwrap().is_ok());
+    users.remove("Alex").unwrap();
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        response.body_mut().frame(),
+    )
+    .await;
+    assert!(
+        next.unwrap().is_none(),
+        "revoked streams end rather than waiting for another private snapshot"
+    );
+}

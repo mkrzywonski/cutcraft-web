@@ -536,6 +536,7 @@ mod tests {
             adjusted_from: None,
         };
         let files = RevisionFiles {
+            receipt: None,
             project: &project,
             plan: &plan,
             preview_svg: preview.as_bytes(),

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -246,6 +246,7 @@ pub mod worker {
     #[serde(tag = "ask", rename_all = "snake_case")]
     pub enum WorkerRequest {
         Command(CommandRequest),
+        Replay(CommandRequest),
         Lookup {
             key: String,
         },
@@ -259,17 +260,20 @@ pub mod worker {
         Export,
         /// The server saved the project to the library: from now on it's that revision.
         Saved {
-            key: String,
+            request: CommandRequest,
             saved: SavedRef,
         },
         /// Another session changed the household's material or mat list: read them again.
         ReloadLists,
+        Checkpoint,
     }
 
     /// Opening a design or a library project in the session (spec §7).
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     pub struct OpenRequest {
         pub source: OpenSource,
+        #[serde(default)]
+        pub request: Option<CommandRequest>,
         pub key: String,
         pub incarnation: String,
         pub revision: u64,
@@ -298,6 +302,9 @@ pub mod worker {
     #[serde(tag = "reply", rename_all = "snake_case")]
     pub enum WorkerReply {
         Command(CommandReply),
+        Replay {
+            result: Option<CommandReply>,
+        },
         Lookup(KeyLookup),
         Snapshot(SessionSnapshot),
         Geometry(Geometry),
@@ -386,6 +393,22 @@ mod tests {
                 serde_json::from_str::<WorkerRequest>(&line).unwrap(),
                 request
             );
+        }
+    }
+    #[test]
+    fn worker_replay_replies_round_trip_with_and_without_a_record() {
+        use worker::WorkerReply;
+        for reply in [
+            WorkerReply::Replay { result: None },
+            WorkerReply::Replay {
+                result: Some(CommandReply::Applied {
+                    revision: 7,
+                    value: json!({"saved":true}),
+                }),
+            },
+        ] {
+            let line = serde_json::to_string(&reply).unwrap();
+            assert_eq!(serde_json::from_str::<WorkerReply>(&line).unwrap(), reply);
         }
     }
 }

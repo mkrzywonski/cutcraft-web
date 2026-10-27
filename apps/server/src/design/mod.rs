@@ -83,6 +83,7 @@ fn now_s() -> u64 {
 }
 
 /// How workers run.
+#[derive(Clone)]
 pub enum Mode {
     /// A child process of this program (`cameo-pi worker`), memory capped: the product.
     Process(PathBuf),
@@ -189,6 +190,8 @@ struct Session {
     area: PathBuf,
     /// Held while the upload index is read and rewritten.
     index: Mutex<()>,
+    operations: tokio::sync::Mutex<()>,
+    retired: std::sync::atomic::AtomicBool,
     link: tokio::sync::Mutex<Option<Link>>,
     /// Snapshots as they change, for this principal's pages.
     live: broadcast::Sender<String>,
@@ -220,12 +223,17 @@ impl Sessions {
     fn session(&self, principal: &Principal) -> Result<Arc<Session>, ApiError> {
         let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(s) = sessions.get(&principal.id) {
+            if s.retired.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(ApiError::new(401, "login", "Log in first."));
+            }
             return Ok(s.clone());
         }
         let area = people::area(&self.people, principal).map_err(storage)?;
         let session = Arc::new(Session {
             area,
             index: Mutex::new(()),
+            operations: tokio::sync::Mutex::new(()),
+            retired: std::sync::atomic::AtomicBool::new(false),
             link: tokio::sync::Mutex::new(None),
             live: broadcast::channel(16).0,
         });
@@ -241,21 +249,68 @@ impl Sessions {
         request: WorkerRequest,
     ) -> Result<WorkerReply, ApiError> {
         let session = self.session(principal)?;
-        let mut link = session.link.lock().await;
-        if link.is_none() {
-            *link = Some(Link::start(&self.mode, &session.area, &self.lists).map_err(storage)?);
-        }
-        let worker = link.as_mut().expect("just started");
-        match worker.ask(&request).await {
-            Ok(reply) => Ok(reply),
-            Err(e) => {
-                *link = None;
-                Err(ApiError::new(
-                    503,
-                    "worker-stopped",
-                    format!("The design stopped working ({e}). Open it again."),
-                ))
+        let mode = self.mode.clone();
+        let lists = self.lists.clone();
+        // A disconnected HTTP client must not leave an unread worker reply in the pipe.
+        tokio::spawn(async move {
+            let mut link = session.link.lock().await;
+            if session.retired.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(ApiError::new(401, "login", "Log in first."));
             }
+            if link.is_none() {
+                *link = Some(Link::start(&mode, &session.area, &lists).map_err(storage)?);
+            }
+            let worker = link.as_mut().expect("just started");
+            match worker.ask(&request).await {
+                Ok(reply) => Ok(reply),
+                Err(e) => {
+                    *link = None;
+                    Err(ApiError::new(
+                        503,
+                        "worker-stopped",
+                        format!("The design stopped working ({e}). Open it again."),
+                    ))
+                }
+            }
+        })
+        .await
+        .map_err(|e| ApiError::new(503, "worker-stopped", e.to_string()))?
+    }
+
+    /// Checkpoint and detach open-mode work before its directory moves to the first account.
+    pub(crate) async fn retire_household(&self) -> Result<(), ApiError> {
+        let principal = Principal {
+            id: people::HOUSEHOLD.into(),
+            name: "the household".into(),
+        };
+        let session = self.session(&principal)?;
+        let _operation = session.operations.lock().await;
+        let mut link = session.link.lock().await;
+        if let Some(worker) = link.as_mut()
+            && let WorkerReply::Failed { message } = worker
+                .ask(&WorkerRequest::Checkpoint)
+                .await
+                .map_err(storage)?
+        {
+            return Err(storage(message));
+        }
+        session
+            .retired
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        link.take();
+        Ok(())
+    }
+
+    pub(crate) fn resume_household(&self) {
+        if let Some(session) = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(people::HOUSEHOLD)
+        {
+            session
+                .retired
+                .store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -360,6 +415,8 @@ pub async fn command(
     Json(body): Json<CommandRequest>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
+    let session = app.design.session(&p)?;
+    let _operation = session.operations.lock().await;
     let lists = LIST_EDITS.contains(&body.id.as_str());
     let reply = app.design.ask(&p, WorkerRequest::Command(body)).await?;
     if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
@@ -383,7 +440,35 @@ pub async fn lookup(
     UrlPath(key): UrlPath<String>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
-    match app.design.ask(&p, WorkerRequest::Lookup { key }).await? {
+    match app
+        .design
+        .ask(&p, WorkerRequest::Lookup { key: key.clone() })
+        .await?
+    {
+        WorkerReply::Lookup(cutcraft_web_protocol::KeyLookup::NotApplied) => {
+            let service = app.service.clone();
+            let key = format!("design-save:{}:{}", p.id, key);
+            let receipt = tokio::task::spawn_blocking(move || service.library.receipt(&key))
+                .await
+                .map_err(storage)?
+                .map_err(storage)?;
+            let result = match receipt {
+                Some((_, _, receipt)) => {
+                    let reply: CommandReply =
+                        serde_json::from_value(receipt["reply"].clone()).map_err(storage)?;
+                    match reply {
+                        CommandReply::Applied { revision, value } => {
+                            cutcraft_web_protocol::KeyLookup::Applied { revision, value }
+                        }
+                        CommandReply::Refused { code, message } => {
+                            cutcraft_web_protocol::KeyLookup::Refused { code, message }
+                        }
+                    }
+                }
+                None => cutcraft_web_protocol::KeyLookup::NotApplied,
+            };
+            Ok(Json(result).into_response())
+        }
         WorkerReply::Lookup(l) => Ok(Json(l).into_response()),
         WorkerReply::Failed { message } => Err(ApiError::new(500, "worker", message)),
         _ => Err(unexpected()),
@@ -476,6 +561,8 @@ pub async fn upload(
         ));
     }
     let session = app.design.session(&p)?;
+    let _operation = session.operations.lock().await;
+    app.design.session(&p)?;
     let id = crate::keys::random_hex(12);
     let file = format!("{id}.{ext}");
     let path = session.area.join("designs").join(&file);
@@ -528,7 +615,26 @@ pub async fn live(
         item.ok()
             .map(|t| Ok(Event::default().event("snapshot").data(t)))
     });
-    Ok(Sse::new(initial.chain(rest))
+    let checks =
+        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(5)))
+            .map(|_| None);
+    let stream = initial
+        .map(Some)
+        .chain(rest.map(Some).merge(checks))
+        .take_while(move |_| {
+            crate::http::identify(&app, caller.key.as_deref(), caller.session.as_deref())
+                .ok()
+                .and_then(|identity| {
+                    let current = Caller {
+                        identity,
+                        ..caller.clone()
+                    };
+                    current.principal()
+                })
+                .is_some_and(|current| current.id == p.id)
+        })
+        .filter_map(|event| event);
+    Ok(Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
@@ -554,7 +660,7 @@ pub async fn designs(
     Ok(Json(serde_json::json!({ "designs": index })).into_response())
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct OpenBody {
     /// One of the person's uploads, by its owned id ([`designs`]).
     #[serde(default)]
@@ -570,7 +676,7 @@ pub struct OpenBody {
     replace_unsaved: bool,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProjectRef {
     job: String,
     /// The library revision; the current one if absent.
@@ -589,7 +695,30 @@ pub async fn open(
     Json(body): Json<OpenBody>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
+    tokio::spawn(async move { open_inner(app, p, body).await })
+        .await
+        .map_err(storage)?
+}
+
+async fn open_inner(app: App, p: Principal, body: OpenBody) -> Result<Response, ApiError> {
     let session = app.design.session(&p)?;
+    let _operation = session.operations.lock().await;
+    let fingerprint = CommandRequest {
+        id: "session.open".into(),
+        params: serde_json::to_value(&body).map_err(storage)?,
+        key: body.key.clone(),
+        incarnation: body.incarnation.clone(),
+        revision: Some(body.revision),
+    };
+    if let WorkerReply::Replay {
+        result: Some(reply),
+    } = app
+        .design
+        .ask(&p, WorkerRequest::Replay(fingerprint.clone()))
+        .await?
+    {
+        return Ok(Json(reply).into_response());
+    }
     let source = match (body.design, body.project) {
         (Some(id), None) => {
             let Some(upload) = read_index(&session.area).into_iter().find(|u| u.id == id) else {
@@ -630,6 +759,7 @@ pub async fn open(
     };
     let request = OpenRequest {
         source,
+        request: Some(fingerprint),
         key: body.key,
         incarnation: body.incarnation,
         revision: body.revision,
@@ -646,7 +776,7 @@ pub async fn open(
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SaveBody {
     key: String,
     incarnation: String,
@@ -657,7 +787,7 @@ pub struct SaveBody {
     save_as: Option<SaveAs>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SaveAs {
     #[serde(default)]
     folder: Vec<String>,
@@ -687,6 +817,52 @@ pub async fn save(
     Json(body): Json<SaveBody>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
+    tokio::spawn(async move { save_inner(app, p, body).await })
+        .await
+        .map_err(storage)?
+}
+
+async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, ApiError> {
+    let session = app.design.session(&p)?;
+    let _operation = session.operations.lock().await;
+    let fingerprint = CommandRequest {
+        id: "session.save".into(),
+        params: serde_json::to_value(&body).map_err(storage)?,
+        key: body.key.clone(),
+        incarnation: body.incarnation.clone(),
+        revision: Some(body.revision),
+    };
+    if let WorkerReply::Replay {
+        result: Some(reply),
+    } = app
+        .design
+        .ask(&p, WorkerRequest::Replay(fingerprint.clone()))
+        .await?
+    {
+        return Ok(Json(reply).into_response());
+    }
+    let receipt_key = format!("design-save:{}:{}", p.id, body.key);
+    let stored = {
+        let service = app.service.clone();
+        let key = receipt_key.clone();
+        tokio::task::spawn_blocking(move || service.library.receipt(&key))
+            .await
+            .map_err(storage)?
+            .map_err(storage)?
+    };
+    if let Some((_, _, receipt)) = stored {
+        let recorded: CommandRequest =
+            serde_json::from_value(receipt["request"].clone()).map_err(storage)?;
+        if recorded != fingerprint {
+            return Ok(refusal(
+                codes::KEY_REUSED,
+                "That save was already made differently.",
+            ));
+        }
+        let reply: CommandReply =
+            serde_json::from_value(receipt["reply"].clone()).map_err(storage)?;
+        return Ok(Json(reply).into_response());
+    }
     let WorkerReply::Snapshot(now) = app.design.ask(&p, WorkerRequest::Snapshot).await? else {
         return Err(unexpected());
     };
@@ -722,41 +898,46 @@ pub async fn save(
             ));
         }
     };
+    let receipt = serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1, "key": receipt_key, "request": fingerprint,
+        "reply": CommandReply::Applied { revision: now.revision, value: serde_json::json!({"saved":true}) }
+    })).map_err(storage)?;
     let service = app.service.clone();
-    let key = body.key.clone();
+    let key = format!("design-save:{}:{}", p.id, body.key);
     let by = p.name.clone();
     let base = saved.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<Result<SavedRef, Response>, ApiError> {
-        if let (Some(job), Some(base)) = (&job_id, &base) {
-            let current = service.library.details(job)?.current_revision;
-            if current != base.revision {
-                return Ok(Err(refusal(
-                    codes::SAVED_ELSEWHERE,
-                    format!(
-                        "Someone saved this project since you opened it (now revision {current}). Reload it, or Save As a new project."
-                    ),
-                )));
-            }
-        }
-        let details = service.upload(
-            crate::service::Upload {
-                folder,
-                name,
-                job_id,
-                planner: cameo_pi_core::validate::PLANNER.into(),
-                project: project.into_bytes(),
-                plan: plan.into_bytes(),
-                key,
-            },
-            &by,
-        )?;
-        Ok(Ok(SavedRef {
-            job: details.id,
-            revision: details.current_revision,
-        }))
-    })
-    .await
-    .map_err(|e| ApiError::new(500, "internal", e.to_string()))??;
+    let result =
+        tokio::task::spawn_blocking(move || -> Result<Result<SavedRef, Response>, ApiError> {
+            let expected = job_id.as_ref().and(base.as_ref()).map(|b| b.revision);
+            let details = service.upload_with_base(
+                crate::service::Upload {
+                    folder,
+                    name,
+                    job_id,
+                    planner: cameo_pi_core::validate::PLANNER.into(),
+                    project: project.into_bytes(),
+                    plan: plan.into_bytes(),
+                    key,
+                },
+                &by,
+                None,
+                expected,
+                Some(receipt),
+            );
+            let details = match details {
+                Ok(details) => details,
+                Err(e) if e.error == "saved-elsewhere" => {
+                    return Ok(Err(refusal(codes::SAVED_ELSEWHERE, e.message)));
+                }
+                Err(e) => return Err(e),
+            };
+            Ok(Ok(SavedRef {
+                job: details.id,
+                revision: details.current_revision,
+            }))
+        })
+        .await
+        .map_err(|e| ApiError::new(500, "internal", e.to_string()))??;
     let saved = match result {
         Ok(saved) => saved,
         Err(refused) => return Ok(refused),
@@ -766,7 +947,7 @@ pub async fn save(
         .ask(
             &p,
             WorkerRequest::Saved {
-                key: body.key,
+                request: fingerprint,
                 saved,
             },
         )
@@ -775,5 +956,47 @@ pub async fn save(
     match reply {
         WorkerReply::Command(r) => Ok(Json(r).into_response()),
         _ => Err(unexpected()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cancelling the HTTP-facing future leaves the exchange alive until its reply is consumed.
+    #[tokio::test]
+    async fn a_cancelled_request_still_consumes_its_worker_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = Arc::new(Sessions::new(
+            Mode::Thread,
+            dir.path().join("people"),
+            dir.path().join("lists"),
+        ));
+        let principal = Principal {
+            id: people::HOUSEHOLD.into(),
+            name: "the household".into(),
+        };
+        let session = sessions.session(&principal).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        *session.link.lock().await = Some(Link::Thread(tx));
+        let original = {
+            let sessions = sessions.clone();
+            let principal = principal.clone();
+            tokio::spawn(async move { sessions.ask(&principal, WorkerRequest::Snapshot).await })
+        };
+        let (_, reply) = tokio::task::spawn_blocking(move || rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        original.abort();
+        assert!(original.await.unwrap_err().is_cancelled());
+        assert!(
+            reply
+                .send(WorkerReply::Failed {
+                    message: "first".into()
+                })
+                .is_ok(),
+            "the detached exchange must retain its reply receiver"
+        );
     }
 }

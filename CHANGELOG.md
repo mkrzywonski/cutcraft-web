@@ -4,6 +4,15 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.6.1 — 2026-10-26
+
+- Fix M2 Open/Save retries to use the original complete request, before stale checks or source resolution; scope save keys to their person.
+- Serialize session changes through Save, fence its completion, and compare library base revisions under the publication lock.
+- Publish private save receipts with library revisions so a crash between publishing and session acknowledgement cannot duplicate a save; lookups recover the original result.
+- Complete worker exchanges after HTTP cancellation, retain closed-session key records in draft schema 2 (schema 1 remains readable), and reject unknown draft schemas.
+- Checkpoint and detach household work before the first admin adopts it; recheck access on design event streams.
+- Protocol 3 requires reloading older clients.
+
 ## 0.6.0 — 2026-10-26
 
 The material and mat lists are global (the developer, 2026-10-27; spec 1.1, §6, §8).

@@ -32,7 +32,12 @@ impl Principal {
                 id: HOUSEHOLD.into(),
                 name: "the household".into(),
             }),
-            Identity::User { id, name, .. } if valid_id(id) => Some(Self {
+            Identity::User {
+                id,
+                name,
+                must_change: false,
+                ..
+            } if valid_id(id) => Some(Self {
                 id: id.clone(),
                 name: name.clone(),
             }),

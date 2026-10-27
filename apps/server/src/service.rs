@@ -575,6 +575,18 @@ impl Service {
         by: &str,
         adjusted_from: Option<u32>,
     ) -> Result<JobDetails> {
+        self.upload_with_base(upload, by, adjusted_from, None, None)
+    }
+
+    /// A design-session Save compares its base while holding the same lock as publishing.
+    pub(crate) fn upload_with_base(
+        &self,
+        upload: Upload,
+        by: &str,
+        adjusted_from: Option<u32>,
+        expected: Option<u32>,
+        receipt: Option<Vec<u8>>,
+    ) -> Result<JobDetails> {
         let fingerprint = {
             use sha2::{Digest, Sha256};
             let mut h = Sha256::new();
@@ -584,6 +596,7 @@ impl Service {
             h.update([0]);
             h.update(upload.job_id.as_deref().unwrap_or("").as_bytes());
             h.update([0]);
+            h.update(serde_json::to_vec(&expected).expect("revision serializes"));
             h.update(&upload.project);
             h.update(&upload.plan);
             format!("{:x}", h.finalize())
@@ -612,7 +625,7 @@ impl Service {
                 }
             }
         }
-        let result = self.upload_checked(upload, by, adjusted_from);
+        let result = self.upload_checked(upload, by, adjusted_from, expected, receipt);
         let mut uploads = self.uploads.lock().unwrap_or_else(|p| p.into_inner());
         match &result {
             Ok(details) => {
@@ -632,6 +645,8 @@ impl Service {
         upload: Upload,
         by: &str,
         adjusted_from: Option<u32>,
+        expected: Option<u32>,
+        receipt: Option<Vec<u8>>,
     ) -> Result<JobDetails> {
         // A folder of its own, so simultaneous uploads never touch each other's files.
         let stage = self.staging.join(crate::keys::random_hex(12));
@@ -651,6 +666,7 @@ impl Service {
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
         let preview = cutcraft_path::preview_svg(&checked.plan);
         let files = RevisionFiles {
+            receipt: receipt.as_deref(),
             project: &upload.project,
             plan: &plan_json,
             preview_svg: preview.as_bytes(),
@@ -684,6 +700,15 @@ impl Service {
                 .map_err(Into::into),
             Some(id) => {
                 let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(expected) = expected
+                    && self.library.details(id)?.current_revision != expected
+                {
+                    return Err(ApiError::new(
+                        409,
+                        "saved-elsewhere",
+                        "Someone saved this project since you opened it. Reload it, or Save As a new project.",
+                    ));
+                }
                 let details = self.library.add_revision(id, &files, meta, by)?;
                 for entry in &self.cutters {
                     lock(&entry.shared).job_updated(id, details.current_revision);

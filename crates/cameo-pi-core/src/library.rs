@@ -155,6 +155,8 @@ pub struct RevisionFiles<'a> {
     pub project: &'a [u8],
     pub plan: &'a [u8],
     pub preview_svg: &'a [u8],
+    /// Private server request receipt, committed with the revision, never a download.
+    pub receipt: Option<&'a [u8]>,
 }
 
 /// A job in a listing.
@@ -452,8 +454,37 @@ impl Library {
         write_synced(&dir.join("plan.json"), files.plan)?;
         write_synced(&dir.join("preview.svg"), files.preview_svg)?;
         write_synced(&dir.join("revision.json"), &json(meta)?)?;
+        if let Some(receipt) = files.receipt {
+            write_synced(&dir.join("receipt.json"), receipt)?;
+        }
         sync_dir(dir)?;
         Ok(())
+    }
+
+    /// Finds a private receipt published atomically with a library revision.
+    pub fn receipt(&self, key: &str) -> Result<Option<(String, u32, serde_json::Value)>> {
+        let index = self.index.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        for (id, dir) in index {
+            let details = self.details(&id)?;
+            for revision in 1..=details.current_revision {
+                let path = dir
+                    .join("revisions")
+                    .join(revision.to_string())
+                    .join("receipt.json");
+                match fs::read(path) {
+                    Ok(bytes) => {
+                        let value: serde_json::Value = serde_json::from_slice(&bytes)
+                            .map_err(|e| LibraryError::Io(e.to_string()))?;
+                        if value["key"].as_str() == Some(key) {
+                            return Ok(Some((id, revision, value)));
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Adds a new job with its first revision (spec §7.2). The whole folder is built in staging,
@@ -1022,6 +1053,7 @@ mod tests {
 
     fn files() -> RevisionFiles<'static> {
         RevisionFiles {
+            receipt: None,
             project: b"{}",
             plan: b"{}",
             preview_svg: b"<svg/>",

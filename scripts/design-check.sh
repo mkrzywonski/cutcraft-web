@@ -19,7 +19,7 @@ server_pid=$!
 B=http://127.0.0.1:$port
 for _ in $(seq 50); do curl -s -o /dev/null "$B/" -H 'Host: localhost' && break; sleep 0.1; done
 H=(-H 'Host: localhost' -H 'Origin: http://localhost' -H 'Cookie: cpi_csrf=t' -H 'x-csrf-token: t'
-  -H 'x-cutcraft-protocol: 2')
+  -H 'x-cutcraft-protocol: 3')
 c() { curl -s "${H[@]}" "$@"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "${H[@]}" "$@"; }
 failures=0

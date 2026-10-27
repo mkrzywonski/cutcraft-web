@@ -35,7 +35,7 @@ const DRAFT: &str = "drafts/session.json";
 struct Draft {
     schema: u32,
     name: Option<String>,
-    project: ProjectFile,
+    project: Option<ProjectFile>,
     /// Oldest first.
     keys: Vec<(CommandRequest, CommandReply)>,
     /// Changes since it was opened or saved.
@@ -222,8 +222,14 @@ impl Worker {
         let opened = serde_json::from_slice::<Draft>(&bytes)
             .map_err(|e| e.to_string())
             .and_then(|draft| {
+                if !matches!(draft.schema, 1 | 2) {
+                    return Err("unsupported draft schema".into());
+                }
+                let Some(project) = &draft.project else {
+                    return Ok(draft);
+                };
                 let file = self.area.join("drafts/restoring.cutcraft");
-                draft.project.save(&file)?;
+                project.save(&file)?;
                 let opened = self
                     .controller
                     .execute(
@@ -280,43 +286,45 @@ impl Worker {
         }
         let snapshot = self.controller.snapshot()?;
         let path = self.area.join(DRAFT);
-        match &snapshot.design {
-            None => {
-                let _ = std::fs::remove_file(&path);
-            }
-            Some(open) => {
-                while self.order.len() > KEPT_KEYS {
-                    if let Some(old) = self.order.pop_front() {
-                        self.keys.remove(&old);
-                    }
-                }
-                let draft = Draft {
-                    schema: 1,
-                    name: self.name.clone(),
-                    project: ProjectFile::new(
-                        open.project.clone(),
-                        Path::new(&open.path),
-                        &open.bytes,
-                        cutcraft_control::APP_BUILD,
-                    ),
-                    unsaved: self.unsaved,
-                    saved: self.saved.clone(),
-                    keys: self
-                        .order
-                        .iter()
-                        .filter_map(|k| self.keys.get(k).cloned())
-                        .collect(),
-                };
-                let bytes = serde_json::to_vec(&draft).map_err(|e| e.to_string())?;
-                cameo_pi_core::journal::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
+        while self.order.len() > KEPT_KEYS {
+            if let Some(old) = self.order.pop_front() {
+                self.keys.remove(&old);
             }
         }
+        let draft = Draft {
+            schema: 2,
+            name: self.name.clone(),
+            project: snapshot.design.as_ref().map(|open| {
+                ProjectFile::new(
+                    open.project.clone(),
+                    Path::new(&open.path),
+                    &open.bytes,
+                    cutcraft_control::APP_BUILD,
+                )
+            }),
+            unsaved: self.unsaved,
+            saved: self.saved.clone(),
+            keys: self
+                .order
+                .iter()
+                .filter_map(|k| self.keys.get(k).cloned())
+                .collect(),
+        };
+        let bytes = serde_json::to_vec(&draft).map_err(|e| e.to_string())?;
+        cameo_pi_core::journal::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
         self.dirty = None;
         Ok(())
     }
 
     pub fn answer(&mut self, request: WorkerRequest) -> WorkerReply {
         match request {
+            WorkerRequest::Checkpoint => match self.checkpoint() {
+                Ok(()) => WorkerReply::Replay { result: None },
+                Err(message) => WorkerReply::Failed { message },
+            },
+            WorkerRequest::Replay(c) => WorkerReply::Replay {
+                result: self.replay(&c),
+            },
             WorkerRequest::Command(c) => WorkerReply::Command(self.command(c)),
             WorkerRequest::Lookup { key } => WorkerReply::Lookup(match self.keys.get(&key) {
                 Some((_, CommandReply::Applied { revision, value })) => KeyLookup::Applied {
@@ -342,7 +350,9 @@ impl Worker {
                 Ok(e) => e,
                 Err(message) => WorkerReply::Failed { message },
             },
-            WorkerRequest::Saved { key, saved } => WorkerReply::Command(self.saved(key, saved)),
+            WorkerRequest::Saved { request, saved } => {
+                WorkerReply::Command(self.saved(request, saved))
+            }
             WorkerRequest::ReloadLists => match self
                 .controller
                 .reload_lists()
@@ -415,7 +425,11 @@ impl Worker {
             Err(e) => refused(e.code, e.message),
         };
         if matches!(reply, CommandReply::Applied { .. }) && !self.reads.contains(&c.id.as_str()) {
-            self.unsaved = true;
+            self.unsaved = self.controller.snapshot().is_ok_and(|s| s.design.is_some());
+            if !self.unsaved {
+                self.saved = None;
+                self.name = None;
+            }
             self.changed();
         }
         self.order.push_back(c.key.clone());
@@ -447,13 +461,13 @@ impl Worker {
     /// refused if the project open now has unsaved changes, unless the person chose to open
     /// anyway. The replaced project is kept as a draft.
     fn open(&mut self, o: OpenRequest) -> CommandReply {
-        let request = CommandRequest {
+        let request = o.request.clone().unwrap_or_else(|| CommandRequest {
             id: "session.open".into(),
-            params: serde_json::to_value(&o.source).unwrap_or(Value::Null),
+            params: json!({"source": o.source, "replace_unsaved": o.replace_unsaved}),
             key: o.key.clone(),
             incarnation: o.incarnation.clone(),
             revision: Some(o.revision),
-        };
+        });
         if let Some(reply) = self.replay(&request) {
             return reply;
         }
@@ -541,8 +555,12 @@ impl Worker {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis());
-        let kept = drafts.join(format!("previous-{stamp:015}.json"));
-        std::fs::copy(self.area.join(DRAFT), &kept).map_err(|e| e.to_string())?;
+        let kept = drafts.join(format!(
+            "previous-{stamp:015}-{}.json",
+            crate::keys::random_hex(4)
+        ));
+        let bytes = std::fs::read(self.area.join(DRAFT)).map_err(|e| e.to_string())?;
+        cameo_pi_core::journal::write_atomic(&kept, &bytes).map_err(|e| e.to_string())?;
         let mut previous: Vec<_> = std::fs::read_dir(&drafts)
             .map_err(|e| e.to_string())?
             .filter_map(|e| e.ok())
@@ -585,16 +603,21 @@ impl Worker {
     }
 
     /// The server saved the project: it's now that library revision, with nothing unsaved.
-    fn saved(&mut self, key: String, saved: SavedRef) -> CommandReply {
-        let request = CommandRequest {
-            id: "session.saved".into(),
-            params: serde_json::to_value(&saved).unwrap_or(Value::Null),
-            key,
-            incarnation: self.incarnation.clone(),
-            revision: None,
-        };
+    fn saved(&mut self, request: CommandRequest, saved: SavedRef) -> CommandReply {
         if let Some(reply) = self.replay(&request) {
             return reply;
+        }
+        if request.incarnation != self.incarnation {
+            return refused(
+                codes::STALE_INCARNATION,
+                "The project was reopened before saving finished.",
+            );
+        }
+        if request.revision != Some(self.controller.snapshot().map_or(0, |s| s.revision)) {
+            return refused(
+                codes::STALE_REVISION,
+                "The project changed before saving finished.",
+            );
         }
         self.saved = Some(saved);
         self.unsaved = false;
@@ -604,6 +627,10 @@ impl Worker {
             value: json!({"saved": true}),
         };
         self.record(request, &reply);
+        if let Err(message) = self.checkpoint() {
+            return refused("storage", message);
+        }
+
         reply
     }
 
@@ -841,6 +868,7 @@ mod tests {
     fn open_as(w: &mut Worker, key: &str, replace_unsaved: bool) -> CommandReply {
         let s = snapshot(w);
         match w.answer(WorkerRequest::Open(OpenRequest {
+            request: None,
             source: OpenSource::Upload {
                 file: "star.svg".into(),
                 name: "star.svg".into(),
@@ -903,6 +931,12 @@ mod tests {
         let before = w.incarnation.clone();
         w.tick(Instant::now() + QUIET + Duration::from_millis(10));
         assert!(w.dirty.is_none(), "the draft was written");
+        // The original schema used a non-optional project; keep that format readable.
+        let path = dir.path().join(DRAFT);
+        let mut legacy: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        legacy["schema"] = json!(1);
+        std::fs::write(path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
         drop(w);
 
         let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
@@ -1093,6 +1127,7 @@ mod tests {
         let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         let s = snapshot(&mut w);
         let request = OpenRequest {
+            request: None,
             source: OpenSource::Upload {
                 file: "star.svg".into(),
                 name: "star.svg".into(),
@@ -1131,7 +1166,13 @@ mod tests {
             revision: 1,
         };
         w.answer(WorkerRequest::Saved {
-            key: "s1".into(),
+            request: CommandRequest {
+                id: "session.save".into(),
+                params: json!({}),
+                key: "s1".into(),
+                incarnation: w.incarnation.clone(),
+                revision: Some(w.controller.snapshot().unwrap().revision),
+            },
             saved: saved.clone(),
         });
         let design = snapshot(&mut w).design.unwrap();
@@ -1188,5 +1229,61 @@ mod tests {
             .filter_map(|e| e.ok())
             .any(|e| e.file_name().to_string_lossy().contains("damaged"));
         assert!(kept);
+    }
+    #[test]
+    fn closing_checkpoints_the_empty_project_and_its_key_records() {
+        let dir = area();
+        let lists = dir.path().join("lists");
+        let mut w = Worker::new(dir.path(), &lists).unwrap();
+        let s = open(&mut w);
+        let reply = w.answer(WorkerRequest::Command(CommandRequest {
+            id: "design.close".into(),
+            params: json!({}),
+            key: "close".into(),
+            incarnation: s.incarnation,
+            revision: Some(s.revision),
+        }));
+        assert!(
+            matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })),
+            "{reply:?}"
+        );
+        w.checkpoint().unwrap();
+        drop(w);
+        let mut recovered = Worker::new(dir.path(), &lists).unwrap();
+        assert!(snapshot(&mut recovered).design.is_none());
+        assert!(matches!(
+            open_as(&mut recovered, "reopen", false),
+            CommandReply::Applied { .. }
+        ));
+
+        assert!(matches!(
+            lookup(&mut recovered, "close"),
+            KeyLookup::Applied { .. }
+        ));
+    }
+
+    #[test]
+    fn finishing_an_older_save_cannot_clear_newer_edits() {
+        let dir = area();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let s = open(&mut w);
+        material(&mut w, "edit", "Removable");
+        let reply = w.answer(WorkerRequest::Saved {
+            request: CommandRequest {
+                id: "session.save".into(),
+                params: json!({}),
+                key: "save".into(),
+                incarnation: s.incarnation,
+                revision: Some(s.revision),
+            },
+            saved: SavedRef {
+                job: "job".into(),
+                revision: 1,
+            },
+        });
+        assert!(
+            matches!(reply, WorkerReply::Command(CommandReply::Refused { code, .. }) if code == codes::STALE_REVISION)
+        );
+        assert!(snapshot(&mut w).design.unwrap().unsaved);
     }
 }

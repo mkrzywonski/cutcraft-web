@@ -150,7 +150,7 @@ fn while_must_change(path: &str) -> bool {
 }
 
 /// Who presents this key or session, against the current users and keys.
-fn identify(app: &App, key: Option<&str>, session: Option<&str>) -> Result<Identity> {
+pub(crate) fn identify(app: &App, key: Option<&str>, session: Option<&str>) -> Result<Identity> {
     let users = &app.service.users;
     if let Some(presented) = key {
         let Some(found) = app.service.keys.check(presented) else {
@@ -1442,6 +1442,14 @@ async fn create_first_user(
     if caller.identity != Identity::Open {
         return Err(auth_error(AuthError::Forbidden));
     }
+    tokio::spawn(async move { create_first_user_inner(app, body).await })
+        .await
+        .map_err(|e| ApiError::new(500, "internal", e.to_string()))?
+}
+
+async fn create_first_user_inner(app: App, body: FirstUser) -> Result<Response> {
+    // Detach the household worker before moving its files; it may still have a dirty draft.
+    app.design.retire_household().await?;
     let service = app.service.clone();
     let name = body.name.clone();
     let cookie = blocking(move || {
@@ -1467,7 +1475,22 @@ async fn create_first_user(
         }
         Ok(cookie)
     })
-    .await?;
+    .await;
+    let cookie = match cookie {
+        Ok(cookie) => cookie,
+        Err(e) => {
+            if app
+                .service
+                .users
+                .list()
+                .map(|u| u.is_empty())
+                .unwrap_or(false)
+            {
+                app.design.resume_household();
+            }
+            return Err(e);
+        }
+    };
     let mut response = Json(json!({ "ok": true })).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,
