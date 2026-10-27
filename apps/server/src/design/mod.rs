@@ -69,7 +69,9 @@ impl Link {
                     .arg(area)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
-                    .kill_on_drop(true)
+                    // Not killed when the session lets go: its input closes, and it writes its
+                    // draft before it leaves.
+                    .kill_on_drop(false)
                     .spawn()
                     .map_err(|e| format!("starting a worker: {e}"))?;
                 let stdin = child.stdin.take().ok_or("no worker stdin")?;
@@ -85,12 +87,26 @@ impl Link {
                 let area = area.to_path_buf();
                 std::thread::spawn(move || {
                     let mut worker = worker::Worker::new(&area);
-                    for (request, reply) in receive {
-                        let answer = match worker.as_mut() {
-                            Ok(w) => w.answer(request),
-                            Err(e) => WorkerReply::Failed { message: e.clone() },
-                        };
-                        let _ = reply.send(answer);
+                    loop {
+                        match receive.recv_timeout(std::time::Duration::from_millis(500)) {
+                            Ok((request, reply)) => {
+                                let answer = match worker.as_mut() {
+                                    Ok(w) => w.answer(request),
+                                    Err(e) => WorkerReply::Failed { message: e.clone() },
+                                };
+                                let _ = reply.send(answer);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                if let Ok(w) = worker.as_mut() {
+                                    let _ = w.checkpoint();
+                                }
+                                return;
+                            }
+                        }
+                        if let Ok(w) = worker.as_mut() {
+                            w.tick(std::time::Instant::now());
+                        }
                     }
                 });
                 Ok(Self::Thread(send))

@@ -4,6 +4,24 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.3.0 — 2026-10-26
+
+Milestone 2, step 3: drafts and change records that survive a crash (spec §7).
+
+- **Each person's open project is kept as a draft:** 5 seconds after the last change, at least
+  every 30 seconds while changes keep coming, when a design is opened, and when the worker stops.
+  Both timings are provisional.
+- **A worker that stops comes back where it was:** the next request starts a fresh worker, under a
+  new incarnation, from the draft.
+- **Change records are saved with the draft that contains them,** in one file, so they can never
+  disagree. After a recovery, looking up a key answers truthfully:
+  - **applied:** the change is in the recovered project;
+  - **refused:** with its reason;
+  - **not applied:** lost with the changes after the last draft, so the device can send it again.
+- **A damaged draft is set aside,** never deleted, and the session starts empty.
+- **A worker whose connection closes** (the server stopping or letting go of the session) writes
+  its draft before it leaves.
+
 ## 0.2.0 — 2026-10-26
 
 Milestone 2, first steps: people and their design sessions (spec §6, §7).
