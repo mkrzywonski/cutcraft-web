@@ -1,12 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*"]
-# The milestone 0 spike builds against local checkouts of the old repositories; it is its own
-# workspace and is retired once its findings are taken up (docs/m0-report.md).
-exclude = ["spike"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"

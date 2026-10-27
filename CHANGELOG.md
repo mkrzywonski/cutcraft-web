@@ -4,6 +4,28 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.5.0 — 2026-10-26
+
+Milestone 2, step 5: opening and saving with other devices and people in mind (spec §7, §11).
+
+- **Opening is a change of its own,** keyed and checked like any other. It opens one of the
+  person's uploads by its owned id, or a library project, which is copied into their area first.
+  Uploading now only stores the design.
+- **Opening over unsaved changes** is refused with `unsaved-changes` until the person chooses to
+  open anyway. The replaced project is then kept as a draft (the last ten are kept).
+- **Save and Save As** put the project in the library through its own validated upload, as a new
+  revision of the project it came from, or as a new project.
+  - **Save names its base:** if someone saved that project since, it's refused with
+    `saved-elsewhere`, so the person can Reload or Save As. Library revisions are append-only, so
+    nothing is ever overwritten.
+- **The snapshot says** whether there are unsaved changes, and which library revision the project
+  is.
+- **Worker messages** now live in `cutcraft_web_protocol::worker`, apart from the browser's
+  contract.
+- **`scripts/design-check.sh`** checks all of milestone 2 against the real binary, with workers as
+  child processes, including a crash coming back from its draft. It replaces the milestone 0
+  spike, now retired.
+
 ## 0.4.0 — 2026-10-26
 
 Milestone 2, step 4: the authority policy and owned identifiers (spec §6).

@@ -1670,11 +1670,53 @@ fn upload_star(session: Option<&str>) -> Request<Body> {
     r
 }
 
+/// Uploads the star and opens it in the session: the snapshot after.
+async fn open_star(app: &App, session: Option<&str>) -> Value {
+    let (status, uploaded) = send(app, upload_star(session)).await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    let s = now(app, session).await;
+    let body = json!({"design": uploaded["design"]["id"], "key": format!("open-{}", crate::keys::random_hex(4)),
+        "incarnation": s["incarnation"], "revision": s["revision"]});
+    let reply = post_design(app, "/api/v1/design/open", body, session).await;
+    assert_eq!(reply["answer"], "applied", "{reply}");
+    now(app, session).await
+}
+
+async fn post_design(app: &App, uri: &str, body: Value, session: Option<&str>) -> Value {
+    let (status, reply) = send(
+        app,
+        design("POST", uri, Body::from(body.to_string()), session),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    reply
+}
+
+async fn now(app: &App, session: Option<&str>) -> Value {
+    send(
+        app,
+        design("GET", "/api/v1/design/snapshot", Body::empty(), session),
+    )
+    .await
+    .1
+}
+
+async fn set_material(app: &App, key: &str, material: &str, session: Option<&str>) -> Value {
+    let s = now(app, session).await;
+    post_design(
+        app,
+        "/api/v1/design/command",
+        json!({"id": "sheet.set", "params": {"material": material},
+        "key": key, "incarnation": s["incarnation"], "revision": s["revision"]}),
+        session,
+    )
+    .await
+}
+
 #[tokio::test]
 async fn in_open_mode_the_household_opens_and_edits_a_design() {
     let h = harness();
-    let (status, snap) = send(&h.app, upload_star(None)).await;
-    assert_eq!(status, StatusCode::OK, "{snap}");
+    let snap = open_star(&h.app, None).await;
     assert_eq!(snap["design"]["cut_ready"], true);
     assert_eq!(snap["design"]["name"], "star.svg");
     // The upload is the server's own copy, in the household's private area.
@@ -1739,8 +1781,7 @@ async fn two_people_have_separate_sessions_and_private_areas() {
         .map(|u| (u.name, u.id))
         .collect();
 
-    let (status, sams) = send(&h.app, upload_star(Some(&sam))).await;
-    assert_eq!(status, StatusCode::OK, "{sams}");
+    let sams = open_star(&h.app, Some(&sam)).await;
     let (_, alexs) = send(
         &h.app,
         design("GET", "/api/v1/design/snapshot", Body::empty(), Some(&alex)),
@@ -1814,25 +1855,22 @@ async fn uploads_are_listed_and_reopened_by_owned_id_only_by_their_owner() {
         listing["designs"][0].get("ext").is_none(),
         "nothing about storage: {listing}"
     );
-    let open = json!({"design": ids[0]}).to_string();
-    let (status, snap) = send(
+    let s = now(&h.app, Some(&sam)).await;
+    let open = json!({"design": ids[0], "key": "o1", "incarnation": s["incarnation"], "revision": s["revision"]});
+    let reply = post_design(&h.app, "/api/v1/design/open", open, Some(&sam)).await;
+    assert_eq!(reply["answer"], "applied", "{reply}");
+    assert_eq!(now(&h.app, Some(&sam)).await["design"]["name"], "star.svg");
+    // Alex can't open Sam's upload, even knowing its id: it isn't in Alex's area.
+    let a = now(&h.app, Some(&alex)).await;
+    let open = json!({"design": ids[0], "key": "o2", "incarnation": a["incarnation"], "revision": a["revision"]});
+    let (status, _) = send(
         &h.app,
         design(
             "POST",
             "/api/v1/design/open",
-            Body::from(open.clone()),
-            Some(&sam),
+            Body::from(open.to_string()),
+            Some(&alex),
         ),
-    )
-    .await;
-    assert_eq!(
-        (status, snap["design"]["name"].as_str()),
-        (StatusCode::OK, Some("star.svg"))
-    );
-    // Alex can't open Sam's upload, even knowing its id: it isn't in Alex's area.
-    let (status, _) = send(
-        &h.app,
-        design("POST", "/api/v1/design/open", Body::from(open), Some(&alex)),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1842,4 +1880,111 @@ async fn uploads_are_listed_and_reopened_by_owned_id_only_by_their_owner() {
     )
     .await;
     assert_eq!(alexs["designs"].as_array().unwrap().len(), 0);
+}
+
+/// Spec §11: Save As puts the project in the library, Save adds revisions, and a project
+/// someone else saved since is refused so the person can Reload or Save As.
+#[tokio::test]
+async fn saving_publishes_revisions_and_refuses_a_save_over_someone_elses() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let sam = users.create_first("Sam", "correct horse").unwrap();
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+    let (sam, alex) = (Some(sam.as_str()), Some(alex.as_str()));
+    let save = |key: &str, s: &Value, save_as: Option<Value>| {
+        let mut body =
+            json!({"key": key, "incarnation": s["incarnation"], "revision": s["revision"]});
+        if let Some(as_) = save_as {
+            body["as"] = as_;
+        }
+        body
+    };
+
+    open_star(&h.app, sam).await;
+    let s = now(&h.app, sam).await;
+    let reply = post_design(&h.app, "/api/v1/design/save", save("s0", &s, None), sam).await;
+    assert_eq!(reply["code"], "not-saved-yet", "{reply}");
+    let as_star = Some(json!({"folder": [], "name": "Star"}));
+    let reply = post_design(&h.app, "/api/v1/design/save", save("s1", &s, as_star), sam).await;
+    assert_eq!(reply["answer"], "applied", "{reply}");
+    let saved = now(&h.app, sam).await["design"]["saved"].clone();
+    assert_eq!(saved["revision"], 1);
+    let job = saved["job"].as_str().unwrap().to_owned();
+
+    // Sam edits and saves: revision 2, nothing unsaved.
+    set_material(&h.app, "e1", "Removable", sam).await;
+    assert_eq!(now(&h.app, sam).await["design"]["unsaved"], true);
+    let s = now(&h.app, sam).await;
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", save("s2", &s, None), sam).await["answer"],
+        "applied"
+    );
+    let d = now(&h.app, sam).await["design"].clone();
+    assert_eq!(
+        (d["saved"]["revision"].as_u64(), d["unsaved"].as_bool()),
+        (Some(2), Some(false))
+    );
+
+    // Alex opens the library project, edits and saves: revision 3.
+    let a = now(&h.app, alex).await;
+    let open = json!({"project": {"job": job}, "key": "ao", "incarnation": a["incarnation"], "revision": a["revision"]});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", open, alex).await["answer"],
+        "applied"
+    );
+    assert_eq!(now(&h.app, alex).await["design"]["saved"]["revision"], 2);
+    set_material(&h.app, "ae", "Permanent", alex).await;
+    let a = now(&h.app, alex).await;
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/save", save("as1", &a, None), alex).await["answer"],
+        "applied"
+    );
+
+    // Sam, still on revision 2, edits and saves: refused, nothing overwritten.
+    set_material(&h.app, "e2", "Siser EasyWeed", sam).await;
+    let s = now(&h.app, sam).await;
+    let reply = post_design(&h.app, "/api/v1/design/save", save("s3", &s, None), sam).await;
+    assert_eq!(reply["code"], "saved-elsewhere", "{reply}");
+    assert_eq!(
+        h.app
+            .service
+            .library
+            .details(&job)
+            .unwrap()
+            .current_revision,
+        3
+    );
+    // Save As keeps Sam's work as a new project.
+    let as_sams = Some(json!({"folder": [], "name": "Star, Sam's"}));
+    let reply = post_design(&h.app, "/api/v1/design/save", save("s4", &s, as_sams), sam).await;
+    assert_eq!(reply["answer"], "applied", "{reply}");
+    assert_ne!(now(&h.app, sam).await["design"]["saved"]["job"], json!(job));
+}
+
+/// Spec §7, over HTTP: unsaved changes are refused, then kept when the person opens anyway.
+#[tokio::test]
+async fn opening_over_unsaved_work_is_refused_until_the_person_chooses() {
+    let h = harness();
+    open_star(&h.app, None).await;
+    set_material(&h.app, "e1", "Removable", None).await;
+    let (_, uploaded) = send(&h.app, upload_star(None)).await;
+    let s = now(&h.app, None).await;
+    let body = json!({"design": uploaded["design"]["id"], "key": "o2", "incarnation": s["incarnation"], "revision": s["revision"]});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", body, None).await["code"],
+        "unsaved-changes"
+    );
+    let body = json!({"design": uploaded["design"]["id"], "key": "o3", "incarnation": s["incarnation"],
+        "revision": s["revision"], "replace_unsaved": true});
+    assert_eq!(
+        post_design(&h.app, "/api/v1/design/open", body, None).await["answer"],
+        "applied"
+    );
+    assert_eq!(now(&h.app, None).await["design"]["unsaved"], false);
 }

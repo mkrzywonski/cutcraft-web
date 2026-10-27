@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 use cutcraft_control::job::ProjectFile;
 
 use cutcraft_control::{Controller, Origin, Roots};
+use cutcraft_web_protocol::worker::{OpenRequest, OpenSource, WorkerReply, WorkerRequest};
 use cutcraft_web_protocol::{
     ArtView, CommandReply, CommandRequest, DesignView, Geometry, GeometryRef, KeyLookup,
-    MatGeometry, PROTOCOL_VERSION, PictureRequest, SessionSnapshot, SheetView, Stroke, WorkerReply,
-    WorkerRequest, codes,
+    MatGeometry, PROTOCOL_VERSION, PictureRequest, SavedRef, SessionSnapshot, SheetView, Stroke,
+    codes,
 };
 use serde_json::{Value, json};
 
@@ -37,7 +38,17 @@ struct Draft {
     project: ProjectFile,
     /// Oldest first.
     keys: Vec<(CommandRequest, CommandReply)>,
+    /// Changes since it was opened or saved.
+    #[serde(default)]
+    unsaved: bool,
+    /// The library revision it came from or was saved as.
+    #[serde(default)]
+    saved: Option<SavedRef>,
 }
+
+/// How many replaced projects are kept as drafts (spec §7: opening another project keeps the
+/// previous one).
+const KEPT_PREVIOUS: usize = 10;
 
 /// Registry commands refused by name, though their class would allow them (spec §6): their
 /// replies can carry server paths, they belong to the desktop app or the whole server, or they
@@ -98,6 +109,10 @@ pub struct Worker {
     order: VecDeque<String>,
     /// Changes not yet in the draft: when the first and the latest were made.
     dirty: Option<(Instant, Instant)>,
+    /// Edits since the project was opened or saved (spec §7, §11).
+    unsaved: bool,
+    /// The library revision the project was opened from or last saved as.
+    saved: Option<SavedRef>,
     name: Option<String>,
     /// The registry's read commands: only these may come without a revision.
     reads: Vec<&'static str>,
@@ -185,6 +200,8 @@ impl Worker {
             keys: HashMap::new(),
             order: VecDeque::new(),
             dirty: None,
+            unsaved: false,
+            saved: None,
             name: None,
         };
         worker.restore();
@@ -218,6 +235,8 @@ impl Worker {
         match opened {
             Ok(draft) => {
                 self.name = draft.name;
+                self.unsaved = draft.unsaved;
+                self.saved = draft.saved;
                 for (request, reply) in draft.keys {
                     self.order.push_back(request.key.clone());
                     self.keys.insert(request.key.clone(), (request, reply));
@@ -276,6 +295,8 @@ impl Worker {
                         &open.bytes,
                         cutcraft_control::APP_BUILD,
                     ),
+                    unsaved: self.unsaved,
+                    saved: self.saved.clone(),
                     keys: self
                         .order
                         .iter()
@@ -312,10 +333,12 @@ impl Worker {
                 Ok(g) => WorkerReply::Geometry(g),
                 Err(message) => WorkerReply::Failed { message },
             },
-            WorkerRequest::Open { file, name } => match self.open(&file, name) {
-                Ok(s) => WorkerReply::Snapshot(s),
+            WorkerRequest::Open(o) => WorkerReply::Command(self.open(o)),
+            WorkerRequest::Export => match self.export() {
+                Ok(e) => e,
                 Err(message) => WorkerReply::Failed { message },
             },
+            WorkerRequest::Saved { key, saved } => WorkerReply::Command(self.saved(key, saved)),
             WorkerRequest::Picture(p) => match self.picture(&p) {
                 Ok(png) => {
                     use base64::Engine;
@@ -380,6 +403,7 @@ impl Worker {
             Err(e) => refused(e.code, e.message),
         };
         if matches!(reply, CommandReply::Applied { .. }) && !self.reads.contains(&c.id.as_str()) {
+            self.unsaved = true;
             self.changed();
         }
         self.order.push_back(c.key.clone());
@@ -387,25 +411,188 @@ impl Worker {
         reply
     }
 
-    /// An upload the server stored in this person's area, named by the server.
-    fn open(&mut self, file: &str, name: String) -> Result<SessionSnapshot, String> {
-        if file.contains('/') || file.starts_with('.') {
+    /// A change recorded under its key, or the earlier answer for that key (spec §7): the same
+    /// rules as a registry command, for the session's own changes (open, saved).
+    fn replay(&self, request: &CommandRequest) -> Option<CommandReply> {
+        let (first, reply) = self.keys.get(&request.key)?;
+        Some(if first == request {
+            reply.clone()
+        } else {
+            refused(
+                codes::KEY_REUSED,
+                "That change was already made differently.",
+            )
+        })
+    }
+
+    fn record(&mut self, request: CommandRequest, reply: &CommandReply) {
+        self.order.push_back(request.key.clone());
+        self.keys
+            .insert(request.key.clone(), (request, reply.clone()));
+    }
+
+    /// Opens a design or a library project in place of the session's project (spec §7):
+    /// refused if the project open now has unsaved changes, unless the person chose to open
+    /// anyway. The replaced project is kept as a draft.
+    fn open(&mut self, o: OpenRequest) -> CommandReply {
+        let request = CommandRequest {
+            id: "session.open".into(),
+            params: serde_json::to_value(&o.source).unwrap_or(Value::Null),
+            key: o.key.clone(),
+            incarnation: o.incarnation.clone(),
+            revision: Some(o.revision),
+        };
+        if let Some(reply) = self.replay(&request) {
+            return reply;
+        }
+        if o.incarnation != self.incarnation {
+            return refused(
+                codes::STALE_INCARNATION,
+                "This project was reopened since. Here it is now.",
+            );
+        }
+        let current = self.controller.snapshot().map_or(0, |s| s.revision);
+        if o.revision != current {
+            return refused(
+                codes::STALE_REVISION,
+                "This project changed since. Here it is now.",
+            );
+        }
+        if self.unsaved && !o.replace_unsaved {
+            return refused(
+                codes::UNSAVED,
+                "The project open now has changes that aren't saved. Save it first, or open the other one anyway (the changes are kept as a draft).",
+            );
+        }
+        let reply = match self.replace(&o.source) {
+            Ok(revision) => CommandReply::Applied {
+                revision,
+                value: json!({"opened": true}),
+            },
+            Err(message) => refused("failed", message),
+        };
+        self.record(request, &reply);
+        if matches!(reply, CommandReply::Applied { .. }) {
+            // A newly opened project is written at once.
+            self.changed();
+            if let Err(e) = self.checkpoint() {
+                eprintln!("cameo-pi worker: the draft couldn't be written: {e}");
+            }
+        }
+        reply
+    }
+
+    /// Keeps the open project's draft aside, then opens the source. Returns the new revision.
+    fn replace(&mut self, source: &OpenSource) -> Result<u64, String> {
+        let (file, folder) = match source {
+            OpenSource::Upload { file, .. } => (file, "designs"),
+            OpenSource::Project { file, .. } => (file, "drafts"),
+        };
+        if file.contains('/') || file.starts_with('.') || file.is_empty() {
             return Err("unsafe file name".into());
         }
-        let path = self.area.join("designs").join(file);
+        self.keep_previous()?;
+        let path = self.area.join(folder).join(file);
+        let command = match source {
+            OpenSource::Upload { .. } => "design.open",
+            OpenSource::Project { .. } => "project.open",
+        };
         self.controller
             .execute(
                 Origin::User,
-                "design.open",
+                command,
                 json!({"path": path.to_string_lossy()}),
                 None,
             )
             .map_err(|e| e.message)?;
+        if let OpenSource::Project { .. } = source {
+            let _ = std::fs::remove_file(&path);
+        }
+        let (name, saved) = match source {
+            OpenSource::Upload { name, .. } => (name.clone(), None),
+            OpenSource::Project { name, saved, .. } => (name.clone(), Some(saved.clone())),
+        };
         self.name = Some(name);
-        // A newly opened design is written at once.
+        self.saved = saved;
+        self.unsaved = false;
+        Ok(self.controller.snapshot()?.revision)
+    }
+
+    /// The open project's draft, kept as `drafts/previous-<time>.json` before it's replaced.
+    fn keep_previous(&mut self) -> Result<(), String> {
+        if self.controller.snapshot()?.design.is_none() {
+            return Ok(());
+        }
         self.changed();
         self.checkpoint()?;
-        self.snapshot()
+        let drafts = self.area.join("drafts");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let kept = drafts.join(format!("previous-{stamp:015}.json"));
+        std::fs::copy(self.area.join(DRAFT), &kept).map_err(|e| e.to_string())?;
+        let mut previous: Vec<_> = std::fs::read_dir(&drafts)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("previous-"))
+            })
+            .collect();
+        previous.sort();
+        while previous.len() > KEPT_PREVIOUS {
+            let _ = std::fs::remove_file(previous.remove(0));
+        }
+        Ok(())
+    }
+
+    /// The open project as a `.cutcraft` file and its first sheet's plan, for the server to save
+    /// in the library (spec §11).
+    fn export(&self) -> Result<WorkerReply, String> {
+        let s = self.controller.snapshot()?;
+        let open = s.design.as_ref().ok_or("No design is open.")?;
+        let file = ProjectFile::new(
+            open.project.clone(),
+            Path::new(&open.path),
+            &open.bytes,
+            cutcraft_control::APP_BUILD,
+        );
+        let sheet = open
+            .project
+            .sheets
+            .first()
+            .ok_or("There is nothing to cut.")?;
+        let plan = cutcraft_path::plan_sheet(&open.project, &sheet.id)?;
+        Ok(WorkerReply::Export {
+            name: self.name.clone().unwrap_or_else(|| "Design".into()),
+            project: serde_json::to_string(&file).map_err(|e| e.to_string())?,
+            plan: serde_json::to_string(&plan).map_err(|e| e.to_string())?,
+            saved: self.saved.clone(),
+        })
+    }
+
+    /// The server saved the project: it's now that library revision, with nothing unsaved.
+    fn saved(&mut self, key: String, saved: SavedRef) -> CommandReply {
+        let request = CommandRequest {
+            id: "session.saved".into(),
+            params: serde_json::to_value(&saved).unwrap_or(Value::Null),
+            key,
+            incarnation: self.incarnation.clone(),
+            revision: None,
+        };
+        if let Some(reply) = self.replay(&request) {
+            return reply;
+        }
+        self.saved = Some(saved);
+        self.unsaved = false;
+        self.changed();
+        let reply = CommandReply::Applied {
+            revision: self.controller.snapshot().map_or(0, |s| s.revision),
+            value: json!({"saved": true}),
+        };
+        self.record(request, &reply);
+        reply
     }
 
     fn snapshot(&self) -> Result<SessionSnapshot, String> {
@@ -437,6 +624,8 @@ impl Worker {
                         plan_valid: plan.as_ref().is_some_and(|p| p.valid),
                         estimate_s: plan.as_ref().map(|p| p.estimate_s),
                     }),
+                    unsaved: self.unsaved,
+                    saved: self.saved.clone(),
                 })
             }
         };
@@ -637,14 +826,30 @@ mod tests {
         }
     }
 
-    fn open(w: &mut Worker) -> SessionSnapshot {
-        match w.answer(WorkerRequest::Open {
-            file: "star.svg".into(),
-            name: "star.svg".into(),
-        }) {
-            WorkerReply::Snapshot(s) => s,
+    fn open_as(w: &mut Worker, key: &str, replace_unsaved: bool) -> CommandReply {
+        let s = snapshot(w);
+        match w.answer(WorkerRequest::Open(OpenRequest {
+            source: OpenSource::Upload {
+                file: "star.svg".into(),
+                name: "star.svg".into(),
+            },
+            key: key.into(),
+            incarnation: s.incarnation,
+            revision: s.revision,
+            replace_unsaved,
+        })) {
+            WorkerReply::Command(r) => r,
             other => panic!("{other:?}"),
         }
+    }
+
+    fn open(w: &mut Worker) -> SessionSnapshot {
+        let key = format!("open-{}", crate::keys::random_hex(4));
+        assert!(matches!(
+            open_as(w, &key, false),
+            CommandReply::Applied { .. }
+        ));
+        snapshot(w)
     }
 
     fn material(w: &mut Worker, key: &str, name: &str) -> CommandReply {
@@ -830,6 +1035,96 @@ mod tests {
         }
         assert!(policy("sheet.place", Authority::Edit).is_ok());
         assert!(policy("plan.sheet", Authority::Read).is_ok());
+    }
+
+    /// Spec §7: opening another project over unsaved changes is refused until the person
+    /// chooses to; then the replaced project is kept as a draft.
+    #[test]
+    fn opening_over_unsaved_changes_asks_first_and_keeps_the_old_project() {
+        let dir = area();
+        let mut w = Worker::new(dir.path()).unwrap();
+        open(&mut w);
+        assert!(!snapshot(&mut w).design.unwrap().unsaved);
+        assert!(matches!(
+            material(&mut w, "edit", "Removable"),
+            CommandReply::Applied { .. }
+        ));
+        assert!(snapshot(&mut w).design.unwrap().unsaved);
+
+        match open_as(&mut w, "again", false) {
+            CommandReply::Refused { code, .. } => assert_eq!(code, codes::UNSAVED),
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            sheet_material(&mut w).starts_with("Removable"),
+            "nothing was replaced"
+        );
+
+        assert!(matches!(
+            open_as(&mut w, "anyway", true),
+            CommandReply::Applied { .. }
+        ));
+        assert!(!snapshot(&mut w).design.unwrap().unsaved);
+        let kept: Vec<_> = std::fs::read_dir(dir.path().join("drafts"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("previous-"))
+            .collect();
+        assert_eq!(kept.len(), 1, "the replaced project is kept");
+        let text = std::fs::read_to_string(kept[0].path()).unwrap();
+        assert!(text.contains("Removable"), "with its unsaved change");
+    }
+
+    #[test]
+    fn an_open_repeated_with_its_key_answers_the_same_and_changes_nothing_more() {
+        let dir = area();
+        let mut w = Worker::new(dir.path()).unwrap();
+        let s = snapshot(&mut w);
+        let request = OpenRequest {
+            source: OpenSource::Upload {
+                file: "star.svg".into(),
+                name: "star.svg".into(),
+            },
+            key: "o1".into(),
+            incarnation: s.incarnation.clone(),
+            revision: s.revision,
+            replace_unsaved: false,
+        };
+        let first = w.answer(WorkerRequest::Open(request.clone()));
+        let revision = snapshot(&mut w).revision;
+        let again = w.answer(WorkerRequest::Open(request));
+        assert_eq!(first, again);
+        assert_eq!(snapshot(&mut w).revision, revision);
+    }
+
+    #[test]
+    fn a_saved_project_has_nothing_unsaved_and_names_its_library_revision() {
+        let dir = area();
+        let mut w = Worker::new(dir.path()).unwrap();
+        open(&mut w);
+        material(&mut w, "edit", "Removable");
+        let WorkerReply::Export {
+            project,
+            plan,
+            saved,
+            ..
+        } = w.answer(WorkerRequest::Export)
+        else {
+            panic!("no export");
+        };
+        assert!(saved.is_none());
+        assert!(project.contains("cutcraft-project") && plan.contains("plan_id"));
+        let saved = SavedRef {
+            job: "j1".into(),
+            revision: 1,
+        };
+        w.answer(WorkerRequest::Saved {
+            key: "s1".into(),
+            saved: saved.clone(),
+        });
+        let design = snapshot(&mut w).design.unwrap();
+        assert!(!design.unsaved);
+        assert_eq!(design.saved, Some(saved));
     }
 
     #[test]

@@ -47,8 +47,9 @@ were licensed MIT OR Apache-2.0, as this repository is.
   revisions planned by cameo-pi still match. The test that reads this file only checks that the
   record agrees with the constant. It isn't a fingerprint of the algorithm: any later change to
   planning code must change the planner identity by hand.
-- **The spike** (`spike/m0`) now builds from these imported crates, so its protocol and browser
-  checks no longer need the old CutCraft checkout (Grok's and Codex's reviews).
+- **The spike** (`spike/m0`) built from these imported crates until milestone 2 retired it: its
+  server became `apps/server/src/design`, and its protocol check became `scripts/design-check.sh`.
+  Its browser slice returns as the desktop layout in milestone 4. Git history keeps it.
 
 ## Not imported yet
 

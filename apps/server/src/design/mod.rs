@@ -16,9 +16,9 @@ use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, Uri, header};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
+use cutcraft_web_protocol::worker::{OpenRequest, OpenSource, WorkerReply, WorkerRequest};
 use cutcraft_web_protocol::{
-    CommandReply, CommandRequest, PROTOCOL_VERSION, PictureRequest, WorkerReply, WorkerRequest,
-    codes,
+    CommandReply, CommandRequest, PROTOCOL_VERSION, PictureRequest, SavedRef, codes,
 };
 use futures_util::Stream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -412,7 +412,7 @@ pub struct UploadQuery {
 }
 
 /// Spec §10: an upload becomes a server-owned copy in the person's own area, named by the
-/// server, then opens in their session.
+/// server. Opening it is a change of its own ([`open`]).
 pub async fn upload(
     State(app): State<App>,
     axum::Extension(caller): axum::Extension<Caller>,
@@ -452,13 +452,13 @@ pub async fn upload(
         let bytes = serde_json::to_vec_pretty(&index).map_err(storage)?;
         cameo_pi_core::journal::write_atomic(&session.area.join(INDEX), &bytes).map_err(storage)?;
     }
-    let reply = app.design.ask(&p, WorkerRequest::Open { file, name }).await;
-    app.design.publish(&p).await;
-    match reply? {
-        WorkerReply::Snapshot(s) => Ok(Json(s).into_response()),
-        WorkerReply::Failed { message } => Err(ApiError::new(422, "design", message)),
-        _ => Err(unexpected()),
-    }
+    let upload = Upload {
+        id: file.split('.').next().unwrap_or_default().to_owned(),
+        name,
+        uploaded: now_s(),
+        bytes: body.len() as u64,
+    };
+    Ok(Json(serde_json::json!({ "design": upload })).into_response())
 }
 
 /// This principal's snapshots as they change (server-sent events), the current one first.
@@ -509,12 +509,31 @@ pub async fn designs(
 
 #[derive(serde::Deserialize)]
 pub struct OpenBody {
-    /// An upload's owned id, from [`designs`].
-    design: String,
+    /// One of the person's uploads, by its owned id ([`designs`]).
+    #[serde(default)]
+    design: Option<String>,
+    /// Or a library project ([`ProjectRef`]).
+    #[serde(default)]
+    project: Option<ProjectRef>,
+    key: String,
+    incarnation: String,
+    revision: u64,
+    /// The person was told about unsaved changes and chose to open anyway.
+    #[serde(default)]
+    replace_unsaved: bool,
 }
 
-/// Opens one of the person's own uploads again, by its owned id (spec §6). An id that isn't
-/// theirs is simply not found.
+#[derive(serde::Deserialize)]
+pub struct ProjectRef {
+    job: String,
+    /// The library revision; the current one if absent.
+    #[serde(default)]
+    revision: Option<u32>,
+}
+
+/// Opens one of the person's uploads, or a library project, in their session (spec §7, §16):
+/// a change with its key, incarnation and revision. Someone else's upload id is simply not
+/// found; a library project is copied into the person's own area first.
 pub async fn open(
     State(app): State<App>,
     axum::Extension(caller): axum::Extension<Caller>,
@@ -524,27 +543,190 @@ pub async fn open(
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
     let session = app.design.session(&p)?;
-    let Some(upload) = read_index(&session.area)
-        .into_iter()
-        .find(|u| u.id == body.design)
-    else {
-        return Err(ApiError::not_found());
+    let source = match (body.design, body.project) {
+        (Some(id), None) => {
+            let Some(upload) = read_index(&session.area).into_iter().find(|u| u.id == id) else {
+                return Err(ApiError::not_found());
+            };
+            OpenSource::Upload {
+                file: format!("{}.{}", upload.id, upload.ext),
+                name: upload.name,
+            }
+        }
+        (None, Some(project)) => {
+            let service = app.service.clone();
+            let area = session.area.clone();
+            let (file, name, saved) = tokio::task::spawn_blocking(move || {
+                let details = service.library.details(&project.job)?;
+                let revision = project.revision.unwrap_or(details.current_revision);
+                let (_, _, bytes) = service.download(&project.job, revision, "project")?;
+                let file = format!("open-{}.cutcraft", crate::keys::random_hex(8));
+                std::fs::write(area.join("drafts").join(&file), bytes).map_err(storage)?;
+                Ok::<_, ApiError>((
+                    file,
+                    details.name,
+                    SavedRef {
+                        job: project.job,
+                        revision,
+                    },
+                ))
+            })
+            .await
+            .map_err(|e| ApiError::new(500, "internal", e.to_string()))??;
+            OpenSource::Project { file, name, saved }
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "Name one design or one project to open.",
+            ));
+        }
     };
-    let file = format!("{}.{}", upload.id, upload.ext);
+    let request = OpenRequest {
+        source,
+        key: body.key,
+        incarnation: body.incarnation,
+        revision: body.revision,
+        replace_unsaved: body.replace_unsaved,
+    };
+    let reply = app.design.ask(&p, WorkerRequest::Open(request)).await?;
+    if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
+        app.design.publish(&p).await;
+    }
+    match reply {
+        WorkerReply::Command(r) => Ok(Json(r).into_response()),
+        WorkerReply::Failed { message } => Err(ApiError::new(500, "worker", message)),
+        _ => Err(unexpected()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveBody {
+    key: String,
+    incarnation: String,
+    /// The session revision being saved.
+    revision: u64,
+    /// Save As: a new library project in this folder, under this name.
+    #[serde(default, rename = "as")]
+    save_as: Option<SaveAs>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveAs {
+    #[serde(default)]
+    folder: Vec<String>,
+    name: String,
+}
+
+fn refusal(code: &str, message: impl Into<String>) -> Response {
+    (
+        axum::http::StatusCode::OK,
+        Json(CommandReply::Refused {
+            code: code.into(),
+            message: message.into(),
+        }),
+    )
+        .into_response()
+}
+
+/// Saves the session's project in the library (spec §11): a new revision of the project it
+/// was opened from or last saved as, or with `as` a new project. Save names its base: if
+/// someone saved that project since, it's refused with `saved-elsewhere` so the person can
+/// Reload or Save As. The library validates and publishes it as it does any upload.
+pub async fn save(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(body): Json<SaveBody>,
+) -> Result<Response, ApiError> {
+    let p = who(&caller, &headers, &uri)?;
+    let WorkerReply::Snapshot(now) = app.design.ask(&p, WorkerRequest::Snapshot).await? else {
+        return Err(unexpected());
+    };
+    if body.incarnation != now.incarnation {
+        return Ok(refusal(
+            codes::STALE_INCARNATION,
+            "This project was reopened since. Here it is now.",
+        ));
+    }
+    if body.revision != now.revision {
+        return Ok(refusal(
+            codes::STALE_REVISION,
+            "This project changed since. Here it is now.",
+        ));
+    }
+    let (name, project, plan, saved) = match app.design.ask(&p, WorkerRequest::Export).await? {
+        WorkerReply::Export {
+            name,
+            project,
+            plan,
+            saved,
+        } => (name, project, plan, saved),
+        WorkerReply::Failed { message } => return Err(ApiError::new(422, "design", message)),
+        _ => return Err(unexpected()),
+    };
+    let (job_id, folder, name) = match (&body.save_as, &saved) {
+        (Some(as_), _) => (None, as_.folder.clone(), as_.name.clone()),
+        (None, Some(base)) => (Some(base.job.clone()), Vec::new(), name),
+        (None, None) => {
+            return Ok(refusal(
+                codes::NOT_SAVED_YET,
+                "This project isn't in the library yet: choose a folder and a name (Save As).",
+            ));
+        }
+    };
+    let service = app.service.clone();
+    let key = body.key.clone();
+    let by = p.name.clone();
+    let base = saved.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Result<SavedRef, Response>, ApiError> {
+        if let (Some(job), Some(base)) = (&job_id, &base) {
+            let current = service.library.details(job)?.current_revision;
+            if current != base.revision {
+                return Ok(Err(refusal(
+                    codes::SAVED_ELSEWHERE,
+                    format!(
+                        "Someone saved this project since you opened it (now revision {current}). Reload it, or Save As a new project."
+                    ),
+                )));
+            }
+        }
+        let details = service.upload(
+            crate::service::Upload {
+                folder,
+                name,
+                job_id,
+                planner: cameo_pi_core::validate::PLANNER.into(),
+                project: project.into_bytes(),
+                plan: plan.into_bytes(),
+                key,
+            },
+            &by,
+        )?;
+        Ok(Ok(SavedRef {
+            job: details.id,
+            revision: details.current_revision,
+        }))
+    })
+    .await
+    .map_err(|e| ApiError::new(500, "internal", e.to_string()))??;
+    let saved = match result {
+        Ok(saved) => saved,
+        Err(refused) => return Ok(refused),
+    };
     let reply = app
         .design
         .ask(
             &p,
-            WorkerRequest::Open {
-                file,
-                name: upload.name,
+            WorkerRequest::Saved {
+                key: body.key,
+                saved,
             },
         )
-        .await;
+        .await?;
     app.design.publish(&p).await;
-    match reply? {
-        WorkerReply::Snapshot(s) => Ok(Json(s).into_response()),
-        WorkerReply::Failed { message } => Err(ApiError::new(422, "design", message)),
+    match reply {
+        WorkerReply::Command(r) => Ok(Json(r).into_response()),
         _ => Err(unexpected()),
     }
 }

@@ -63,6 +63,12 @@ pub mod codes {
     pub const PROTOCOL: &str = "protocol-version";
     /// A change must name the revision it was made against.
     pub const REVISION_REQUIRED: &str = "revision-required";
+    /// Opening something else would replace changes that aren't saved: ask the person first.
+    pub const UNSAVED: &str = "unsaved-changes";
+    /// Someone else saved this project since it was opened: offer Reload or Save As (spec §11).
+    pub const SAVED_ELSEWHERE: &str = "saved-elsewhere";
+    /// The project isn't in the library yet: Save As.
+    pub const NOT_SAVED_YET: &str = "not-saved-yet";
     /// Not allowed for this person.
     pub const FORBIDDEN: &str = "forbidden";
 }
@@ -105,6 +111,19 @@ pub struct DesignView {
     /// The first sheet's settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sheet: Option<SheetView>,
+    /// Changes since it was opened or last saved (spec §7, §11).
+    #[serde(default)]
+    pub unsaved: bool,
+    /// The library revision it was opened from or last saved as: Save names it as its base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<SavedRef>,
+}
+
+/// A library project's revision (spec §11, §16).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedRef {
+    pub job: String,
+    pub revision: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,38 +231,90 @@ impl PictureRequest {
     }
 }
 
-/// Between the server and a preparation worker, one JSON line each way (spec §5).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "ask", rename_all = "snake_case")]
-pub enum WorkerRequest {
-    Command(CommandRequest),
-    Lookup {
-        key: String,
-    },
-    Snapshot,
-    Geometry,
-    /// An uploaded design, already in the person's area, to open.
-    Open {
-        file: String,
-        name: String,
-    },
-    Picture(PictureRequest),
-}
+/// The privileged contract between the server and its preparation workers (spec §5), one JSON
+/// line each way. Kept apart from the browser's: nothing here is reachable from a page, which
+/// only ever reaches the server's own routes (Codex's review of the development standard).
+pub mod worker {
+    use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "reply", rename_all = "snake_case")]
-pub enum WorkerReply {
-    Command(CommandReply),
-    Lookup(KeyLookup),
-    Snapshot(SessionSnapshot),
-    Geometry(Geometry),
-    /// A PNG, base64-encoded (a JSON line can't carry bytes).
-    Picture {
-        png_base64: String,
-    },
-    Failed {
-        message: String,
-    },
+    use super::{
+        CommandReply, CommandRequest, Geometry, KeyLookup, PictureRequest, SavedRef,
+        SessionSnapshot,
+    };
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(tag = "ask", rename_all = "snake_case")]
+    pub enum WorkerRequest {
+        Command(CommandRequest),
+        Lookup {
+            key: String,
+        },
+        Snapshot,
+        Geometry,
+        Picture(PictureRequest),
+        /// Open something in place of the session's project: a change, keyed and checked like
+        /// any other (spec §7).
+        Open(OpenRequest),
+        /// The open project as a `.cutcraft` file and its first sheet's plan, for saving.
+        Export,
+        /// The server saved the project to the library: from now on it's that revision.
+        Saved {
+            key: String,
+            saved: SavedRef,
+        },
+    }
+
+    /// Opening a design or a library project in the session (spec §7).
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct OpenRequest {
+        pub source: OpenSource,
+        pub key: String,
+        pub incarnation: String,
+        pub revision: u64,
+        /// The person was told the project open now has unsaved changes, and chose to open
+        /// anyway. Its last state is kept as a draft.
+        #[serde(default)]
+        pub replace_unsaved: bool,
+    }
+
+    /// What to open, already in the person's area under a name the server chose.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(tag = "from", rename_all = "snake_case")]
+    pub enum OpenSource {
+        Upload {
+            file: String,
+            name: String,
+        },
+        Project {
+            file: String,
+            name: String,
+            saved: SavedRef,
+        },
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(tag = "reply", rename_all = "snake_case")]
+    pub enum WorkerReply {
+        Command(CommandReply),
+        Lookup(KeyLookup),
+        Snapshot(SessionSnapshot),
+        Geometry(Geometry),
+        /// A PNG, base64-encoded (a JSON line can't carry bytes).
+        Picture {
+            png_base64: String,
+        },
+        Export {
+            name: String,
+            /// The `.cutcraft` file's JSON.
+            project: String,
+            /// The first sheet's plan, as JSON.
+            plan: String,
+            saved: Option<SavedRef>,
+        },
+        Failed {
+            message: String,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -295,6 +366,7 @@ mod tests {
 
     #[test]
     fn worker_lines_round_trip() {
+        use crate::worker::WorkerRequest;
         for request in [
             WorkerRequest::Snapshot,
             WorkerRequest::Lookup { key: "k".into() },

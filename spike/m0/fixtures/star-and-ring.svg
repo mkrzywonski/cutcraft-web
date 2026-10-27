@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60">
-  <!-- An authored milestone 0 fixture: a red star and a blue ring, two colours to cut. -->
-  <path fill="#d22" d="M20 5 L24.7 17.6 L38 17.6 L27.2 25.4 L31.4 38 L20 30.2 L8.6 38 L12.8 25.4 L2 17.6 L15.3 17.6 Z"/>
-  <path fill="#24c" fill-rule="evenodd" d="M60 10 a20 20 0 1 0 0.01 0 Z M60 18 a12 12 0 1 0 0.01 0 Z"/>
-</svg>
