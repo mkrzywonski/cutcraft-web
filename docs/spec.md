@@ -1,6 +1,6 @@
 # CutCraft-Web specification
 
-Status: **version 1, final** (2026-10-26), written before any code, after two rounds of review by
+Status: **version 1.1** (2026-10-27), written before any code, after two rounds of review by
 Codex and Grok ([§26](#26-revision-history)). It records the developer's decisions
 ([§2](#2-decisions)) and the design for them. Items marked **(provisional)** are engineering
 starting points that milestone 0 measures and may revise ([§23](#23-open-questions)). Nothing here
@@ -188,10 +188,10 @@ let one person, or their AI key, reach another person's work or the server's sec
     resolved only within the upload.
   - **The same checks** cover images, geometry, downloads and WebSocket subscriptions.
 - **Areas:**
-  - **Each person's own:** designs, fonts, drafts, settings and their material list. No one else
-    can read it.
-  - **The library is shared:** every user can open, save, move and delete any project, as in
-    cameo-pi's household model.
+  - **Each person's own:** designs, fonts, drafts and settings. No one else can read it.
+  - **Shared by the household:** the library, where every user can open, save, move and delete
+    any project, as in cameo-pi's household model; and the material and mat lists ([§8](#8-settings)).
+    Any user can change those lists, and every user sees the change.
 - **Open mode** (no users yet, as in cameo-pi): one household principal. When the first admin is
   created, the household's area becomes theirs.
 - **Cutting keeps the actor.** A worker reaches the cutter service as its person, with a per-person
@@ -248,10 +248,14 @@ Each setting lives where it belongs:
 | Where | Settings | Stored |
 |---|---|---|
 | **Per project** | Units, snap and its step, the decisions, what to cut, material, mat, placement, the test-cut spot. | In the project (`.cutcraft`). A saved project keeps its material, so editing a material list never changes saved projects. |
-| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their material and mat lists, their fonts. | In their area, backed up. |
+| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their fonts. | In their area, backed up. |
+| **Global** | The material and mat lists (the developer, 2026-10-27). | One list for the household (`data/catalog/`), backed up. It's also the list the library's Adjust uses. |
 | **Per device** | Zoom and pan, which panel groups are folded, the layout override (computer or phone). | In that browser only. |
 | **Per session** | The desktop layout's screen (Side by side, Overlay, Cut preview, cut screen), set by `view.show`. It is shared by the person's desktop layouts and MCP, as one window is today. | In the session. |
 
+- **Global lists, changed safely:** an edit to the material or mat list reads the shared list
+  again, under a lock, before changing it. Two people's edits never undo each other, and every open
+  session shows the new list.
 - **The compact layout never calls `view.show`.** Its screens are pages, so opening the cut page on
   the phone leaves the laptop on Cut preview.
 - **What changes from CutCraft:** units and snap move from the app settings into the project; a new
@@ -644,6 +648,8 @@ In the order the reviews recommended: contracts and risks first, layouts after.
 
 ## 26. Revision history
 
+- **Version 1.1 (2026-10-27):** material and mat lists are global, shared by the household (the
+  developer), not per person (§6, §8).
 - **Version 1, final (2026-10-26):** draft 2 with the developer's answers (#41) and the reviewers'
   last clarifications (Codex #45, Grok #46).
   - **Settled:** no history; the Pi 5 target with amd64 kept; preparation processes as the

@@ -2498,7 +2498,13 @@ impl Controller {
                     .state
                     .lock()
                     .map_err(|_| CommandError::failed("Application state is unavailable."))?;
-                let mut mats = state.mats.clone();
+                // Shared lists (CutCraft-Web): held and read again, so no one else's edit is undone.
+                let _lists = self.0.store.lock_lists().map_err(CommandError::failed)?;
+                let mut mats = if self.0.store.shares_lists() {
+                    self.0.store.load_mats().map_err(CommandError::failed)?
+                } else {
+                    state.mats.clone()
+                };
                 let before = mats.len();
                 mats.retain(|m| !m.name.eq_ignore_ascii_case(&p.name));
                 if mats.len() == before {
@@ -3326,7 +3332,16 @@ impl Controller {
             .state
             .lock()
             .map_err(|_| CommandError::failed("Application state is unavailable."))?;
-        let mut library = state.materials.clone();
+        // Shared lists (CutCraft-Web): held and read again, so no one else's edit is undone.
+        let _lists = self.0.store.lock_lists().map_err(CommandError::failed)?;
+        let mut library = if self.0.store.shares_lists() {
+            self.0
+                .store
+                .load_materials()
+                .map_err(CommandError::failed)?
+        } else {
+            state.materials.clone()
+        };
         if let Some(old) = rename_from {
             let Some(i) = library
                 .iter()
@@ -3444,7 +3459,13 @@ impl Controller {
             .state
             .lock()
             .map_err(|_| CommandError::failed("Application state is unavailable."))?;
-        let mut mats = state.mats.clone();
+        // Shared lists (CutCraft-Web): held and read again, so no one else's edit is undone.
+        let _lists = self.0.store.lock_lists().map_err(CommandError::failed)?;
+        let mut mats = if self.0.store.shares_lists() {
+            self.0.store.load_mats().map_err(CommandError::failed)?
+        } else {
+            state.mats.clone()
+        };
         let existing = mats
             .iter()
             .position(|m| m.name.eq_ignore_ascii_case(&mat.name));
@@ -3498,7 +3519,16 @@ impl Controller {
             .state
             .lock()
             .map_err(|_| CommandError::failed("Application state is unavailable."))?;
-        let mut library = state.materials.clone();
+        // Shared lists (CutCraft-Web): held and read again, so no one else's edit is undone.
+        let _lists = self.0.store.lock_lists().map_err(CommandError::failed)?;
+        let mut library = if self.0.store.shares_lists() {
+            self.0
+                .store
+                .load_materials()
+                .map_err(CommandError::failed)?
+        } else {
+            state.materials.clone()
+        };
         let before = library.len();
         library.retain(|m| !m.name.eq_ignore_ascii_case(name));
         if library.len() == before {

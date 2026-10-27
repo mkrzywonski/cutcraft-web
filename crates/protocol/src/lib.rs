@@ -262,6 +262,8 @@ pub mod worker {
             key: String,
             saved: SavedRef,
         },
+        /// Another session changed the household's material or mat list: read them again.
+        ReloadLists,
     }
 
     /// Opening a design or a library project in the session (spec §7).

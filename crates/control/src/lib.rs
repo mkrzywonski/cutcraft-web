@@ -414,6 +414,29 @@ impl Controller {
         Self::build(SettingsStore::detached(), roots, false)
     }
 
+    /// A headless controller with its own settings store: CutCraft-Web's design sessions, whose
+    /// material and mat lists are shared ([`SettingsStore::with_shared_lists`]).
+    pub fn headless_with(store: SettingsStore, roots: Roots) -> Self {
+        Self::build(store, roots, false)
+    }
+
+    /// Reads the material and mat lists again from the store: another session changed them.
+    pub fn reload_lists(&self) -> Result<(), String> {
+        let materials = self.0.store.load_materials()?;
+        let mats = self.0.store.load_mats()?;
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| "Application state is unavailable.".to_string())?;
+        state.materials = materials;
+        state.mats = mats;
+        state.revision += 1;
+        drop(state);
+        self.wake();
+        Ok(())
+    }
+
     fn build(store: SettingsStore, roots: Roots, live: bool) -> Self {
         let (settings, settings_error) = match store.load() {
             Ok(settings) => (settings, None),

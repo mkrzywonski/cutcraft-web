@@ -214,7 +214,16 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        return match design::worker::run_process(&area) {
+        let Some(lists) = args
+            .iter()
+            .position(|a| a == "--lists")
+            .and_then(|i| args.get(i + 1))
+            .map(std::path::PathBuf::from)
+        else {
+            eprintln!("cameo-pi worker: --lists DIR is needed");
+            return ExitCode::FAILURE;
+        };
+        return match design::worker::run_process(&area, &lists) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("cameo-pi worker: {e}");
@@ -367,6 +376,7 @@ async fn run(options: Options) -> Result<(), String> {
     let design = Arc::new(design::Sessions::new(
         design::Mode::Process(program),
         service.people.clone(),
+        service.lists.clone(),
     ));
     let app = App {
         design,

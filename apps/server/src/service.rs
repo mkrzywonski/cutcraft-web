@@ -155,6 +155,8 @@ pub struct Service {
     pub(crate) private: PathBuf,
     /// Each person's private area lives here (`data/people`, spec §6).
     pub(crate) people: PathBuf,
+    /// The household's material and mat lists (`data/catalog`, spec §8).
+    pub(crate) lists: PathBuf,
 }
 
 fn job_ref(id: &str, revision: u32) -> JobRef {
@@ -185,6 +187,7 @@ impl Service {
             backup: Mutex::default(),
             private: data.join("private"),
             people: data.join("people"),
+            lists: data.join("catalog"),
         })
     }
 

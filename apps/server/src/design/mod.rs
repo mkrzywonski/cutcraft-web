@@ -32,6 +32,14 @@ use crate::service::ApiError;
 
 /// Spec §18, provisional.
 pub const UPLOAD_LIMIT: usize = 64 * 1024 * 1024;
+/// Commands that change the household's material or mat list (spec §8).
+const LIST_EDITS: &[&str] = &[
+    "materials.save",
+    "materials.save_current",
+    "materials.delete",
+    "mats.save",
+    "mats.delete",
+];
 /// Designs CutCraft can open.
 const DESIGNS: &[&str] = &[
     "svg", "svgz", "pdf", "ai", "eps", "dxf", "png", "jpg", "jpeg",
@@ -98,12 +106,14 @@ struct ProcessLink {
 }
 
 impl Link {
-    fn start(mode: &Mode, area: &Path) -> Result<Self, String> {
+    fn start(mode: &Mode, area: &Path, lists: &Path) -> Result<Self, String> {
         match mode {
             Mode::Process(program) => {
                 let mut child = tokio::process::Command::new(program)
                     .args(["worker", "--area"])
                     .arg(area)
+                    .arg("--lists")
+                    .arg(lists)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     // Not killed when the session lets go: its input closes, and it writes its
@@ -121,9 +131,9 @@ impl Link {
             }
             Mode::Thread => {
                 let (send, receive) = std::sync::mpsc::channel::<Ask>();
-                let area = area.to_path_buf();
+                let (area, lists) = (area.to_path_buf(), lists.to_path_buf());
                 std::thread::spawn(move || {
-                    let mut worker = worker::Worker::new(&area);
+                    let mut worker = worker::Worker::new(&area, &lists);
                     loop {
                         match receive.recv_timeout(std::time::Duration::from_millis(500)) {
                             Ok((request, reply)) => {
@@ -188,6 +198,8 @@ struct Session {
 pub struct Sessions {
     mode: Mode,
     people: PathBuf,
+    /// The household's material and mat lists (spec §8).
+    lists: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
 
@@ -196,10 +208,11 @@ fn storage(e: impl std::fmt::Display) -> ApiError {
 }
 
 impl Sessions {
-    pub fn new(mode: Mode, people: PathBuf) -> Self {
+    pub fn new(mode: Mode, people: PathBuf, lists: PathBuf) -> Self {
         Self {
             mode,
             people,
+            lists,
             sessions: Mutex::new(HashMap::new()),
         }
     }
@@ -230,7 +243,7 @@ impl Sessions {
         let session = self.session(principal)?;
         let mut link = session.link.lock().await;
         if link.is_none() {
-            *link = Some(Link::start(&self.mode, &session.area).map_err(storage)?);
+            *link = Some(Link::start(&self.mode, &session.area, &self.lists).map_err(storage)?);
         }
         let worker = link.as_mut().expect("just started");
         match worker.ask(&request).await {
@@ -242,6 +255,36 @@ impl Sessions {
                     "worker-stopped",
                     format!("The design stopped working ({e}). Open it again."),
                 ))
+            }
+        }
+    }
+
+    /// Another person changed the household's material or mat list (spec §8): every other loaded
+    /// session reads them again, and its pages get the new snapshot. Sessions with no worker
+    /// read them when they next start.
+    async fn reload_lists_except(&self, changed_by: &Principal) {
+        let others: Vec<(String, Arc<Session>)> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|(id, _)| **id != changed_by.id)
+            .map(|(id, s)| (id.clone(), s.clone()))
+            .collect();
+        for (_, session) in others {
+            let mut link = session.link.lock().await;
+            let Some(worker) = link.as_mut() else {
+                continue;
+            };
+            match worker.ask(&WorkerRequest::ReloadLists).await {
+                Ok(WorkerReply::Snapshot(s)) => {
+                    if let Ok(text) = serde_json::to_string(&s) {
+                        let _ = session.live.send(text);
+                    }
+                }
+                Ok(_) => {}
+                // It stopped: the next request starts a fresh one, which reads the lists anyway.
+                Err(_) => *link = None,
             }
         }
     }
@@ -317,9 +360,13 @@ pub async fn command(
     Json(body): Json<CommandRequest>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
+    let lists = LIST_EDITS.contains(&body.id.as_str());
     let reply = app.design.ask(&p, WorkerRequest::Command(body)).await?;
     if matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })) {
         app.design.publish(&p).await;
+        if lists {
+            app.design.reload_lists_except(&p).await;
+        }
     }
     match reply {
         WorkerReply::Command(r) => Ok(Json(r).into_response()),

@@ -122,7 +122,7 @@ pub struct Worker {
 
 /// The worker as a child process (`cameo-pi worker --area DIR`): its memory capped, one JSON
 /// request per line in, one answer per line out.
-pub fn run_process(area: &Path) -> Result<(), String> {
+pub fn run_process(area: &Path, lists: &Path) -> Result<(), String> {
     // CUTCRAFT_WEB_WORKER_MB lowers the cap, for the isolation checks.
     let limit = std::env::var("CUTCRAFT_WEB_WORKER_MB")
         .ok()
@@ -130,7 +130,7 @@ pub fn run_process(area: &Path) -> Result<(), String> {
         .map_or(MEMORY_LIMIT, |mb| mb * 1024 * 1024);
     rlimit::setrlimit(rlimit::Resource::AS, limit, limit)
         .map_err(|e| format!("setting the memory limit: {e}"))?;
-    let mut worker = Worker::new(area)?;
+    let mut worker = Worker::new(area, lists)?;
     // Lines come from a reader thread, so the draft timer runs while no request arrives.
     let (send, lines) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -179,11 +179,15 @@ fn refused(code: &str, message: impl Into<String>) -> CommandReply {
 }
 
 impl Worker {
-    /// A worker for the person whose private area this is: it reads only inside it.
-    pub fn new(area: &Path) -> Result<Self, String> {
+    /// A worker for the person whose private area this is: it reads only inside it. Their own
+    /// settings live in the area; the material and mat lists are the household's, in `lists`
+    /// (spec §8).
+    pub fn new(area: &Path, lists: &Path) -> Result<Self, String> {
         let area = std::fs::canonicalize(area).map_err(|e| format!("{}: {e}", area.display()))?;
         let roots = Roots::new(Some(&area), None)?;
-        let controller = Controller::headless(roots);
+        let store = cutcraft_control::SettingsStore::new(area.join("settings"))
+            .with_shared_lists(lists.to_path_buf());
+        let controller = Controller::headless_with(store, roots);
         let commands = controller.commands();
         let reads = commands
             .iter()
@@ -339,6 +343,14 @@ impl Worker {
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Saved { key, saved } => WorkerReply::Command(self.saved(key, saved)),
+            WorkerRequest::ReloadLists => match self
+                .controller
+                .reload_lists()
+                .and_then(|()| self.snapshot())
+            {
+                Ok(s) => WorkerReply::Snapshot(s),
+                Err(message) => WorkerReply::Failed { message },
+            },
             WorkerRequest::Picture(p) => match self.picture(&p) {
                 Ok(png) => {
                     use base64::Engine;
@@ -882,7 +894,7 @@ mod tests {
     #[test]
     fn a_draft_after_the_quiet_period_brings_the_change_and_its_record_back() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         assert!(matches!(
             material(&mut w, "k1", "Removable"),
@@ -893,7 +905,7 @@ mod tests {
         assert!(w.dirty.is_none(), "the draft was written");
         drop(w);
 
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         assert!(sheet_material(&mut w).starts_with("Removable"));
         assert!(matches!(lookup(&mut w, "k1"), KeyLookup::Applied { .. }));
         assert_ne!(w.incarnation, before, "a new load has a new incarnation");
@@ -904,7 +916,7 @@ mod tests {
     #[test]
     fn a_change_lost_in_a_crash_is_looked_up_as_not_applied() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         let original = sheet_material(&mut w);
         assert!(matches!(
@@ -914,7 +926,7 @@ mod tests {
         // The worker dies before its draft is due: no tick, no checkpoint.
         drop(w);
 
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         assert_eq!(
             sheet_material(&mut w),
             original,
@@ -927,7 +939,7 @@ mod tests {
     #[test]
     fn steady_changes_are_written_at_least_every_thirty_seconds() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         let base = Instant::now();
         // The first unwritten change was at `base`, the latest 2 s ago: not quiet yet.
@@ -944,7 +956,7 @@ mod tests {
     #[test]
     fn a_refused_change_doesnt_make_a_draft_due() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         assert!(w.dirty.is_none());
         let s = snapshot(&mut w);
@@ -968,7 +980,7 @@ mod tests {
     #[test]
     fn no_command_the_policy_allows_shows_a_server_path() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         let server = std::fs::canonicalize(dir.path()).unwrap();
         let server = server.to_string_lossy();
@@ -1042,7 +1054,7 @@ mod tests {
     #[test]
     fn opening_over_unsaved_changes_asks_first_and_keeps_the_old_project() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         assert!(!snapshot(&mut w).design.unwrap().unsaved);
         assert!(matches!(
@@ -1078,7 +1090,7 @@ mod tests {
     #[test]
     fn an_open_repeated_with_its_key_answers_the_same_and_changes_nothing_more() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         let s = snapshot(&mut w);
         let request = OpenRequest {
             source: OpenSource::Upload {
@@ -1100,7 +1112,7 @@ mod tests {
     #[test]
     fn a_saved_project_has_nothing_unsaved_and_names_its_library_revision() {
         let dir = area();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         open(&mut w);
         material(&mut w, "edit", "Removable");
         let WorkerReply::Export {
@@ -1127,11 +1139,49 @@ mod tests {
         assert_eq!(design.saved, Some(saved));
     }
 
+    /// Spec §8: the material and mat lists are the household's. Two people's workers edit them
+    /// in turn, and neither edit undoes the other.
+    #[test]
+    fn two_peoples_edits_to_the_shared_lists_both_stay() {
+        let (one, two) = (area(), area());
+        let lists = tempfile::tempdir().unwrap();
+        let mut sam = Worker::new(one.path(), lists.path()).unwrap();
+        let mut alex = Worker::new(two.path(), lists.path()).unwrap();
+        open(&mut sam);
+        open(&mut alex);
+        let save = |w: &mut Worker, key: &str, name: &str| {
+            let s = snapshot(w);
+            let reply = w.answer(WorkerRequest::Command(CommandRequest {
+                id: "materials.save_current".into(),
+                params: json!({"name": name}),
+                key: key.into(),
+                incarnation: s.incarnation,
+                revision: Some(s.revision),
+            }));
+            assert!(
+                matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })),
+                "{reply:?}"
+            );
+        };
+        save(&mut sam, "s1", "Sam's vinyl");
+        // Alex's worker still holds the old list in memory; its edit reads the shared one again.
+        save(&mut alex, "a1", "Alex's vinyl");
+        let names = |w: &mut Worker| {
+            w.answer(WorkerRequest::ReloadLists);
+            snapshot(w).materials
+        };
+        for list in [names(&mut sam), names(&mut alex)] {
+            assert!(list.iter().any(|m| m == "Sam's vinyl"), "{list:?}");
+            assert!(list.iter().any(|m| m == "Alex's vinyl"), "{list:?}");
+        }
+        assert!(lists.path().join("materials.json").is_file());
+    }
+
     #[test]
     fn a_damaged_draft_is_set_aside_not_lost() {
         let dir = area();
         std::fs::write(dir.path().join(DRAFT), b"{not a draft").unwrap();
-        let mut w = Worker::new(dir.path()).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
         assert!(snapshot(&mut w).design.is_none());
         let kept = std::fs::read_dir(dir.path().join("drafts"))
             .unwrap()

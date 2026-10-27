@@ -225,13 +225,48 @@ struct SettingsFile {
 #[derive(Clone)]
 pub struct SettingsStore {
     path: PathBuf,
+    /// Where the material and mat lists live when they're shared by several people's sessions
+    /// (CutCraft-Web: global lists, one for the household). None: beside `settings.json`.
+    lists: Option<PathBuf>,
 }
 
 impl SettingsStore {
     pub fn new(directory: PathBuf) -> Self {
         Self {
             path: directory.join("settings.json"),
+            lists: None,
         }
+    }
+
+    /// Keeps the material and mat lists in `directory`, shared with other sessions, instead of
+    /// beside `settings.json`.
+    pub fn with_shared_lists(mut self, directory: PathBuf) -> Self {
+        self.lists = Some(directory);
+        self
+    }
+
+    /// Whether the lists are shared: an edit then reads them again before changing them.
+    pub fn shares_lists(&self) -> bool {
+        self.lists.is_some()
+    }
+
+    /// Held while a shared list is read, changed and written, so two sessions' edits never undo
+    /// each other. Nothing to hold when the lists aren't shared.
+    pub fn lock_lists(&self) -> Result<Option<std::fs::File>, String> {
+        let Some(directory) = &self.lists else {
+            return Ok(None);
+        };
+        std::fs::create_dir_all(directory)
+            .map_err(|e| format!("Cannot create the lists folder: {e}"))?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(directory.join("lists.lock"))
+            .map_err(|e| format!("Cannot open the lists' lock: {e}"))?;
+        file.lock()
+            .map_err(|e| format!("Cannot lock the lists: {e}"))?;
+        Ok(Some(file))
     }
 
     pub fn from_environment() -> Result<Self, String> {
@@ -248,6 +283,7 @@ impl SettingsStore {
     pub fn detached() -> Self {
         Self {
             path: PathBuf::new(),
+            lists: None,
         }
     }
 
@@ -465,8 +501,14 @@ impl SettingsStore {
         )
     }
 
-    /// A file beside `settings.json`, or none for a detached store.
+    /// A file beside `settings.json`, or none for a detached store. The material and mat lists
+    /// are in the shared folder when there is one.
     fn sibling(&self, name: &str) -> Option<PathBuf> {
+        if let Some(directory) = &self.lists
+            && matches!(name, "materials.json" | "mats.json")
+        {
+            return Some(directory.join(name));
+        }
         (!self.path.as_os_str().is_empty()).then(|| self.path.with_file_name(name))
     }
 
@@ -759,6 +801,17 @@ mod tests {
         let detached = SettingsStore::detached();
         detached.save_materials(&materials).unwrap();
         assert_eq!(detached.load_materials().unwrap(), Material::defaults());
+
+        // Shared lists live in their own folder, and each person's other settings in theirs.
+        let shared = tempfile::tempdir().unwrap();
+        let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let a = SettingsStore::new(one.path().into()).with_shared_lists(shared.path().into());
+        let b = SettingsStore::new(two.path().into()).with_shared_lists(shared.path().into());
+        a.save_materials(&materials).unwrap();
+        assert_eq!(b.load_materials().unwrap()[0].force, 14);
+        assert!(shared.path().join("materials.json").is_file());
+        assert!(!one.path().join("materials.json").exists());
+        assert!(a.lock_lists().unwrap().is_some() && detached.lock_lists().unwrap().is_none());
     }
     #[test]
     fn malformed_settings_are_reported_and_not_overwritten() {

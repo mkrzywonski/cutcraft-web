@@ -49,6 +49,7 @@ fn harness() -> Harness {
     let design = Arc::new(crate::design::Sessions::new(
         crate::design::Mode::Thread,
         service.people.clone(),
+        service.lists.clone(),
     ));
     Harness {
         app: App {
@@ -1987,4 +1988,44 @@ async fn opening_over_unsaved_work_is_refused_until_the_person_chooses() {
         "applied"
     );
     assert_eq!(now(&h.app, None).await["design"]["unsaved"], false);
+}
+
+/// Spec §8: the material list is the household's. A material Sam saves shows up in Alex's open
+/// session, pushed to Alex's pages.
+#[tokio::test]
+async fn a_material_saved_by_one_person_reaches_everyone_elses_session() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let sam = users.create_first("Sam", "correct horse").unwrap();
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+    let (sam, alex) = (Some(sam.as_str()), Some(alex.as_str()));
+    open_star(&h.app, sam).await;
+    open_star(&h.app, alex).await;
+    let s = now(&h.app, sam).await;
+    let reply = post_design(
+        &h.app,
+        "/api/v1/design/command",
+        json!({"id": "materials.save_current",
+        "params": {"name": "Household glitter"}, "key": "m1", "incarnation": s["incarnation"],
+        "revision": s["revision"]}),
+        sam,
+    )
+    .await;
+    assert_eq!(reply["answer"], "applied", "{reply}");
+    let alexs = now(&h.app, alex).await;
+    assert!(
+        alexs["materials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == "Household glitter"),
+        "{alexs}"
+    );
+    assert!(h.app.service.lists.join("materials.json").is_file());
 }

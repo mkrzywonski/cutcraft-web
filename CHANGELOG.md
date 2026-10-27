@@ -4,6 +4,19 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.6.0 — 2026-10-26
+
+The material and mat lists are global (the developer, 2026-10-27; spec 1.1, §6, §8).
+
+- **One list for the household,** in `data/catalog/`, shared by every person's session. Each
+  person's other settings stay in their own area.
+- **Edits never undo each other:** an edit takes a lock on the shared list and reads it again
+  before changing it (`SettingsStore::with_shared_lists`, in the imported controller).
+- **Everyone sees the change:** after an edit, every other loaded session reads the lists again,
+  and its pages get the new snapshot.
+- **Still to do:** the library's Adjust page should use this same list instead of cameo-pi's
+  per-sender catalog; and the backup should cover `data/catalog/` (milestone 7).
+
 ## 0.5.0 — 2026-10-26
 
 Milestone 2, step 5: opening and saving with other devices and people in mind (spec §7, §11).
