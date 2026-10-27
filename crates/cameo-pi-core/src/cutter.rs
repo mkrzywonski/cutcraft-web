@@ -23,7 +23,7 @@ pub struct Actor {
 }
 
 /// A job revision: what a turn is for. Revisions never change once published (spec §7.1).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRef {
     pub job_id: String,
     pub revision: u32,
@@ -125,6 +125,17 @@ impl StartRequest {
             action_epoch: self.action_epoch,
         }
     }
+}
+
+/// A Stop that must still be confirmed, independent of the source project or live session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopIntent {
+    #[serde(default)]
+    pub turn: Option<String>,
+    pub cutter: String,
+    pub execution: String,
+    pub job: JobRef,
+    pub kind: Kind,
 }
 
 /// What an accepted request did.
@@ -381,6 +392,9 @@ pub struct Cutter {
     /// The service must sync a staged Start before the device worker may take it.
     pending_ready: bool,
     pending_generation: Option<u64>,
+    stop_intent: Option<StopIntent>,
+    confirmed_stops: Vec<StopIntent>,
+    recovered_stops: Vec<StopIntent>,
     /// Idempotency keys: the request's fingerprint and what it got.
     keys: HashMap<String, (String, Result<Answer, Refusal>)>,
     /// Executions finished since last collected, for history and records.
@@ -406,6 +420,9 @@ impl Cutter {
             pending: None,
             pending_ready: false,
             pending_generation: None,
+            stop_intent: None,
+            confirmed_stops: Vec::new(),
+            recovered_stops: Vec::new(),
             keys: HashMap::new(),
             finished: Vec::new(),
             confirmed: None,
@@ -499,6 +516,14 @@ impl Cutter {
     pub fn connected(&mut self) {
         self.online = true;
         self.observer.reconnected();
+        if let Some(stop) = &self.stop_intent {
+            self.activity = Activity::Confirming {
+                execution: stop.execution.clone(),
+                kind: stop.kind,
+                job: stop.job.clone(),
+                area: None,
+            };
+        }
         self.advance();
     }
 
@@ -534,11 +559,19 @@ impl Cutter {
             turn.tests = 0;
         }
         match (belief, &self.activity) {
-            (Some(Belief::NoMat), Activity::Fault) => self.activity = Activity::Idle,
+            (Some(Belief::NoMat), Activity::Fault) => {
+                if let Some(stop) = self.stop_intent.clone() {
+                    self.complete_stop(&stop.execution);
+                }
+                self.activity = Activity::Idle;
+            }
             (Some(Belief::Loaded), Activity::Confirming { .. }) => self.confirm(),
             (Some(Belief::NoMat), Activity::Confirming { .. }) => {
                 // Unloaded before the stop was confirmed: uncertain, but nothing is loaded now.
                 self.uncertain("the mat was unloaded before the stop was confirmed");
+                if let Some(stop) = self.stop_intent.clone() {
+                    self.complete_stop(&stop.execution);
+                }
                 self.activity = Activity::Idle;
             }
             _ => {}
@@ -652,6 +685,12 @@ impl Cutter {
         }
         let (kind, job, area) = (*kind, job.clone(), *area);
         self.progress = None;
+        if matches!(
+            &outcome,
+            Outcome::Completed { .. } | Outcome::Refused { .. } | Outcome::NotLoaded
+        ) {
+            self.complete_stop(execution);
+        }
         match outcome {
             Outcome::Completed { .. } => {
                 self.record(execution, kind, &job, Ended::Finished);
@@ -699,11 +738,14 @@ impl Cutter {
         else {
             return;
         };
+        let ends_current_turn = self.stop_owns_current_turn();
         self.record(&execution, kind, &job, Ended::Stopped);
+        self.complete_stop(&execution);
         self.activity = Activity::Idle;
         match kind {
             Kind::Test => self.take_area(area),
-            Kind::Main => self.end_turn(),
+            Kind::Main if ends_current_turn => self.end_turn(),
+            Kind::Main => {}
         }
     }
 
@@ -730,7 +772,7 @@ impl Cutter {
         self.record(&execution, kind, &job, ended);
         self.observer.distrust();
         self.activity = Activity::Fault;
-        if kind == Kind::Main {
+        if kind == Kind::Main && self.stop_owns_current_turn() {
             self.end_turn();
         }
     }
@@ -743,7 +785,18 @@ impl Cutter {
     }
 
     fn record(&mut self, execution: &str, kind: Kind, job: &JobRef, ended: Ended) {
-        let turn = self.turn.as_ref().map(|t| t.id.clone()).unwrap_or_default();
+        let turn = match self
+            .stop_intent
+            .as_ref()
+            .filter(|stop| stop.execution == execution)
+        {
+            Some(stop) => stop.turn.clone().unwrap_or_default(),
+            None => self
+                .turn
+                .as_ref()
+                .map(|turn| turn.id.clone())
+                .unwrap_or_default(),
+        };
         self.finished.push(Finished {
             execution: execution.to_owned(),
             turn,
@@ -994,8 +1047,82 @@ impl Cutter {
         }
     }
 
+    /// Restore only a Stop's confirmation, never its old execution or runnable.
+    pub fn recover_stop(&mut self, stop: StopIntent) {
+        if stop.cutter != self.id {
+            return;
+        }
+        self.activity = Activity::Confirming {
+            execution: stop.execution.clone(),
+            kind: stop.kind,
+            job: stop.job.clone(),
+            area: None,
+        };
+        self.recovered_stops.push(stop.clone());
+        self.stop_intent = Some(stop);
+        self.advance();
+    }
+
+    pub fn stop_intent(&self) -> Option<StopIntent> {
+        self.stop_intent.clone()
+    }
+
+    fn stop_owns_current_turn(&self) -> bool {
+        self.stop_intent.as_ref().is_none_or(|stop| {
+            stop.turn
+                .as_ref()
+                .is_some_and(|id| self.turn.as_ref().is_some_and(|turn| &turn.id == id))
+        })
+    }
+
+    fn complete_stop(&mut self, id: &str) {
+        if self
+            .stop_intent
+            .as_ref()
+            .is_some_and(|stop| stop.execution == id)
+        {
+            let active = self.stop_intent.take().expect("checked above");
+            if !self.recovered_stops.contains(&active) {
+                self.confirmed_stops.push(active);
+            }
+            self.confirmed_stops.append(&mut self.recovered_stops);
+        }
+    }
+
+    pub fn take_confirmed_stops(&mut self) -> Vec<StopIntent> {
+        std::mem::take(&mut self.confirmed_stops)
+    }
+
+    pub fn retry_stop_confirmation(&mut self, intent: StopIntent) {
+        self.confirmed_stops.push(intent);
+    }
+
     /// Stop always wins and needs no turn (spec §8.6). Stop while stopping returns the same stop.
     pub fn stop(&mut self) -> Result<Answer, Refusal> {
+        if self.stop_intent.is_none() {
+            let current = match &self.activity {
+                Activity::Running {
+                    execution,
+                    kind,
+                    job,
+                    ..
+                }
+                | Activity::Confirming {
+                    execution,
+                    kind,
+                    job,
+                    ..
+                } => Some(StopIntent {
+                    turn: self.turn.as_ref().map(|turn| turn.id.clone()),
+                    cutter: self.id.clone(),
+                    execution: execution.clone(),
+                    kind: *kind,
+                    job: job.clone(),
+                }),
+                _ => None,
+            };
+            self.stop_intent = current;
+        }
         match &mut self.activity {
             Activity::Running {
                 execution,
@@ -1013,6 +1140,14 @@ impl Cutter {
             }
             Activity::Confirming { execution, .. } => Ok(Answer::Stopping {
                 execution: execution.clone(),
+            }),
+            _ if self.stop_intent.is_some() => Ok(Answer::Stopping {
+                execution: self
+                    .stop_intent
+                    .as_ref()
+                    .expect("checked above")
+                    .execution
+                    .clone(),
             }),
             _ => {
                 // A Start already on the wire must not win after an idle Stop.
@@ -1776,5 +1911,77 @@ mod tests {
         assert!(!c.commit_start(&execution.id));
         assert!(c.take_pending().is_none());
         assert!(c.view().execution.is_none());
+    }
+    #[test]
+    fn recovered_stops_wait_for_quiet_and_confirm_the_whole_startup_batch() {
+        let mut c = Cutter::new("workshop", "Workshop Cameo", "after");
+        for id in ["first", "second"] {
+            c.recover_stop(StopIntent {
+                turn: None,
+                cutter: "workshop".into(),
+                execution: id.into(),
+                job: job(1),
+                kind: Kind::Main,
+            });
+        }
+        c.connected();
+        c.observe(0.0, Reading::Moving);
+        c.observe(0.5, Reading::Moving);
+        assert_eq!(c.view().activity, "confirming-stop");
+        assert!(c.take_pending().is_none());
+        assert!(c.take_confirmed_stops().is_empty());
+        for i in 0..10 {
+            c.observe(1.0 + f64::from(i) * 0.5, Reading::Ready);
+        }
+        assert_eq!(c.view().activity, "idle");
+        assert_eq!(c.take_confirmed_stops().len(), 2);
+    }
+    #[test]
+    fn confirming_a_recovered_stop_never_consumes_the_next_peoples_turn() {
+        for unload in [false, true] {
+            let mut c = ready_cutter();
+            let (_, execution) = c
+                .stage_start(request(&c, Kind::Main, None, "first"))
+                .unwrap();
+            let execution = execution.unwrap();
+            assert!(c.commit_start(&execution.id));
+            c.take_pending().unwrap();
+            let queued = c.queue(job(2), actor(), "next").unwrap();
+            let Answer::Queued { turn, .. } = queued else {
+                panic!("not queued");
+            };
+            c.stop().unwrap();
+            c.finished(
+                &execution.id,
+                Outcome::Interrupted {
+                    reason: "connection lost".into(),
+                    passes_sent: 0,
+                },
+            );
+            assert_eq!(c.view().turn.as_ref().unwrap().id, turn);
+            c.disconnected();
+            c.connected();
+            for i in 0..10 {
+                c.observe(
+                    20.0 + f64::from(i) * 0.5,
+                    if unload {
+                        Reading::NoMedia
+                    } else {
+                        Reading::Ready
+                    },
+                );
+            }
+            assert_eq!(
+                c.view().turn.as_ref().unwrap().id,
+                turn,
+                "old Stop cannot release the next turn"
+            );
+            for finished in c.take_finished() {
+                assert_eq!(
+                    finished.turn, execution.turn,
+                    "old Stop retains the original turn attribution"
+                );
+            }
+        }
     }
 }

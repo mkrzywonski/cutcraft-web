@@ -158,6 +158,12 @@ impl<L: Link> Worker<L> {
                 let _ = history.send(finished);
             }
         }
+        let stopped = lock(&self.cutter).take_confirmed_stops();
+        for intent in stopped {
+            if self.journal.confirm_stop(&intent).is_err() {
+                lock(&self.cutter).retry_stop_confirmation(intent);
+            }
+        }
     }
 
     /// Runs a pending execution if there is one; otherwise waits for the next polling slot and

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cutter::{Answer, Ended, Execution, JobRef, Kind};
+use crate::cutter::{Answer, Ended, Execution, JobRef, Kind, StopIntent};
 
 /// One execution, as kept on disk.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -105,10 +105,19 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     fs::File::open(dir)?.sync_all()
 }
 
+#[derive(Serialize, Deserialize)]
+struct PendingStop {
+    schema_version: u32,
+    intent: StopIntent,
+    #[serde(default)]
+    confirmed: bool,
+}
+
 /// The folder of execution records.
 pub struct Journal {
     dir: PathBuf,
     transaction: std::sync::Mutex<()>,
+    stop_transaction: std::sync::Mutex<()>,
 }
 
 impl Journal {
@@ -120,6 +129,7 @@ impl Journal {
         let journal = Self {
             dir,
             transaction: std::sync::Mutex::new(()),
+            stop_transaction: std::sync::Mutex::new(()),
         };
         let mut records = Vec::new();
         for entry in fs::read_dir(&journal.dir)? {
@@ -160,6 +170,131 @@ impl Journal {
         }
         records.sort_by_key(|r| r.started);
         Ok((journal, records))
+    }
+
+    fn stop_path(&self, cutter: &str, execution: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        let key = serde_json::to_vec(&(cutter, execution)).expect("strings serialize");
+        self.dir
+            .join("stop-intents")
+            .join(format!("{:x}.json", Sha256::digest(key)))
+    }
+
+    fn write_stop(&self, record: &PendingStop) -> std::io::Result<()> {
+        fs::create_dir_all(self.dir.join("stop-intents"))?;
+        fs::File::open(&self.dir)?.sync_all()?;
+        let bytes = serde_json::to_vec(record).map_err(std::io::Error::other)?;
+        write_atomic(
+            &self.stop_path(&record.intent.cutter, &record.intent.execution),
+            &bytes,
+        )
+    }
+
+    /// Stop has its own transaction: it never waits on a blocked Start record write.
+    pub fn request_stop(&self, intent: &StopIntent) -> std::io::Result<()> {
+        let _stop = self
+            .stop_transaction
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        match fs::read(self.stop_path(&intent.cutter, &intent.execution)) {
+            Ok(bytes) => {
+                let first: PendingStop =
+                    serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                if first.schema_version == 1 && first.intent == *intent {
+                    return Ok(());
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Stop receipt changed identity",
+                ));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        self.write_stop(&PendingStop {
+            schema_version: 1,
+            intent: intent.clone(),
+            confirmed: false,
+        })
+    }
+
+    pub fn pending_stops(&self) -> std::io::Result<Vec<StopIntent>> {
+        let _stop = self
+            .stop_transaction
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let entries = match fs::read_dir(self.dir.join("stop-intents")) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut stops = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let record: PendingStop =
+                serde_json::from_slice(&fs::read(&path)?).map_err(std::io::Error::other)?;
+            if record.schema_version != 1
+                || self.stop_path(&record.intent.cutter, &record.intent.execution) != path
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unsupported or damaged Stop intent",
+                ));
+            }
+            if !record.confirmed {
+                stops.push(record.intent);
+            }
+        }
+        Ok(stops)
+    }
+
+    /// A terminal receipt also fences a delayed request arriving after confirmation. Keeping
+    /// it avoids resurrecting an old Stop and retains the outcome outside deletable history.
+    pub fn confirm_stop(&self, intent: &StopIntent) -> std::io::Result<()> {
+        let _stop = self
+            .stop_transaction
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        match fs::read(self.stop_path(&intent.cutter, &intent.execution)) {
+            Ok(bytes) => {
+                let first: PendingStop =
+                    serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                if first.schema_version != 1 || first.intent != *intent {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Stop receipt changed identity",
+                    ));
+                }
+                if first.confirmed {
+                    return Ok(());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        self.write_stop(&PendingStop {
+            schema_version: 1,
+            intent: intent.clone(),
+            confirmed: true,
+        })
+    }
+
+    /// A lock-free read of the atomically published record. Stop cannot wait on Start's lock.
+    pub fn stop_already_completed(&self, execution: &str) -> std::io::Result<bool> {
+        let bytes = match fs::read(self.path(execution)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+        Ok(record
+            .outcome
+            .as_ref()
+            .and_then(|ended| ended["ended"].as_str())
+            .is_some_and(|ended| matches!(ended, "finished" | "stopped" | "not-run")))
     }
 
     /// Deterministic storage-stall seam for simulator fixtures, absent from production builds.
@@ -397,5 +532,25 @@ mod tests {
         fs::write(&path, b"damaged").unwrap();
         assert!(Journal::open(dir.path()).is_err());
         assert_eq!(fs::read(path).unwrap(), b"damaged");
+    }
+    #[test]
+    fn stop_confirmation_prevents_a_delayed_request_from_resurrecting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (journal, _) = Journal::open(dir.path()).unwrap();
+        let stop = StopIntent {
+            turn: None,
+            cutter: "cutter".into(),
+            execution: "exec-stop".into(),
+            job: JobRef {
+                job_id: "job".into(),
+                revision: 1,
+            },
+            kind: Kind::Main,
+        };
+        journal.confirm_stop(&stop).unwrap();
+        journal.request_stop(&stop).unwrap();
+        assert!(journal.pending_stops().unwrap().is_empty());
+        let (reopened, _) = Journal::open(dir.path()).unwrap();
+        assert!(reopened.pending_stops().unwrap().is_empty());
     }
 }

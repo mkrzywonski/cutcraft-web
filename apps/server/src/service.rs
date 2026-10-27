@@ -197,6 +197,21 @@ impl Service {
                 );
             }
         }
+        for stop in journal
+            .pending_stops()
+            .map_err(|e| ApiError::new(500, "storage", e.to_string()))?
+        {
+            if journal
+                .stop_already_completed(&stop.execution)
+                .map_err(|e| ApiError::new(500, "storage", e.to_string()))?
+            {
+                journal
+                    .confirm_stop(&stop)
+                    .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+            } else if let Some(entry) = cutters.iter().find(|c| c.id == stop.cutter) {
+                lock(&entry.shared).recover_stop(stop);
+            }
+        }
         Ok(Self {
             journal: Arc::new(journal),
             boot,
@@ -433,7 +448,32 @@ impl Service {
     }
 
     pub fn stop(&self, cutter: &str) -> Result<Answer> {
-        Ok(lock(&self.cutter(cutter)?.shared).stop()?)
+        let (answer, intent) = {
+            let mut state = lock(&self.cutter(cutter)?.shared);
+            let answer = state.stop()?;
+            (answer, state.stop_intent())
+        };
+        if let Some(intent) = intent {
+            self.journal.request_stop(&intent).map_err(|e| {
+                ApiError::new(
+                    503,
+                    "stop-unconfirmed",
+                    format!("Stop was requested but could not be recorded. Retry Stop ({e})."),
+                )
+            })?;
+            // The job may have ended between setting its control flag and publishing the
+            // intent. This check closes that race without acquiring Start's record lock.
+            if self
+                .journal
+                .stop_already_completed(&intent.execution)
+                .unwrap_or(false)
+            {
+                self.journal
+                    .confirm_stop(&intent)
+                    .map_err(|e| ApiError::new(503, "stop-unconfirmed", e.to_string()))?;
+            }
+        }
+        Ok(answer)
     }
     pub fn pause(&self, cutter: &str) -> Result<Answer> {
         Ok(lock(&self.cutter(cutter)?.shared).pause()?)

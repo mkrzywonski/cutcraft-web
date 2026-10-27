@@ -2851,3 +2851,66 @@ fn stop_preempts_a_start_blocked_on_record_persistence() {
         "Stop during persistence wins before any drawing"
     );
 }
+
+#[tokio::test]
+async fn an_outstanding_stop_survives_restart_and_source_deletion_without_resuming() {
+    let mut h = harness();
+    let (id, start) = ready_start(&mut h, "stop-recovery").await;
+    let (status, started) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/start", start),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let stopped = serde_json::to_value(h.app.service.stop("practice").unwrap()).unwrap();
+    assert_eq!(h.app.service.journal.pending_stops().unwrap().len(), 1);
+    let dir = h._dir;
+    let sim = h.sim;
+    drop(h.worker);
+    drop(h.app);
+    let shared = Arc::new(Mutex::new(Cutter::new(
+        "practice",
+        "Practice Cameo",
+        "after",
+    )));
+    let service = Service::new(
+        "after".into(),
+        dir.path(),
+        vec![CutterEntry {
+            id: "practice".into(),
+            shared: shared.clone(),
+            simulator: Some(sim.clone()),
+        }],
+    )
+    .unwrap();
+    assert_eq!(lock(&shared).view().activity, "confirming-stop");
+    assert!(lock(&shared).take_pending().is_none());
+    service.delete_job(&id).unwrap();
+    assert_eq!(
+        serde_json::to_value(service.stop("practice").unwrap()).unwrap(),
+        stopped
+    );
+    let mut worker = Worker::new(
+        shared.clone(),
+        SimLink { sim: sim.clone() },
+        service.journal.clone(),
+        None,
+    );
+    for _ in 0..12 {
+        worker.step();
+    }
+    assert_eq!(lock(&shared).view().activity, "idle");
+    assert!(service.journal.pending_stops().unwrap().is_empty());
+    assert!(sim.with_machine(|machine| machine.trace().is_empty()));
+    assert_eq!(
+        serde_json::to_value(service.start_result("practice", "stop-recovery").unwrap()).unwrap(),
+        started
+    );
+    let (_, records) =
+        cameo_pi_core::journal::Journal::open(dir.path().join("private/executions")).unwrap();
+    assert_eq!(
+        records[0].outcome.as_ref().unwrap()["ended"],
+        "interrupted",
+        "stop confirmation does not rewrite the uncertain cut outcome"
+    );
+}

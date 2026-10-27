@@ -75,11 +75,36 @@ change/disconnection and Stop while persistence is deliberately blocked. The lat
 checks that no drawing occurs before sync or after the intervening Stop. These are
 simulator/software checks; they do not establish target-Pi load latency.
 
+## Fourth slice: durable Stop intent (0.10.0)
+
+A Stop sets the existing driver control flag immediately, then syncs its own request
+receipt outside the cutter lock and the Start-record transaction. A successful Stop
+acknowledgement therefore survives restart, without waiting for a blocked Start
+record write. A storage failure reports an unconfirmed Stop so it can be retried;
+it does not revoke the control flag already set.
+
+On startup, unresolved Stop intents restore confirmation state, not an execution
+or runnable. Reconnection continues waiting for settled status or no media. This
+uses the existing Stop semantics (stop feeding the cutter and establish idle); it
+does not add an unverified physical abort command. The ordinary fresh-mat rule
+still applies before another Start. No source project is needed for confirmation.
+
+Confirmed receipts remain terminal. A delayed request cannot turn one back into a
+pending Stop, even if confirmation reached storage before the request did. A batch
+of outstanding intents captured at startup is confirmed together after settling;
+new requests are not swept into that batch. Confirmation is fenced to the original
+turn ID, so it cannot consume the next queued person's turn. The original cut record retains its
+first outcome, including an interrupted/uncertain cut across restart.
+
+Tests cover blocked Start persistence with Stop, request/confirmation ordering,
+recovery with the source removed, no resumed drawing, stable Start reconciliation
+and quiet-state confirmation of a startup batch. Hardware Stop timing and the
+200 ms acknowledgement target under Pi load remain separate acceptance gates.
+
 ## Next slices required by the spec
 
-- Review and extend durable cutter records for accepted requests, Stop intent and
-  terminal outcomes independently of sessions and deletable history. Exercise
-  restart, lost replies, Stop racing Start and interrupted executions.
+- Persist queue positions through updates/restart, and independently review the
+  accepted-request/Stop/terminal-record changes against the complete fault matrix.
 - Bound heavy preparation concurrency, evict/unload idle workers safely, and add
   backpressure/cancellation. Measure Stop under malformed and heavy imports,
   memory pressure, slow readers and worker failures on the target Pi.

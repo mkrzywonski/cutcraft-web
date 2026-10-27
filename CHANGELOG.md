@@ -4,6 +4,13 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.10.0 — 2026-10-27
+
+- Persist outstanding Stop intent separately from Start record writes, so Stop can be acknowledged while Start persistence is blocked.
+- Recover Stop confirmation across server restart and reconnect without restoring a runnable or inheriting a new actor. Wait for settled status or no media before resolving it; source/history deletion cannot erase the intent.
+- Keep terminal Stop receipts so delayed requests cannot resurrect a confirmed Stop, and confirm all outstanding intents captured at startup together after the cutter settles.
+- Add simulator regressions for restart, source deletion, no resumed motion, original cut-outcome retention, delayed requests and confirmation batches. Target-Pi latency/load acceptance remains open.
+
 ## 0.9.0 — 2026-10-27
 
 - Persist an accepted Start before acknowledging it or releasing the job to the device worker. Lookup shares the acceptance transaction; preparation and disk I/O never hold the cutter state lock.
