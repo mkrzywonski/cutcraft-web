@@ -36,6 +36,43 @@ pub const UPLOAD_LIMIT: usize = 64 * 1024 * 1024;
 const DESIGNS: &[&str] = &[
     "svg", "svgz", "pdf", "ai", "eps", "dxf", "png", "jpg", "jpeg",
 ];
+/// The index of a person's uploads, in their area.
+const INDEX: &str = "designs/index.json";
+
+/// One upload: its owned id (spec §6) is all a browser ever names it by.
+#[derive(Clone, serde::Serialize)]
+pub struct Upload {
+    pub id: String,
+    /// The file name as uploaded, for showing.
+    pub name: String,
+    /// Seconds since 1970.
+    pub uploaded: u64,
+    pub bytes: u64,
+}
+
+/// How an upload is kept in the index file, with where it's stored (`<id>.<ext>`), which a
+/// browser is never sent.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Stored {
+    id: String,
+    name: String,
+    uploaded: u64,
+    bytes: u64,
+    ext: String,
+}
+
+fn read_index(area: &Path) -> Vec<Stored> {
+    std::fs::read(area.join(INDEX))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn now_s() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
 
 /// How workers run.
 pub enum Mode {
@@ -140,6 +177,8 @@ impl Link {
 
 struct Session {
     area: PathBuf,
+    /// Held while the upload index is read and rewritten.
+    index: Mutex<()>,
     link: tokio::sync::Mutex<Option<Link>>,
     /// Snapshots as they change, for this principal's pages.
     live: broadcast::Sender<String>,
@@ -173,6 +212,7 @@ impl Sessions {
         let area = people::area(&self.people, principal).map_err(storage)?;
         let session = Arc::new(Session {
             area,
+            index: Mutex::new(()),
             link: tokio::sync::Mutex::new(None),
             live: broadcast::channel(16).0,
         });
@@ -389,7 +429,8 @@ pub async fn upload(
         ));
     }
     let session = app.design.session(&p)?;
-    let file = format!("{}.{ext}", crate::keys::random_hex(12));
+    let id = crate::keys::random_hex(12);
+    let file = format!("{id}.{ext}");
     let path = session.area.join("designs").join(&file);
     tokio::fs::write(&path, &body).await.map_err(storage)?;
     let name: String = q
@@ -398,6 +439,19 @@ pub async fn upload(
         .filter(|c| !c.is_control())
         .take(120)
         .collect();
+    {
+        let _index = session.index.lock().unwrap_or_else(|p| p.into_inner());
+        let mut index = read_index(&session.area);
+        index.push(Stored {
+            id,
+            name: name.clone(),
+            uploaded: now_s(),
+            bytes: body.len() as u64,
+            ext,
+        });
+        let bytes = serde_json::to_vec_pretty(&index).map_err(storage)?;
+        cameo_pi_core::journal::write_atomic(&session.area.join(INDEX), &bytes).map_err(storage)?;
+    }
     let reply = app.design.ask(&p, WorkerRequest::Open { file, name }).await;
     app.design.publish(&p).await;
     match reply? {
@@ -429,4 +483,68 @@ pub async fn live(
     });
     Ok(Sse::new(initial.chain(rest))
         .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+/// The person's uploads, newest first: their owned ids and names, never where they're stored.
+pub async fn designs(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Response, ApiError> {
+    let p = who(&caller, &headers, &uri)?;
+    let session = app.design.session(&p)?;
+    let index: Vec<Upload> = read_index(&session.area)
+        .into_iter()
+        .rev()
+        .map(|s| Upload {
+            id: s.id,
+            name: s.name,
+            uploaded: s.uploaded,
+            bytes: s.bytes,
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "designs": index })).into_response())
+}
+
+#[derive(serde::Deserialize)]
+pub struct OpenBody {
+    /// An upload's owned id, from [`designs`].
+    design: String,
+}
+
+/// Opens one of the person's own uploads again, by its owned id (spec §6). An id that isn't
+/// theirs is simply not found.
+pub async fn open(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(body): Json<OpenBody>,
+) -> Result<Response, ApiError> {
+    let p = who(&caller, &headers, &uri)?;
+    let session = app.design.session(&p)?;
+    let Some(upload) = read_index(&session.area)
+        .into_iter()
+        .find(|u| u.id == body.design)
+    else {
+        return Err(ApiError::not_found());
+    };
+    let file = format!("{}.{}", upload.id, upload.ext);
+    let reply = app
+        .design
+        .ask(
+            &p,
+            WorkerRequest::Open {
+                file,
+                name: upload.name,
+            },
+        )
+        .await;
+    app.design.publish(&p).await;
+    match reply? {
+        WorkerReply::Snapshot(s) => Ok(Json(s).into_response()),
+        WorkerReply::Failed { message } => Err(ApiError::new(422, "design", message)),
+        _ => Err(unexpected()),
+    }
 }

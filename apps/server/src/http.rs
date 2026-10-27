@@ -369,6 +369,8 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/design/geometry", get(crate::design::geometry))
         .route("/api/v1/design/picture", get(crate::design::picture))
         .route("/api/v1/design/live", get(crate::design::live))
+        .route("/api/v1/design/designs", get(crate::design::designs))
+        .route("/api/v1/design/open", post(crate::design::open))
         .route(
             "/api/v1/design/upload",
             post(crate::design::upload).layer(axum::extract::DefaultBodyLimit::max(

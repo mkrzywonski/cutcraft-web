@@ -39,27 +39,53 @@ struct Draft {
     keys: Vec<(CommandRequest, CommandReply)>,
 }
 
-/// The registry commands a browser may send in milestone 0. Everything else is refused:
-/// commands that take paths (`design.open`, `project.save`, `export`…) are reached only through
-/// the server, which resolves its own identifiers (spec §6).
-///
-/// Every reply here is checked for server paths by `protocol-check.sh`. `app.status` and
-/// `prepare.report` are left out: their replies carry server file paths, and the snapshot gives
-/// what a browser needs of them (Codex's review of milestone 0).
-const ALLOWED: &[&str] = &[
-    "prepare.decide",
-    "rows.list",
-    "cut.include",
-    "sheet.set",
-    "sheet.place",
-    "sheet.test_spot",
-    "sheet.piece",
-    "plan.sheet",
-    "materials.list",
-    "mats.list",
-    "history.undo",
-    "history.redo",
+/// Registry commands refused by name, though their class would allow them (spec §6): their
+/// replies can carry server paths, they belong to the desktop app or the whole server, or they
+/// drive a cutter, which goes through the cutter service from milestone 3.
+const REFUSED: &[&str] = &[
+    // Replies with server paths: the snapshot gives a browser what it needs of them.
+    "app.status",
+    "app.engine_check",
+    "prepare.report",
+    "project.inspect",
+    "design.inspection",
+    "journal.list",
+    // The desktop app's own AI connection and paired stations.
+    "settings.mcp",
+    "settings.mcp_key_create",
+    "settings.mcp_key_delete",
+    "settings.mcp_port",
+    "station.forget",
+    // The cutter and the cut screen: milestone 3, through the cutter service.
+    "device.discover",
+    "device.status",
+    "device.wait",
+    "cut.exit",
+    "cut.dismiss",
+    "cut.reset",
 ];
+
+/// The authority policy for one command (spec §6): who may run it from a session. Reads and
+/// edits of the person's own project are allowed, except those refused by name; commands that
+/// name files only through the server's own routes, which name files by owned ids; cutting not
+/// from a session.
+fn policy(id: &str, authority: cutcraft_control::Authority) -> Result<(), (&'static str, String)> {
+    use cutcraft_control::Authority;
+    if REFUSED.contains(&id) {
+        return Err((codes::FORBIDDEN, format!("{id} isn't available here.")));
+    }
+    match authority {
+        Authority::Read | Authority::Edit => Ok(()),
+        Authority::FileRead | Authority::FileWrite => Err((
+            codes::FORBIDDEN,
+            format!("{id} names files: use the server's own routes for designs and projects."),
+        )),
+        Authority::DeviceQuery | Authority::DeviceStop | Authority::Motion => Err((
+            codes::FORBIDDEN,
+            format!("{id} drives a cutter: cutting goes through the cutter service."),
+        )),
+    }
+}
 
 pub struct Worker {
     controller: Controller,
@@ -75,6 +101,8 @@ pub struct Worker {
     name: Option<String>,
     /// The registry's read commands: only these may come without a revision.
     reads: Vec<&'static str>,
+    /// Every registry command's class, for the authority policy.
+    authority: HashMap<&'static str, cutcraft_control::Authority>,
 }
 
 /// The worker as a child process (`cameo-pi worker --area DIR`): its memory capped, one JSON
@@ -141,14 +169,16 @@ impl Worker {
         let area = std::fs::canonicalize(area).map_err(|e| format!("{}: {e}", area.display()))?;
         let roots = Roots::new(Some(&area), None)?;
         let controller = Controller::headless(roots);
-        let reads = controller
-            .commands()
-            .into_iter()
+        let commands = controller.commands();
+        let reads = commands
+            .iter()
             .filter(|c| c.authority == cutcraft_control::Authority::Read)
             .map(|c| c.id)
             .collect();
+        let authority = commands.iter().map(|c| (c.id, c.authority)).collect();
         let mut worker = Self {
             reads,
+            authority,
             controller,
             area,
             incarnation: crate::keys::random_hex(8),
@@ -317,8 +347,11 @@ impl Worker {
                 "This project was reopened since. Here it is now.",
             );
         }
-        if !ALLOWED.contains(&c.id.as_str()) {
-            return refused(codes::FORBIDDEN, format!("{} isn't available here.", c.id));
+        let Some(&authority) = self.authority.get(c.id.as_str()) else {
+            return refused("unknown-command", format!("There is no command {}.", c.id));
+        };
+        if let Err((code, message)) = policy(&c.id, authority) {
+            return refused(code, message);
         }
         // Every change names the revision it was made against (spec §7); only reads may not.
         if c.revision.is_none() && !self.reads.contains(&c.id.as_str()) {
@@ -722,6 +755,81 @@ mod tests {
             WorkerReply::Command(CommandReply::Refused { .. })
         ));
         assert!(w.dirty.is_none());
+    }
+
+    /// Spec §6 and Codex's review of milestone 0: whatever the policy lets a browser run, its
+    /// reply (answer or refusal) never shows a server path. New registry commands are covered
+    /// automatically, or refused.
+    #[test]
+    fn no_command_the_policy_allows_shows_a_server_path() {
+        let dir = area();
+        let mut w = Worker::new(dir.path()).unwrap();
+        open(&mut w);
+        let server = std::fs::canonicalize(dir.path()).unwrap();
+        let server = server.to_string_lossy();
+        let mut allowed = 0;
+        // Closing the design goes last, so every other command meets an open design.
+        let mut commands = w.controller.commands();
+        commands.sort_by_key(|c| c.id == "design.close");
+        for command in commands {
+            if policy(command.id, command.authority).is_err() {
+                continue;
+            }
+            allowed += 1;
+            // Real answers, not only refusals, for the edits a page uses most.
+            let params = match command.id {
+                "sheet.set" => json!({"material": "Removable"}),
+                "sheet.place" => json!({"x": 20.0, "y": 20.0}),
+                "sheet.piece" => json!({"width_mm": 200.0, "height_mm": 200.0}),
+                "sheet.test_spot" => json!({"x_mm": 250.0, "y_mm": 250.0}),
+                "materials.save_current" => json!({"name": "Scan test"}),
+                _ => json!({}),
+            };
+            let s = snapshot(&mut w);
+            let reply = w.answer(WorkerRequest::Command(CommandRequest {
+                id: command.id.into(),
+                params,
+                key: format!("scan-{}", command.id),
+                incarnation: s.incarnation,
+                revision: Some(s.revision),
+            }));
+            let text = serde_json::to_string(&reply).unwrap();
+            assert!(
+                !text.contains(server.as_ref()),
+                "{} shows a server path: {text}",
+                command.id
+            );
+        }
+        assert!(
+            allowed >= 20,
+            "the policy allows the design's reads and edits ({allowed})"
+        );
+        let applied = w
+            .keys
+            .values()
+            .filter(|(_, r)| matches!(r, CommandReply::Applied { .. }))
+            .count();
+        assert!(
+            applied >= 8,
+            "the scan saw real answers, not only refusals ({applied})"
+        );
+    }
+
+    #[test]
+    fn files_and_cutters_are_refused_from_a_session() {
+        use cutcraft_control::Authority;
+        for (id, authority) in [
+            ("design.open", Authority::FileRead),
+            ("project.save", Authority::FileWrite),
+            ("cut.start", Authority::Motion),
+            ("cut.stop", Authority::DeviceStop),
+            ("device.connect", Authority::DeviceQuery),
+            ("app.status", Authority::Read),
+        ] {
+            assert!(policy(id, authority).is_err(), "{id}");
+        }
+        assert!(policy("sheet.place", Authority::Edit).is_ok());
+        assert!(policy("plan.sheet", Authority::Read).is_ok());
     }
 
     #[test]

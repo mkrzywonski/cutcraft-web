@@ -4,6 +4,24 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.4.0 — 2026-10-26
+
+Milestone 2, step 4: the authority policy and owned identifiers (spec §6).
+
+- **One policy by the registry's own command classes** replaces milestone 0's fixed list:
+  - **Allowed:** reads and edits of the person's own project.
+  - **File commands:** refused from a session. Designs and projects go through the server's own
+    routes, named by owned ids.
+  - **Cutter commands:** refused from a session. Cutting goes through the cutter service
+    (milestone 3).
+  - **Refused by name,** though their class allows them: commands whose replies can carry server
+    paths, the desktop app's own AI and station settings, and the cut screen.
+- **A test runs every command the policy allows** against an open design and checks that no
+  answer or refusal shows a server path. New registry commands are covered automatically.
+- **Each person's uploads have an index:** `GET /api/v1/design/designs` lists their owned ids and
+  names, never where they're stored, and `POST /api/v1/design/open` reopens one by id. Someone
+  else's id is simply not found.
+
 ## 0.3.0 — 2026-10-26
 
 Milestone 2, step 3: drafts and change records that survive a crash (spec §7).

@@ -1629,6 +1629,16 @@ async fn an_unseen_mat_can_be_confirmed_fresh_through_the_api() {
 
 const STAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"><path fill="#d22" d="M20 5 L24.7 17.6 L38 17.6 L27.2 25.4 L31.4 38 L20 30.2 L8.6 38 L12.8 25.4 L2 17.6 L15.3 17.6 Z"/></svg>"##;
 
+/// The design files stored in an area's `designs` folder (not its index).
+fn stored_designs(folder: &std::path::Path) -> usize {
+    std::fs::read_dir(folder).map_or(0, |entries| {
+        entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "index.json")
+            .count()
+    })
+}
+
 /// A design-session request from cameo-pi's own page, speaking this protocol version.
 fn design(method: &str, uri: &str, body: Body, session: Option<&str>) -> Request<Body> {
     let mut request = page(method, uri, Value::Null);
@@ -1669,7 +1679,7 @@ async fn in_open_mode_the_household_opens_and_edits_a_design() {
     assert_eq!(snap["design"]["name"], "star.svg");
     // The upload is the server's own copy, in the household's private area.
     let designs = h.app.service.people.join("household/designs");
-    assert_eq!(std::fs::read_dir(&designs).unwrap().count(), 1);
+    assert_eq!(stored_designs(&designs), 1);
 
     let edit = json!({"id": "sheet.set", "params": {"material": "Removable"}, "key": "k1",
         "incarnation": snap["incarnation"], "revision": snap["revision"]});
@@ -1743,18 +1753,10 @@ async fn two_people_have_separate_sessions_and_private_areas() {
 
     // Each person's upload is in their own area, by their account's id.
     let people = &h.app.service.people;
+    assert_eq!(stored_designs(&people.join(&ids["Sam"]).join("designs")), 1);
     assert_eq!(
-        std::fs::read_dir(people.join(&ids["Sam"]).join("designs"))
-            .unwrap()
-            .count(),
-        1
-    );
-    assert!(
-        !people.join(&ids["Alex"]).join("designs").exists()
-            || std::fs::read_dir(people.join(&ids["Alex"]).join("designs"))
-                .unwrap()
-                .count()
-                == 0
+        stored_designs(&people.join(&ids["Alex"]).join("designs")),
+        0
     );
 
     // Alex can't fetch Sam's artwork: it isn't the design open in Alex's session.
@@ -1774,4 +1776,70 @@ async fn two_people_have_separate_sessions_and_private_areas() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn uploads_are_listed_and_reopened_by_owned_id_only_by_their_owner() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let sam = users.create_first("Sam", "correct horse").unwrap();
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+
+    send(&h.app, upload_star(Some(&sam))).await;
+    let (_, listing) = send(
+        &h.app,
+        design("GET", "/api/v1/design/designs", Body::empty(), Some(&sam)),
+    )
+    .await;
+    let ids: Vec<&str> = listing["designs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 1);
+    assert!(
+        !listing
+            .to_string()
+            .contains(h.app.service.people.to_string_lossy().as_ref()),
+        "no paths: {listing}"
+    );
+    assert!(
+        listing["designs"][0].get("ext").is_none(),
+        "nothing about storage: {listing}"
+    );
+    let open = json!({"design": ids[0]}).to_string();
+    let (status, snap) = send(
+        &h.app,
+        design(
+            "POST",
+            "/api/v1/design/open",
+            Body::from(open.clone()),
+            Some(&sam),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, snap["design"]["name"].as_str()),
+        (StatusCode::OK, Some("star.svg"))
+    );
+    // Alex can't open Sam's upload, even knowing its id: it isn't in Alex's area.
+    let (status, _) = send(
+        &h.app,
+        design("POST", "/api/v1/design/open", Body::from(open), Some(&alex)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, alexs) = send(
+        &h.app,
+        design("GET", "/api/v1/design/designs", Body::empty(), Some(&alex)),
+    )
+    .await;
+    assert_eq!(alexs["designs"].as_array().unwrap().len(), 0);
 }
