@@ -6,7 +6,7 @@ members = ["crates/*", "apps/*"]
 exclude = ["spike"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -54,7 +54,7 @@ directories = "6"
 tempfile = "3"
 base64 = "0.22"
 getrandom = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal", "fs", "io-util", "io-std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal", "fs", "io-util", "io-std", "process"] }
 tokio-util = "0.7"
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
@@ -75,6 +75,8 @@ russh-sftp = "3"
 age = { version = "0.11", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+# The memory cap on each preparation worker (spec §18): a safe wrapper over setrlimit.
+rlimit = "0.10"
 
 # Cargo only applies patches from the root workspace: VectorCraft's PDF backend overrides at the
 # pinned engine revision, as CutCraft had them.

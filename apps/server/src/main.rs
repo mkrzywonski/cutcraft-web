@@ -5,9 +5,11 @@
 
 mod adjusting;
 mod backups;
+mod design;
 mod http;
 mod keys;
 mod mcp;
+mod people;
 mod service;
 #[cfg(test)]
 mod tests;
@@ -199,6 +201,27 @@ fn launch<L: Link + Send + 'static>(
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A preparation worker for one person's design session, started by the server (spec §5).
+    if args.first().map(String::as_str) == Some("worker") {
+        let area = match args
+            .iter()
+            .position(|a| a == "--area")
+            .and_then(|i| args.get(i + 1))
+        {
+            Some(area) => std::path::PathBuf::from(area),
+            None => {
+                eprintln!("cameo-pi worker: --area DIR is needed");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match design::worker::run_process(&area) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("cameo-pi worker: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if args.first().map(String::as_str) == Some("certificate") {
         let data = match args.get(1).map(String::as_str) {
             Some("--data") => args.get(2).map(PathBuf::from),
@@ -339,7 +362,14 @@ async fn run(options: Options) -> Result<(), String> {
     }
 
     let (events, _) = tokio::sync::broadcast::channel(256);
+    let program = std::env::current_exe()
+        .map_err(|e| format!("can't find this program to start design workers: {e}"))?;
+    let design = Arc::new(design::Sessions::new(
+        design::Mode::Process(program),
+        service.people.clone(),
+    ));
     let app = App {
+        design,
         service,
         names: Names(options.names),
         events,

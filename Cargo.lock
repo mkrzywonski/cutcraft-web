@@ -445,7 +445,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cameo-pi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "age",
  "argon2 0.5.3",
@@ -453,17 +453,21 @@ dependencies = [
  "base64 0.22.1",
  "cameo-pi-core",
  "chrono",
+ "cutcraft-control",
  "cutcraft-device",
  "cutcraft-job",
  "cutcraft-path",
  "cutcraft-sim",
  "cutcraft-station",
+ "cutcraft-web-protocol",
  "futures-util",
  "getrandom 0.3.4",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "image",
  "rcgen",
+ "rlimit",
  "rmcp",
  "russh",
  "russh-sftp",
@@ -480,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-pi-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-device",
  "cutcraft-job",
@@ -861,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-control"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "cutcraft-device",
@@ -880,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-device"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-job",
  "cutcraft-path",
@@ -890,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-import"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-job",
  "hayro-syntax",
@@ -915,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-job"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "schemars",
@@ -927,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-path"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-job",
  "image",
@@ -940,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-device",
  "cutcraft-job",
@@ -951,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-station"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cutcraft-device",
  "getrandom 0.3.4",
@@ -969,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-web-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3370,6 +3374,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlimit"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7043b63bd0cd1aaa628e476b80e6d4023a3b50eb32789f2728908107bd0c793a"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rmcp"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4281,7 +4294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

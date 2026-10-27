@@ -38,6 +38,10 @@ pub enum Role {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub name: String,
+    /// Stable for the account's whole life: it names the person's private area (spec §6, §20).
+    /// Accounts from before it existed get one the first time the file is read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub role: Role,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub hash: String,
@@ -73,6 +77,8 @@ pub enum Identity {
     Open,
     User {
         name: String,
+        /// The account's stable id ([`User::id`]).
+        id: String,
         role: Role,
         must_change: bool,
     },
@@ -227,7 +233,9 @@ fn load(path: &Path) -> (Result<Store, String>, Option<SystemTime>) {
         .parent()
         .is_some_and(|dir| dir.join(INITIALISED).exists());
     let store = match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Ok(bytes) => serde_json::from_slice::<Store>(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|store| with_ids(path, store)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && !initialised => Ok(Store::default()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Err("the account file is missing".into())
@@ -235,6 +243,19 @@ fn load(path: &Path) -> (Result<Store, String>, Option<SystemTime>) {
         Err(e) => Err(e.to_string()),
     };
     (store, modified)
+}
+
+/// Gives accounts from before stable ids their id, once, and saves it: the id must never change.
+fn with_ids(path: &Path, mut store: Store) -> Result<Store, String> {
+    if store.users.iter().all(|u| !u.id.is_empty()) {
+        return Ok(store);
+    }
+    for user in store.users.iter_mut().filter(|u| u.id.is_empty()) {
+        user.id = random_hex(8);
+    }
+    let bytes = serde_json::to_vec_pretty(&store).map_err(|e| e.to_string())?;
+    write_atomic(path, &bytes).map_err(|e| e.to_string())?;
+    Ok(store)
 }
 
 /// Marks the accounts as set up, for good.
@@ -315,6 +336,7 @@ impl Users {
             .and_then(|s| store.users.iter().find(|u| u.name == s.user))
             .map_or(Identity::Nobody, |u| Identity::User {
                 name: u.name.clone(),
+                id: u.id.clone(),
                 role: u.role,
                 must_change: u.must_change,
             })
@@ -427,6 +449,7 @@ impl Users {
             }
             store.users.push(User {
                 name: name.to_owned(),
+                id: random_hex(8),
                 role: Role::Admin,
                 hash,
                 must_change: false,
@@ -451,6 +474,7 @@ impl Users {
             }
             store.users.push(User {
                 name: name.to_owned(),
+                id: random_hex(8),
                 role,
                 hash,
                 must_change: true,
@@ -618,6 +642,7 @@ pub fn reset_admin(private: &Path, name: Option<&str>) -> Result<(String, String
         }
         None => store.users.push(User {
             name: target.clone(),
+            id: random_hex(8),
             role: Role::Admin,
             hash,
             must_change: true,
@@ -641,20 +666,55 @@ mod tests {
         (Users::open(dir.path()).unwrap(), dir)
     }
 
+    /// An account's id names its private area, so it must never change (spec §6, §20).
+    #[test]
+    fn an_account_keeps_its_id_across_restarts() {
+        let (u, dir) = users();
+        let cookie = u.create_first("Sam", "correct horse").unwrap();
+        let id = |i: Identity| match i {
+            Identity::User { id, .. } => id,
+            other => panic!("{other:?}"),
+        };
+        let first = id(u.identify(Some(&cookie)));
+        let restarted = Users::open(dir.path()).unwrap();
+        assert_eq!(id(restarted.identify(Some(&cookie))), first);
+        u.create("Alex", "a first password", Role::User).unwrap();
+        let ids: Vec<String> = u.list().unwrap().into_iter().map(|x| x.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+    }
+
+    /// Accounts saved before ids existed get one, written back once, so it stays the same.
+    #[test]
+    fn accounts_from_before_ids_get_one_that_sticks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("users.json");
+        std::fs::write(
+            &path,
+            r#"{"users":[{"name":"Old","role":"admin","hash":"x","must_change":false,"created":1}],"sessions":[]}"#,
+        )
+        .unwrap();
+        let first = Users::open(dir.path()).unwrap().list().unwrap()[0]
+            .id
+            .clone();
+        assert!(!first.is_empty());
+        let again = Users::open(dir.path()).unwrap().list().unwrap()[0]
+            .id
+            .clone();
+        assert_eq!(first, again, "the id was saved, not made up again");
+    }
+
     #[test]
     fn open_mode_until_the_first_user_then_logins_only() {
         let (u, _dir) = users();
         assert_eq!(u.identify(None), Identity::Open);
         let cookie = u.create_first("Sam", "correct horse").unwrap();
         assert_eq!(u.identify(None), Identity::Nobody);
-        assert_eq!(
+        assert!(matches!(
             u.identify(Some(&cookie)),
-            Identity::User {
-                name: "Sam".into(),
-                role: Role::Admin,
-                must_change: false
-            }
-        );
+            Identity::User { name, id, role: Role::Admin, must_change: false }
+                if name == "Sam" && !id.is_empty()
+        ));
         // The race: a second "first user" is refused.
         assert_eq!(
             u.create_first("Alex", "another pass"),

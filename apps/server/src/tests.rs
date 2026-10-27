@@ -46,8 +46,13 @@ fn harness() -> Harness {
         None,
     );
     let (events, _) = tokio::sync::broadcast::channel(16);
+    let design = Arc::new(crate::design::Sessions::new(
+        crate::design::Mode::Thread,
+        service.people.clone(),
+    ));
     Harness {
         app: App {
+            design,
             service: Arc::new(service),
             names: Names(vec!["cameo-pi.local".into()]),
             events,
@@ -1618,4 +1623,155 @@ async fn an_unseen_mat_can_be_confirmed_fresh_through_the_api() {
         (status, refused["error"].as_str()),
         (StatusCode::CONFLICT, Some("nothing-to-confirm"))
     );
+}
+
+// --- Design sessions (spec §6, §7) ----------------------------------------------------------
+
+const STAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"><path fill="#d22" d="M20 5 L24.7 17.6 L38 17.6 L27.2 25.4 L31.4 38 L20 30.2 L8.6 38 L12.8 25.4 L2 17.6 L15.3 17.6 Z"/></svg>"##;
+
+/// A design-session request from cameo-pi's own page, speaking this protocol version.
+fn design(method: &str, uri: &str, body: Body, session: Option<&str>) -> Request<Body> {
+    let mut request = page(method, uri, Value::Null);
+    *request.body_mut() = body;
+    request.headers_mut().insert(
+        "x-cutcraft-protocol",
+        cutcraft_web_protocol::PROTOCOL_VERSION
+            .to_string()
+            .parse()
+            .unwrap(),
+    );
+    match session {
+        Some(s) => with_session(request, s),
+        None => request,
+    }
+}
+
+fn upload_star(session: Option<&str>) -> Request<Body> {
+    let mut r = design(
+        "POST",
+        "/api/v1/design/upload?name=star.svg",
+        Body::from(STAR),
+        session,
+    );
+    r.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream".parse().unwrap(),
+    );
+    r
+}
+
+#[tokio::test]
+async fn in_open_mode_the_household_opens_and_edits_a_design() {
+    let h = harness();
+    let (status, snap) = send(&h.app, upload_star(None)).await;
+    assert_eq!(status, StatusCode::OK, "{snap}");
+    assert_eq!(snap["design"]["cut_ready"], true);
+    assert_eq!(snap["design"]["name"], "star.svg");
+    // The upload is the server's own copy, in the household's private area.
+    let designs = h.app.service.people.join("household/designs");
+    assert_eq!(std::fs::read_dir(&designs).unwrap().count(), 1);
+
+    let edit = json!({"id": "sheet.set", "params": {"material": "Removable"}, "key": "k1",
+        "incarnation": snap["incarnation"], "revision": snap["revision"]});
+    let (status, reply) = send(
+        &h.app,
+        design(
+            "POST",
+            "/api/v1/design/command",
+            Body::from(edit.to_string()),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, reply["answer"].as_str()),
+        (StatusCode::OK, Some("applied")),
+        "{reply}"
+    );
+    let (_, found) = send(
+        &h.app,
+        design("GET", "/api/v1/design/lookup/k1", Body::empty(), None),
+    )
+    .await;
+    assert_eq!(found["answer"], "applied");
+}
+
+#[tokio::test]
+async fn a_design_request_without_this_protocol_version_is_refused_first() {
+    let h = harness();
+    let mut request = upload_star(None);
+    request.headers_mut().remove("x-cutcraft-protocol");
+    let (status, body) = send(&h.app, request).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("protocol-version"))
+    );
+    // Nothing was stored.
+    assert!(!h.app.service.people.join("household").exists());
+}
+
+#[tokio::test]
+async fn two_people_have_separate_sessions_and_private_areas() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let sam = users.create_first("Sam", "correct horse").unwrap();
+    users
+        .create("Alex", "first password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Alex", "alex's own pass", false, None)
+        .unwrap();
+    let alex = users.login("Alex", "alex's own pass", "127.0.0.1").unwrap();
+    let ids: std::collections::HashMap<String, String> = users
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|u| (u.name, u.id))
+        .collect();
+
+    let (status, sams) = send(&h.app, upload_star(Some(&sam))).await;
+    assert_eq!(status, StatusCode::OK, "{sams}");
+    let (_, alexs) = send(
+        &h.app,
+        design("GET", "/api/v1/design/snapshot", Body::empty(), Some(&alex)),
+    )
+    .await;
+    assert!(
+        alexs["design"].is_null(),
+        "Alex's session is Alex's own: {alexs}"
+    );
+
+    // Each person's upload is in their own area, by their account's id.
+    let people = &h.app.service.people;
+    assert_eq!(
+        std::fs::read_dir(people.join(&ids["Sam"]).join("designs"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert!(
+        !people.join(&ids["Alex"]).join("designs").exists()
+            || std::fs::read_dir(people.join(&ids["Alex"]).join("designs"))
+                .unwrap()
+                .count()
+                == 0
+    );
+
+    // Alex can't fetch Sam's artwork: it isn't the design open in Alex's session.
+    let art = sams["design"]["art"]["id"].as_str().unwrap();
+    let uri = format!(
+        "/api/v1/design/picture?art={art}&x0=0&y0=0&x1=80&y1=60&zoom_step=0&width=100&height=75"
+    );
+    let (status, _) = send(&h.app, design("GET", &uri, Body::empty(), Some(&alex))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = send(&h.app, design("GET", &uri, Body::empty(), Some(&sam))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Signed out, nothing.
+    let (status, _) = send(
+        &h.app,
+        design("GET", "/api/v1/design/snapshot", Body::empty(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

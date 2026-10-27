@@ -40,6 +40,8 @@ pub struct App {
     pub seq: Arc<AtomicU64>,
     /// Served over HTTPS: cookies get `Secure`.
     pub secure: bool,
+    /// Each person's design session (spec §7).
+    pub design: Arc<crate::design::Sessions>,
 }
 
 impl IntoResponse for ApiError {
@@ -110,6 +112,10 @@ impl Caller {
                 }
         )
     }
+    /// Who the design work is for (spec §6): the person, or the household in open mode.
+    pub fn principal(&self) -> Option<crate::people::Principal> {
+        crate::people::Principal::of(&self.identity)
+    }
     fn user(&self) -> Option<&str> {
         match &self.identity {
             Identity::User { name, .. } => Some(name),
@@ -163,6 +169,7 @@ fn identify(app: &App, key: Option<&str>, session: Option<&str>) -> Result<Ident
             (_, Some(user)) => match users.for_key(&user, &found.credentials) {
                 Some(u) => Identity::User {
                     name: u.name,
+                    id: u.id,
                     role: u.role,
                     must_change: u.must_change,
                 },
@@ -356,6 +363,18 @@ pub fn router(app: App) -> Router {
         .route("/app.css", get(app_css))
         .route("/icon.svg", get(icon))
         .route("/api/v1/jobs/{id}/revisions/{n}/geometry", get(geometry))
+        .route("/api/v1/design/snapshot", get(crate::design::snapshot))
+        .route("/api/v1/design/command", post(crate::design::command))
+        .route("/api/v1/design/lookup/{key}", get(crate::design::lookup))
+        .route("/api/v1/design/geometry", get(crate::design::geometry))
+        .route("/api/v1/design/picture", get(crate::design::picture))
+        .route("/api/v1/design/live", get(crate::design::live))
+        .route(
+            "/api/v1/design/upload",
+            post(crate::design::upload).layer(axum::extract::DefaultBodyLimit::max(
+                crate::design::UPLOAD_LIMIT,
+            )),
+        )
         .nest_service("/mcp", crate::mcp::service(app.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(
             cameo_pi_core::validate::MAX_PROJECT_BYTES
@@ -1274,6 +1293,7 @@ async fn me(axum::Extension(caller): axum::Extension<Caller>) -> Json<Value> {
             name,
             role,
             must_change,
+            ..
         } => json!({ "mode": "users", "user": name, "role": role, "must_change": must_change }),
         Identity::Nobody => json!({ "mode": "users", "user": null }),
         Identity::Locked => json!({ "mode": "locked" }),
@@ -1431,6 +1451,17 @@ async fn create_first_user(
             .keys
             .adopt(&body.keep_keys, &name, &credentials)
             .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        // What the household made in open mode becomes the first admin's (spec §6).
+        if let Some(user) = service
+            .users
+            .list()
+            .map_err(auth_error)?
+            .into_iter()
+            .find(|u| u.name == name)
+        {
+            crate::people::adopt_household(&service.people, &user.id)
+                .map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        }
         Ok(cookie)
     })
     .await?;

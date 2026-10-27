@@ -153,6 +153,8 @@ pub struct Service {
     pub(crate) backup: crate::backups::Shared,
     /// The Pi's private state folder (`data/private`): the scheduled backup's key lives there.
     pub(crate) private: PathBuf,
+    /// Each person's private area lives here (`data/people`, spec §6).
+    pub(crate) people: PathBuf,
 }
 
 fn job_ref(id: &str, revision: u32) -> JobRef {
@@ -182,6 +184,7 @@ impl Service {
             revisions: Mutex::new(()),
             backup: Mutex::default(),
             private: data.join("private"),
+            people: data.join("people"),
         })
     }
 

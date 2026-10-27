@@ -4,6 +4,28 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.2.0 — 2026-10-26
+
+Milestone 2, first steps: people and their design sessions (spec §6, §7).
+
+- **Every account has a stable id,** for its whole life. Accounts from before get one the first
+  time the file is read, saved once so it never changes.
+- **Each request belongs to a person:** the signed-in account, or the household in open mode.
+  When the first admin is created, what the household made becomes theirs.
+- **Each person has a private area,** `data/people/<id>/` (designs, fonts, drafts), readable by no
+  one else.
+- **Design sessions on the server:** one per person, each with its own preparation worker
+  running CutCraft's controller (`cameo-pi worker`, its memory capped). They sit behind the
+  server's own login, CSRF and Host checks.
+  - **The routes:** `/api/v1/design/…`: upload, command, lookup by key, snapshot, geometry,
+    pictures, and live snapshots (server-sent events).
+  - **Checks first:** every request is checked for the protocol version before it reaches a
+    worker.
+  - **Uploads** are stored in the person's own area under names the server chooses.
+  - **A worker that stops** fails one request, and the next starts a fresh one.
+- **Tested:** a household design, a refused protocol version, and two people with separate
+  sessions and areas, where one can't fetch the other's artwork.
+
 ## 0.1.0 — 2026-10-26
 
 Milestone 1: one self-contained workspace (spec §5.2).

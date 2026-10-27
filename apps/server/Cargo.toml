@@ -34,6 +34,12 @@ getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# Design sessions (spec §7): CutCraft's controller in a preparation worker per person, and the
+# browser contract.
+cutcraft-control.workspace = true
+cutcraft-web-protocol.workspace = true
+image.workspace = true
+rlimit.workspace = true
 
 [dev-dependencies]
 cutcraft-station.workspace = true
