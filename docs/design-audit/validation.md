@@ -16,7 +16,9 @@ This change edits specifications and preserves authored fixtures; it changes no 
 - Checked the detailed contract's 71 requirement IDs for uniqueness: no duplicates.
 - Reviewed the documentation changes and fixture provenance for private paths, names,
   archive-derived artwork and credentials. Raw historical diffs and local reports are excluded.
-- `git diff --check`: passed.
+- Documentation whitespace check against the branch base: passed. The full staged check reports
+  trailing spaces in the authored PDF cross-reference records. Those bytes are intentional PDF
+  formatting and are preserved exactly; the fixture is not rewritten to satisfy a text check.
 
 No Rust application changes, so the workspace lint/test/build suite was not rerun for this
 specification-only branch. No browser parity acceptance, Pi performance acceptance, physical
