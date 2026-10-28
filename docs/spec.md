@@ -271,7 +271,7 @@ Each setting lives where it belongs:
 | **Per project** | Units, snap and its step, the decisions, what to cut, material, mat, placement, the test-cut spot. | In the project (`.cutcraft`). A saved project keeps its material, so editing a material list never changes saved projects. |
 | **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their fonts. | In their area, backed up. |
 | **Global** | Material and mat lists (developer decision, 2026-10-27). | One household catalog, backed up and used by library Adjust. |
-| **Per device** | Zoom and pan, which panel groups are folded, the layout override (computer or phone). | In that browser only. |
+| **Per device** | Zoom and pan, which panel groups are folded, compact-layout presentation preferences. | In that browser only. |
 | **Per session** | The desktop layout's screen (Side by side, Overlay, Cut preview, cut screen), set by `view.show`. It is shared by the person's desktop layouts and MCP, as one window is today. | In the session. |
 
 - **Global lists, changed safely:** read the latest catalog under a lock before editing it;
@@ -289,9 +289,10 @@ Each setting lives where it belongs:
   - **Desktop:** at least 1024 CSS pixels wide, or at least 768 wide with a mouse or trackpad
     (`pointer: fine`).
   - **Compact:** everything else.
-- **A switch in the menu** overrides the choice on that device, and the device remembers it.
-  Turning the device or resizing across the threshold offers the other layout once; it never
-  switches by itself in the middle of work.
+- **Wide windows open the desktop layout.** A saved phone preference must not keep a wide
+  window on compact pages. There is no Phone item in the desktop View menu (developer decision,
+  Zulip #118). Turning the device or resizing across the threshold offers the other layout once;
+  it never switches by itself in the middle of work.
 - **Switching loses nothing:** the work is in the session.
 
 ### 9.2 Desktop layout: follows CutCraft
@@ -313,6 +314,9 @@ Each setting lives where it belongs:
 
 ### 9.3 Compact layout: the phone's own UI
 
+The [M5 mobile design guide](mobile-design.md) proposes the detailed phone presentation and
+acceptance scenarios for this section.
+
 cameo-pi's HTML pages, extended to the full workflow. Each screen does one thing, the controls are
 large, and a phone in portrait is the design size. **The same capabilities as the desktop layout,
 presented for a phone:**
@@ -325,7 +329,7 @@ presented for a phone:**
 | Comparing | One view at a time, swiped or toggled: artwork, cut lines, overlay. This replaces side by side, which doesn't fit a phone. |
 | What to cut | The colours or layers as a ticked list. |
 | Material and mat | Choose, adjust (blade, force, speed, passes, mirror, overcut), save; the material and mat lists. |
-| Cut preview and placement | The mat, with touch dragging of the design and the test-cut spot, two-finger resize, typed positions and sizes, Fit, snap. |
+| Cut preview and placement | The mat, with touch dragging of the design, media and test-cut spot, explicit resize handles, typed positions and sizes, Fit, snap. Inspection gestures must not silently resize physical artwork; see the M5 guide. |
 | Cutting | cameo-pi's pages: cutter choice, test cut, queue, Load the mat, Start, Pause, Stop, the live cut viewer. |
 | Undo and Redo | The shared history ([§7](#7-sessions)). |
 | Save, Save As, Download, Update from Design | As on the desktop. |
