@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="80mm" viewBox="0 0 80 80">
+  <title>A gradient fill: vinyl is one colour, so pick one or leave it out</title>
+  <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#e67e22"/><stop offset="1" stop-color="#8e44ad"/></linearGradient></defs>
+  <circle cx="40" cy="40" r="30" fill="url(#g)"/>
+</svg>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <title>Nothing to cut: only white and invisible objects</title>
+  <rect x="10" y="10" width="30" height="30" fill="none"/>
+  <circle cx="70" cy="70" r="15" fill="#000" visibility="hidden"/>
+</svg>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <title>No physical size: only a viewBox, so the size must be confirmed</title>
+  <path d="M200 40 L240 140 L350 140 L260 200 L295 290 L200 235 L105 290 L140 200 L50 140 L160 140 Z" fill="#c0392b"/>
+</svg>

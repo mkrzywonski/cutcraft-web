@@ -1,0 +1,312 @@
+{
+  "reference_version": "1.0.5",
+  "reference_commit": "39654a9465ecdef7478703ee586276304dbc29c6",
+  "licence": "MIT OR Apache-2.0",
+  "observation": "Initial prepare only; no answers; no hardware; controlled reference Nix shell. Font-sensitive results require equivalent fonts. Not web acceptance.",
+  "fixtures": [
+    {
+      "path": "examples/issues/01-no-physical-size.svg",
+      "sha256": "49e8b390f526088dc742a01c090a13174cb31dd8c36f6a2f58ef50e6bf8ae2cd",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "confirm_size"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/02-missing-font.svg",
+      "sha256": "3983581b62938049467bc877e6d3e0958861f9b2e054e3e0f700cd40c6377601",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "font_substitute"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/03-gradient-fill.svg",
+      "sha256": "ccad7bd28949c18f409893d35b90959f0483881f430eb6899ab0389444b712ed",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "appearance"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/04-semi-transparent.svg",
+      "sha256": "b0cf854d15677d5a133300f00401e50ce267ce38167a6356de81cd26ac987ed5",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "appearance"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/05-embedded-picture.svg",
+      "sha256": "ae77d7801b49cc98f2cf96f81db1acfbe1996ab13fe0e0b05e1059a1b08f04d1",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "exclude_picture"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/06-text-on-path-overflow.svg",
+      "sha256": "d5db05cf90cad2f64a9877792993f22da07284b9391c939b01a09ea90fad0fe1",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "text_overflow"
+        ],
+        "diagnostics": [],
+        "changes": [
+          "text.outlined"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/07-art-off-the-page.svg",
+      "sha256": "471b42cd8d2bc16ec467e75b25559e3587e3895794f54cb2b70f3edac239950d",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "fit_artwork"
+        ],
+        "diagnostics": [],
+        "changes": [
+          "page.outside"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/08-background-rectangle.svg",
+      "sha256": "e64b2397abc18e916d66ff2dc2bb4c35e25ee0e970b57fc19e368511eb6d4412",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "background"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/09-tiny-pieces.svg",
+      "sha256": "b99cfe5be3fc14e579eaf63ab4a6d93e2050dcca81bd16b90131d1570a8d4921",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "small_pieces"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/10-thin-pieces.svg",
+      "sha256": "fd9ad84f080d5c8883b15e3b8f8abe3525b625e9f58b8520179d1b84045bf3ce",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "thin_pieces"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/11-near-duplicate-outlines.svg",
+      "sha256": "b995b820c0dbbe555f7bb6d5c94634f1aea7d056999f3f9cfb6be1fd5b5d1f32",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "near_duplicates"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/12-dashed-line.svg",
+      "sha256": "b2eeaf01e4c3627240bc29dd41e3615b63599e456ad55a80ef922c46fc91db76",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [],
+        "diagnostics": [
+          {
+            "code": "stroke.unsupported",
+            "severity": "blocking"
+          }
+        ],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/13-empty.svg",
+      "sha256": "e87f7a076fdf92456d6c42459257f26dd3e16e416560fc0bcdf4755f29eb6eb1",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [],
+        "diagnostics": [
+          {
+            "code": "svg.hidden_dropped",
+            "severity": "info"
+          },
+          {
+            "code": "preparation.empty",
+            "severity": "blocking"
+          }
+        ],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/14-linked-picture.svg",
+      "sha256": "89cc52a87d22e012513ebf45b8f62ba08c383378f9bd574b06e19df94e32be99",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "exclude_picture"
+        ],
+        "diagnostics": [
+          {
+            "code": "link.fingerprint_pending",
+            "severity": "blocking"
+          },
+          {
+            "code": "import.warning",
+            "severity": "blocking"
+          }
+        ],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/15-outline-on-fill.svg",
+      "sha256": "ba8ea526233a7ab7064c4e64b926206e9dfa27a03db77bdd8cc0fbe8fda8f502",
+      "initial_reference": {
+        "cut_ready": true,
+        "pending": [],
+        "diagnostics": [],
+        "changes": [
+          "stroke.part_of_shape"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/16-two-pages.pdf",
+      "sha256": "95007649ea89d7c4d7b426df2848d247c2ab390ae52a66c2f3e7f0a642f79b27",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "page"
+        ],
+        "diagnostics": [],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/17-logo-to-trace.png",
+      "sha256": "1994a8ab22b17f94e1b94f14fcc773f2c2534a3ca9e13c774933d5e596152f44",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "trace_photo"
+        ],
+        "diagnostics": [
+          {
+            "code": "picture.low_resolution",
+            "severity": "info"
+          }
+        ],
+        "changes": [
+          "picture.sized"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/18-photo.jpg",
+      "sha256": "f77d1404d09658385846c0ea195f4f0d54e05c33a3e01aa70b26d3a09b52b7ec",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "trace_photo"
+        ],
+        "diagnostics": [
+          {
+            "code": "picture.low_resolution",
+            "severity": "info"
+          }
+        ],
+        "changes": [
+          "picture.sized"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/19-animated.gif",
+      "sha256": "bd6340c2f1a56a0f8871a80c7f0cf2d9147d48c4d8a362248a485e3cbdb029bd",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [
+          "picture_frame"
+        ],
+        "diagnostics": [
+          {
+            "code": "picture.low_resolution",
+            "severity": "info"
+          }
+        ],
+        "changes": [
+          "picture.sized",
+          "picture.traced"
+        ]
+      }
+    },
+    {
+      "path": "examples/issues/20-missing-letters.svg",
+      "sha256": "f443f1f59b128a3ef069fd864f7718e3d61d2d256e33728b117d32cd354372d3",
+      "initial_reference": {
+        "cut_ready": false,
+        "pending": [],
+        "diagnostics": [
+          {
+            "code": "font.missing_glyphs",
+            "severity": "blocking"
+          }
+        ],
+        "changes": []
+      }
+    },
+    {
+      "path": "examples/issues/21-thick-line.svg",
+      "sha256": "7179658cb7d1019ac279a3b783c3e3b1cffe86e1150250b09cb6414459983682",
+      "initial_reference": {
+        "cut_ready": true,
+        "pending": [],
+        "diagnostics": [],
+        "changes": [
+          "stroke.outlined"
+        ]
+      }
+    },
+    {
+      "path": "examples/manual/mountain-badge.svg",
+      "sha256": "44d7efd5ff51b2431f266973ea8853d1a9e8e037bcdaeb44ad3b8dddcdf3d144"
+    }
+  ]
+}

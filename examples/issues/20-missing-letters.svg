@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
+  <title>Text with characters the font does not have</title>
+  <text x="5" y="28" font-family="Cantarell" font-size="16" fill="#000">Hi ★ 中</text>
+</svg>

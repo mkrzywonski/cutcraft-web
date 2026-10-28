@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
+  <title>Live text in a font that is not installed</title>
+  <text x="5" y="28" font-family="Zanzibar Curlicue Display" font-size="20" fill="#1f3a93">Hello</text>
+</svg>

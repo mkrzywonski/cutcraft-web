@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100mm" height="60mm" viewBox="0 0 100 60">
+  <title>Vector art with an embedded picture, which cannot be cut</title>
+  <rect x="5" y="10" width="40" height="40" fill="#34495e"/>
+  <image x="55" y="15" width="40" height="30" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAeEAIAAACBLxfJAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRP///////wlY99wAAABzSURBVFjD7ZnBDcAgEMOM1AfMQrv/IGUX+qNbgJTEE8Q6yZ8ra2FFmR3qOD1jH9e8oVkJP9De0zN2Cttd2E34uxMtaQyFU2lt/IRTaXEMhVNpbfyEU2lxDIVTaW38hFNpcQyFzSpd6oDZT8/YKAzg9FD7AcF0PGXxcC60AAAAAElFTkSuQmCC"/>
+</svg>

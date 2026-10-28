@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="80mm" viewBox="0 0 100 80">
+  <title>A filled background behind the design</title>
+  <rect x="0" y="0" width="100" height="80" fill="#f1c40f"/>
+  <path d="M50 12 L60 34 L84 36 L66 52 L72 74 L50 62 L28 74 L34 52 L16 36 L40 34 Z" fill="#2c3e50"/>
+</svg>
