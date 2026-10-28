@@ -330,7 +330,8 @@ chart provenance at the source revision; do not invent updated manufacturer valu
 starting settings, not certification. EasyWeed Adhesive, cardstock and sketch-pen user workflows
 remain excluded/deferred. Built-in offset remains Off pending real blade calibration.
 
-**MAT-05.** Materials and Mats open tall, scrollable libraries with visually distinct bordered
+**MAT-05.** Material and mat catalogs are shared by the household (web §8); edits refresh
+other sessions without changing saved project snapshots. Materials and Mats open tall, scrollable libraries with visually distinct bordered
 rows and summaries. Single click **selects**, never opens an editor. Explicit New, Edit settings,
 Duplicate, Delete and Make Default actions remain visible; Delete is not hidden under More.
 Edit/New/Duplicate open padded modal editors. Search/filter, empty states and write errors are

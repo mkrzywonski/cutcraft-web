@@ -16,6 +16,8 @@ port decisions confirmed by the developer.
 - [Original-spec coverage and contradictions](design-audit/source-map.md).
 - [Every commit through 1.0.5](design-audit/history.md): 162 commits, including merges.
 - [Authored examples and required regression workflows](design-audit/acceptance.md).
+- [M1–M3 conformance review](design-audit/m3-review.md) and
+  [requirement-by-requirement code matrix](design-audit/m3-conformance.md).
 
 **Reference:** CutCraft **1.0.5**, full commit
 `39654a9465ecdef7478703ee586276304dbc29c6`, before cameo-pi integration. The imported backend may
@@ -208,10 +210,9 @@ let one person, or their AI key, reach another person's work or the server's sec
     resolved only within the upload.
   - **The same checks** cover images, geometry, downloads and WebSocket subscriptions.
 - **Areas:**
-  - **Each person's own:** designs, fonts, drafts, settings and their material list. No one else
-    can read it.
-  - **The library is shared:** every user can open, save, move and delete any project, as in
-    cameo-pi's household model.
+  - **Each person's own:** designs, fonts, drafts and settings. No one else can read it.
+  - **Shared by the household:** the project library and material/mat lists. Every user can
+    change them; saved projects retain their own setting snapshots.
 - **Open mode** (no users yet, as in cameo-pi): one household principal. When the first admin is
   created, the household's area becomes theirs.
 - **Cutting keeps the actor.** A worker reaches the cutter service as its person, with a per-person
@@ -268,10 +269,13 @@ Each setting lives where it belongs:
 | Where | Settings | Stored |
 |---|---|---|
 | **Per project** | Units, snap and its step, the decisions, what to cut, material, mat, placement, the test-cut spot. | In the project (`.cutcraft`). A saved project keeps its material, so editing a material list never changes saved projects. |
-| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their material and mat lists, their fonts. | In their area, backed up. |
+| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their fonts. | In their area, backed up. |
+| **Global** | Material and mat lists (developer decision, 2026-10-27). | One household catalog, backed up and used by library Adjust. |
 | **Per device** | Zoom and pan, which panel groups are folded, the layout override (computer or phone). | In that browser only. |
 | **Per session** | The desktop layout's screen (Side by side, Overlay, Cut preview, cut screen), set by `view.show`. It is shared by the person's desktop layouts and MCP, as one window is today. | In the session. |
 
+- **Global lists, changed safely:** read the latest catalog under a lock before editing it;
+  concurrent edits must not erase each other. Refresh every open session after changes.
 - **The compact layout never calls `view.show`.** Its screens are pages, so opening the cut page on
   the phone leaves the laptop on Cut preview.
 - **What changes from CutCraft:** units and snap move from the app settings into the project; a new
@@ -731,6 +735,9 @@ features deliberately removed before 1.0.5. No other missing reference feature i
   acceptance catalogue. Reconciles stale original prose and clarifies Cut navigation versus
   frozen handoff, first Save, supported formats and decoder limits. Q1/Q2 record material
   lifetime and loaded-mat reuse decisions confirmed by the developer on 2026-10-28. No application code changed.
+
+- **Version 1.1 (2026-10-27):** material and mat catalogs shared by the household, confirmed
+  by the developer (Zulip decision #76). This decision remains in version 2.
 
 - **Version 1, final (2026-10-26):** draft 2 with the developer's answers (#41) and the reviewers'
   last clarifications (Codex #45, Grok #46).

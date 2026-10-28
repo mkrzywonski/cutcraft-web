@@ -1,0 +1,435 @@
+diff --git a/apps/server/src/design/worker.rs b/apps/server/src/design/worker.rs
+index 4c39d46..2797f48 100644
+--- a/apps/server/src/design/worker.rs
++++ b/apps/server/src/design/worker.rs
+@@ -1461,4 +1461,202 @@ mod tests {
+         );
+         assert!(snapshot(&mut w).design.unwrap().unsaved);
+     }
++    fn parity_command(w: &mut Worker, id: &str, params: Value) -> CommandReply {
++        let s = snapshot(w);
++        w.command(CommandRequest {
++            id: id.into(),
++            params,
++            key: crate::keys::random_hex(8),
++            incarnation: s.incarnation,
++            revision: Some(s.revision),
++        })
++    }
++
++    #[test]
++    fn parity_review_unfinished_project_can_be_exported_for_save() {
++        let dir = area();
++        std::fs::write(
++            dir.path().join("designs/star.svg"),
++            STAR.replace("width=\"80mm\" height=\"60mm\"", ""),
++        )
++        .unwrap();
++        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
++        assert!(!open(&mut w).design.unwrap().cut_ready);
++        let result = w.answer(WorkerRequest::Export);
++        assert!(
++            matches!(result, WorkerReply::Export { .. }),
++            "saving unfinished work must not require cutting readiness: {result:?}"
++        );
++    }
++
++    #[test]
++    fn parity_review_question_details_are_available_to_clients() {
++        let dir = area();
++        std::fs::write(
++            dir.path().join("designs/star.svg"),
++            STAR.replace("width=\"80mm\" height=\"60mm\"", ""),
++        )
++        .unwrap();
++        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
++        assert!(open(&mut w).design.unwrap().issues > 0);
++        let reply = parity_command(&mut w, "prepare.report", json!({}));
++        assert!(
++            matches!(reply, CommandReply::Applied { .. }),
++            "client needs allowed choices and affected items, not only a count: {reply:?}"
++        );
++    }
++
++    #[test]
++    fn parity_review_material_adjustments_survive_checkpoint_and_new_import() {
++        let dir = area();
++        let lists = dir.path().join("lists");
++        let mut w = Worker::new(dir.path(), &lists).unwrap();
++        open(&mut w);
++        assert!(matches!(
++            parity_command(&mut w, "sheet.adjust", json!({"force":23,"mirror":true})),
++            CommandReply::Applied { .. }
++        ));
++        w.checkpoint().unwrap();
++        drop(w);
++        let mut w = Worker::new(dir.path(), &lists).unwrap();
++        assert_eq!(
++            w.controller
++                .snapshot()
++                .unwrap()
++                .design
++                .unwrap()
++                .project
++                .sheets[0]
++                .material
++                .force,
++            23
++        );
++        assert!(matches!(
++            open_as(&mut w, "new-import", true),
++            CommandReply::Applied { .. }
++        ));
++        let sheet = w
++            .controller
++            .snapshot()
++            .unwrap()
++            .design
++            .unwrap()
++            .project
++            .sheets[0]
++            .clone();
++        assert_eq!(sheet.material.force, 23);
++        assert!(sheet.mirror);
++    }
++
++    #[test]
++    fn parity_review_blocking_diagnostics_count_as_issues() {
++        let dir = area();
++        std::fs::write(
++            dir.path().join("designs/star.svg"),
++            r#"<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm"/>"#,
++        )
++        .unwrap();
++        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
++        let s = open(&mut w).design.unwrap();
++        assert!(!s.cut_ready);
++        assert!(
++            s.issues > 0,
++            "empty design is blocked, but snapshot reports zero issues"
++        );
++    }
++
++    #[test]
++    fn parity_review_idle_worker_recovery_preserves_undo() {
++        let dir = area();
++        let lists = dir.path().join("lists");
++        let mut w = Worker::new(dir.path(), &lists).unwrap();
++        open(&mut w);
++        let original = w
++            .controller
++            .snapshot()
++            .unwrap()
++            .design
++            .unwrap()
++            .project
++            .sheets[0]
++            .material
++            .force;
++        assert!(matches!(
++            parity_command(&mut w, "sheet.adjust", json!({"force":23})),
++            CommandReply::Applied { .. }
++        ));
++        w.checkpoint().unwrap();
++        drop(w);
++        let mut recovered = Worker::new(dir.path(), &lists).unwrap();
++        let reply = parity_command(&mut recovered, "history.undo", json!({}));
++        assert!(
++            matches!(reply, CommandReply::Applied { .. }),
++            "same session must retain Undo after worker eviction: {reply:?}"
++        );
++        assert_eq!(
++            recovered
++                .controller
++                .snapshot()
++                .unwrap()
++                .design
++                .unwrap()
++                .project
++                .sheets[0]
++                .material
++                .force,
++            original
++        );
++    }
++
++    #[test]
++    fn parity_review_authored_reference_fixture_outcomes() {
++        let root =
++            std::env::var_os("CUTCRAFT_PARITY_FIXTURES").expect("set reference fixture root");
++        let root = PathBuf::from(root);
++        let manifest: Value = serde_json::from_slice(
++            &std::fs::read(root.join("docs/design-audit/fixtures.json")).unwrap(),
++        )
++        .unwrap();
++        let mut count = 0;
++        for fixture in manifest["fixtures"].as_array().unwrap() {
++            let expected = &fixture["initial_reference"];
++            if expected.is_null() {
++                continue;
++            }
++            let file = Path::new(fixture["path"].as_str().unwrap());
++            let name = file.file_name().unwrap().to_str().unwrap();
++            let dir = area();
++            std::fs::copy(root.join(file), dir.path().join("designs").join(name)).unwrap();
++            let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
++            let s = snapshot(&mut w);
++            let opened = w.open(OpenRequest {
++                request: None,
++                source: OpenSource::Upload {
++                    file: name.into(),
++                    name: name.into(),
++                },
++                key: "fixture-open".into(),
++                incarnation: s.incarnation,
++                revision: s.revision,
++                replace_unsaved: false,
++            });
++            assert!(
++                matches!(opened, CommandReply::Applied { .. }),
++                "{name}: {opened:?}"
++            );
++            // Inspect internally: the public report adapter is the separate failing probe.
++            let report = w
++                .controller
++                .execute(Origin::User, "prepare.report", json!({}), None)
++                .unwrap()
++                .value;
++            let actual = json!({"cut_ready":report["cut_ready"],
++                "pending":report["pending"].as_array().unwrap().iter().map(|q|q["decision"].clone()).collect::<Vec<_>>(),
++                "diagnostics":report["diagnostics"].as_array().unwrap().iter().map(|d|json!({"code":d["code"],"severity":d["severity"]})).collect::<Vec<_>>(),
++                "changes":report["changes"].as_array().unwrap().iter().map(|c|c["code"].clone()).collect::<Vec<_>>()});
++            assert_eq!(&actual, expected, "reference outcome differs for {name}");
++            count += 1;
++        }
++        assert_eq!(count, 21);
++    }
+ }
+diff --git a/apps/server/src/tests.rs b/apps/server/src/tests.rs
+index c9fbffc..e4516ce 100644
+--- a/apps/server/src/tests.rs
++++ b/apps/server/src/tests.rs
+@@ -3266,3 +3266,198 @@ fn a_start_cancelled_before_release_replays_a_durable_refusal() {
+         assert!(lock(&shared).take_pending().is_none());
+     }
+ }
++
++#[tokio::test]
++async fn parity_review_upload_accepts_supported_bmp() {
++    let h = harness();
++    let mut bytes = std::io::Cursor::new(Vec::new());
++    image::RgbImage::from_pixel(8, 8, image::Rgb([0, 0, 0]))
++        .write_to(&mut bytes, image::ImageFormat::Bmp)
++        .unwrap();
++    let mut req = design(
++        "POST",
++        "/api/v1/design/upload?name=authored.BMP",
++        Body::from(bytes.into_inner()),
++        None,
++    );
++    req.headers_mut().insert(
++        header::CONTENT_TYPE,
++        "application/octet-stream".parse().unwrap(),
++    );
++    let (status, body) = send(&h.app, req).await;
++    assert_eq!(
++        status,
++        StatusCode::OK,
++        "supported BMP upload refused: {body}"
++    );
++}
++
++#[tokio::test]
++async fn parity_review_tuned_copy_can_continue_same_test_turn() {
++    let mut h = harness();
++    open_star(&h.app, None).await;
++    let first = cut_copy(&h.app, "copy-before-test").await;
++    let first_id = first["value"]["copy"]["id"].as_str().unwrap();
++    for _ in 0..3 {
++        h.worker.step();
++    }
++    h.sim.unload();
++    for _ in 0..3 {
++        h.worker.step();
++    }
++    h.sim.load(Media::Mat12x12);
++    for _ in 0..9 {
++        h.worker.step();
++    }
++    let v = lock(&h.app.service.cutters[0].shared).view();
++    let cameo_pi_core::mat::Mat::Fresh(generation) = v.mat else {
++        panic!("not loaded")
++    };
++    let (status, result) = send(
++        &h.app,
++        page(
++            "POST",
++            "/api/v1/cutters/practice/start",
++            json!({"boot":"t", "kind":"test", "turn":null, "job_id":first_id,
++        "revision":1, "generation":generation, "action_epoch":v.action_epoch, "key":"first-test"}),
++        ),
++    )
++    .await;
++    assert_eq!(status, StatusCode::OK, "{result}");
++    h.worker.step();
++    for _ in 0..8 {
++        h.worker.step();
++    }
++    let s = now(&h.app, None).await;
++    let r = post_design(&h.app, "/api/v1/design/command", json!({"id":"sheet.adjust",
++        "params":{"force":23}, "key":"tune-force", "incarnation":s["incarnation"], "revision":s["revision"]}), None).await;
++    assert_eq!(r["answer"], "applied", "{r}");
++    let next = cut_copy(&h.app, "copy-after-tuning").await;
++    let next_id = next["value"]["copy"]["id"].as_str().unwrap();
++    let v = lock(&h.app.service.cutters[0].shared).view();
++    let (status, result) = send(
++        &h.app,
++        page(
++            "POST",
++            "/api/v1/cutters/practice/start",
++            json!({"boot":"t", "kind":"test", "turn":v.turn.unwrap().id, "job_id":next_id,
++        "revision":1, "generation":generation, "action_epoch":v.action_epoch, "key":"second-test"}),
++        ),
++    )
++    .await;
++    assert_eq!(
++        status,
++        StatusCode::OK,
++        "explicitly reviewed force-only replacement should preserve occupied test spots: {result}"
++    );
++}
++
++async fn parity_review_command(app: &App, id: &str, params: Value) -> Value {
++    let s = now(app, None).await;
++    let r = post_design(app, "/api/v1/design/command", json!({"id":id, "params":params,
++        "key":crate::keys::random_hex(8), "incarnation":s["incarnation"], "revision":s["revision"]}), None).await;
++    assert_eq!(r["answer"], "applied", "{id}: {r}");
++    r
++}
++
++#[tokio::test]
++async fn parity_review_test_in_artwork_gap_does_not_block_main_cut() {
++    let mut h = harness();
++    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="150mm" height="80mm" viewBox="0 0 150 80"><rect x="0" y="0" width="20" height="20" fill="#f00"/><rect x="100" y="0" width="20" height="20" fill="#f00"/></svg>"##;
++    let mut req = design(
++        "POST",
++        "/api/v1/design/upload?name=two-shapes.svg",
++        Body::from(svg),
++        None,
++    );
++    req.headers_mut().insert(
++        header::CONTENT_TYPE,
++        "application/octet-stream".parse().unwrap(),
++    );
++    let (_, up) = send(&h.app, req).await;
++    let s = now(&h.app, None).await;
++    let r = post_design(
++        &h.app,
++        "/api/v1/design/open",
++        json!({"design":up["design"]["id"],
++        "key":"open-two-shapes", "incarnation":s["incarnation"], "revision":s["revision"]}),
++        None,
++    )
++    .await;
++    assert_eq!(r["answer"], "applied", "{r}");
++    parity_review_command(&h.app, "sheet.set", json!({"weeding_box":false})).await;
++    parity_review_command(&h.app, "sheet.place", json!({"x":30,"y":30})).await;
++    parity_review_command(&h.app, "sheet.test_spot", json!({"x_mm":75,"y_mm":30})).await;
++    let copy = cut_copy(&h.app, "gap-copy").await;
++    let id = copy["value"]["copy"]["id"].as_str().unwrap();
++    for _ in 0..3 {
++        h.worker.step();
++    }
++    h.sim.unload();
++    for _ in 0..3 {
++        h.worker.step();
++    }
++    h.sim.load(Media::Mat12x12);
++    for _ in 0..9 {
++        h.worker.step();
++    }
++    let v = lock(&h.app.service.cutters[0].shared).view();
++    let cameo_pi_core::mat::Mat::Fresh(generation) = v.mat else {
++        panic!("not loaded")
++    };
++    let (status, r) = send(
++        &h.app,
++        page(
++            "POST",
++            "/api/v1/cutters/practice/start",
++            json!({
++        "boot":"t", "kind":"test", "turn":null,"job_id":id,"revision":1,
++        "generation":generation,"action_epoch":v.action_epoch,"key":"gap-test"}),
++        ),
++    )
++    .await;
++    assert_eq!(status, StatusCode::OK, "{r}");
++    h.worker.step();
++    for _ in 0..8 {
++        h.worker.step();
++    }
++    let v = lock(&h.app.service.cutters[0].shared).view();
++    let (status, r) = send(
++        &h.app,
++        page(
++            "POST",
++            "/api/v1/cutters/practice/start",
++            json!({
++        "boot":"t", "kind":"main", "turn":v.turn.unwrap().id,"job_id":id,"revision":1,
++        "generation":generation,"action_epoch":v.action_epoch,"key":"gap-main"}),
++        ),
++    )
++    .await;
++    assert_eq!(
++        status,
++        StatusCode::OK,
++        "valid artwork gap must stay usable: {r}"
++    );
++}
++
++#[tokio::test]
++async fn parity_review_library_adjust_uses_household_material_catalog() {
++    let h = harness();
++    open_star(&h.app, None).await;
++    parity_review_command(
++        &h.app,
++        "materials.save_current",
++        json!({"name":"Parity custom material"}),
++    )
++    .await;
++    let (status, catalog) = send(&h.app, get("/api/v1/catalog", "cameo-pi.local")).await;
++    assert_eq!(status, StatusCode::OK);
++    assert!(
++        catalog["materials"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .any(|m| m["name"] == "Parity custom material"),
++        "library Adjust must use the same catalog as preparation: {catalog}"
++    );
++}
+diff --git a/crates/cameo-pi-core/src/cutter.rs b/crates/cameo-pi-core/src/cutter.rs
+index 7ba7480..48db5a7 100644
+--- a/crates/cameo-pi-core/src/cutter.rs
++++ b/crates/cameo-pi-core/src/cutter.rs
+@@ -2133,4 +2133,20 @@ mod tests {
+             }
+         }
+     }
++    #[test]
++    fn parity_review_changed_user_invalidates_retained_load() {
++        let mut c = ready_cutter();
++        let mut first = request(&c, Kind::Test, None, "first-person-test");
++        first.actor.user = Some("first-user".into());
++        let (execution, turn) = started(c.start(first));
++        assert!(c.take_pending().is_some());
++        c.finished(&execution, Outcome::Completed { duration_s: 1.0 });
++        let mut next = request(&c, Kind::Main, Some(&turn), "other-person-main");
++        next.actor.user = Some("second-user".into());
++        let result = c.start(next);
++        assert!(
++            result.is_err(),
++            "changing users requires fresh loading under Q2: {result:?}"
++        );
++    }
+ }
