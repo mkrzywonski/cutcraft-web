@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.14.1 — 2026-10-29
+
+- Keep queued private cut previews visible only to their owner. Waiting cuts no longer request another person’s preview, and preview errors leave the rest of the workspace connected.
+- Clear previous action results so an earlier Save cannot close a later dialog.
+
 ## 0.14.0 — 2026-10-29
 
 - Add the desktop browser workspace: graphical toolbar, comparison and mat views, editable sheet settings, material/mat dialogs, library saving and simulated cut controls. This independent M4 branch remains under development; see docs/m4-progress.md for outstanding parity work.

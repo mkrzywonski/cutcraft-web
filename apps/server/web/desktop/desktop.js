@@ -27,15 +27,19 @@ async function refresh(){
   if(model.me.login_required || me.must_change || me.mode==='locked'){model.connected=true;live?.close();live=null;return;}
   const [snapshot,state]=await Promise.all([api('/api/v1/design/snapshot'),api('/api/v1/state')]);
   if(snapshot.protocol!==PROTOCOL)throw new Error('The server was updated. Reload this page.');
-  const old=model.snapshot;model.snapshot=snapshot;model.state=state;model.connected=true;
+  const old=model.snapshot;
+  if(old.incarnation && old.incarnation!==snapshot.incarnation){model.cut_preview={};model.result={};model.geometry={id:""};model.picture="";model.picture_id="";}
+  model.snapshot=snapshot;model.state=state;model.connected=true;
   document.title=(snapshot.design?.name?`${snapshot.design.name} — `:'')+'CutCraft';
   if(snapshot.design?.geometry?.id && (snapshot.design.geometry.id!==old.design?.geometry?.id || !model.geometry.id)){
    const geometry=await api('/api/v1/design/geometry');if(model.snapshot.incarnation===snapshot.incarnation && model.snapshot.design?.geometry?.id===geometry.id)model.geometry=geometry;
   }
   const cutter=model.state.cutters?.find(c=>c.id===model.selectedCutter);
-  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && model.cut_preview?.copy && cutter.view.activity==='idle'){
+  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && model.cut_preview?.copy && cutter.view.turn.job.job_id===model.cut_preview.copy.id && cutter.view.activity==='idle'){
+    try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
     model.cut_preview={...preview,copy:model.cut_preview?.copy};
+    } catch(e) {model.cut_preview={copy:model.cut_preview.copy};model.message=e.message;}
   }
   if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
   const art=snapshot.design?.art;
@@ -55,7 +59,7 @@ async function picture(art){
 function savedBody(params){return {...params,key:key(),incarnation:model.snapshot.incarnation,revision:model.snapshot.revision};}
 async function open(body){try{await api('/api/v1/design/open','POST',savedBody(body));model.result={close_dialog:true};}catch(e){if(e.code==='unsaved-changes'&&confirm('The current design has unsaved changes. Open this file and keep the previous work as a draft?')){await api('/api/v1/design/open','POST',savedBody({...body,replace_unsaved:true}));}else throw e;}}
 async function upload(file){if(!file)return;await execute(async()=>{const r=await fetch(`/api/v1/design/upload?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'x-cutcraft-protocol':String(PROTOCOL),'x-csrf-token':decodeURIComponent(csrf())},body:file});const result=await r.json();if(!r.ok)throw new Error(result.message);const uploaded=result.design;if(uploadMode.update){await api('/api/v1/design/update','POST',savedBody({design:uploaded.id}));}else await open({design:uploaded.id});});}
-async function execute(fn){if(model.pending)return;model.pending=true;model.message='';try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
+async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
 async function dispatch({action,params:p}){
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});await refresh();}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}return;}
  if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;return;}
@@ -76,7 +80,7 @@ async function dispatch({action,params:p}){
    case 'uploads':model.uploads=await api('/api/v1/design/designs');break;
    case 'login':await api('/api/v1/login','POST',{name:p.username,password:p.password});break;
    case 'password':await api('/api/v1/me/password','POST',p);break;
-   case 'logout':await api('/api/v1/logout','POST',{});model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.picture='';model.geometry={id:''};break;
+   case 'logout':await api('/api/v1/logout','POST',{});model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.picture='';model.picture_id='';model.geometry={id:''};model.cut_preview={};break;
    case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
    case 'prepare-cut':{model.selectedCutter=p.cutter;const current=model.state.cutters?.find(c=>c.id===p.cutter)?.view?.turn;const prior=model.cut_preview?.copy;let copy;if(prior && prior.project_revision===model.snapshot.design?.project_revision && current?.job.job_id===prior.id){copy=prior;}else{const r=await command('cut.copy',p.test?{test:true}:{});copy=r.value.copy;}if(current?.job.job_id!==copy.id){await api(`/api/v1/cutters/${encodeURIComponent(p.cutter)}/queue`,'POST',{job_id:copy.id,revision:copy.revision,key:key()});}model.cut_preview={copy};model.result={copy};break;}
    case 'start':{const body={...p.start,key:key()};const path=`/api/v1/cutters/${encodeURIComponent(p.cutter)}`;try{await api(`${path}/start`,'POST',body);}catch(e){if(e instanceof TypeError){const result=await api(`${path}/starts/${body.key}`);if(result.answer!=='started')throw new Error('Start is not confirmed. Check the cutter before trying again.');}else throw e;}break;}

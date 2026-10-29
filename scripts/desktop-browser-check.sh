@@ -2,6 +2,7 @@
 # In the pinned nix-shell, with Node >=22 and Chromium on PATH.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+node scripts/desktop-transport-check.mjs
 scripts/build-desktop.sh
 cargo build --locked -p cameo-pi
 work=$(mktemp -d /tmp/cutcraft-desktop-check.XXXXXX)

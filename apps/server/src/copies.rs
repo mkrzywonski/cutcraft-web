@@ -29,6 +29,11 @@ pub(crate) struct Stored {
 }
 
 impl Stored {
+    /// Whether this private copy belongs to the authenticated stable principal.
+    pub fn owned_by(&self, principal: &str) -> bool {
+        self.owner == principal
+    }
+
     pub fn reply(&self) -> CommandReply {
         CommandReply::Applied {
             revision: self

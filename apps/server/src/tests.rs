@@ -3306,13 +3306,74 @@ async fn desktop_saves_unfinished_work_but_refuses_cut_copy() {
     assert!(
         h.app
             .service
-            .cut_preview("practice", cameo_pi_core::cutter::Kind::Test)
+            .cut_preview(
+                "practice",
+                cameo_pi_core::cutter::Kind::Test,
+                crate::people::HOUSEHOLD
+            )
             .is_ok()
     );
     assert!(
         h.app
             .service
-            .cut_preview("practice", cameo_pi_core::cutter::Kind::Main)
+            .cut_preview(
+                "practice",
+                cameo_pi_core::cutter::Kind::Main,
+                crate::people::HOUSEHOLD
+            )
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn queued_private_cut_preview_remains_owned_by_its_creator() {
+    let h = harness();
+    let users = &h.app.service.users;
+    let first = users.create_first("Owner", "owner password").unwrap();
+    users
+        .create("Other", "other password", crate::users::Role::User)
+        .unwrap();
+    users
+        .set_password("Other", "other chosen password", false, None)
+        .unwrap();
+    let other = users
+        .login("Other", "other chosen password", "127.0.0.1")
+        .unwrap();
+    open_star(&h.app, Some(&first)).await;
+    let s = now(&h.app, Some(&first)).await;
+    let copied=post_design(&h.app,"/api/v1/design/command",json!({"id":"cut.copy","params":{},"key":"private-copy","incarnation":s["incarnation"],"revision":s["revision"]}),Some(&first)).await;
+    assert_eq!(copied["answer"], "applied", "{copied}");
+    h.app
+        .service
+        .queue(
+            "practice",
+            copied["value"]["copy"]["id"].as_str().unwrap(),
+            Some(1),
+            cameo_pi_core::cutter::Actor {
+                user: Some("Owner".into()),
+                client: "browser".into(),
+            },
+            "queue-private",
+        )
+        .unwrap();
+    let request = |session: &str| {
+        let mut request = page(
+            "GET",
+            "/api/v1/cutters/practice/preview?kind=test",
+            Value::Null,
+        );
+        request.headers_mut().insert(
+            header::COOKIE,
+            format!("cpi_csrf={TOKEN}; cpi_session={session}")
+                .parse()
+                .unwrap(),
+        );
+        request
+    };
+    let (status, preview) = send(&h.app, request(&first)).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview["geometry"]["sheet"].is_array());
+    let (status, body) = send(&h.app, request(&other)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.get("geometry").is_none());
 }

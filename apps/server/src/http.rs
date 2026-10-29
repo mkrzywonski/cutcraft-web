@@ -583,8 +583,13 @@ async fn cut_preview(
     State(app): State<App>,
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<CutPreviewQuery>,
+    axum::Extension(caller): axum::Extension<Caller>,
 ) -> Result<Json<Value>> {
-    blocking(move || Ok(Json(app.service.cut_preview(&id, q.kind)?))).await
+    let owner = caller
+        .principal()
+        .ok_or_else(|| ApiError::new(401, "login", "Log in first."))?
+        .id;
+    blocking(move || Ok(Json(app.service.cut_preview(&id, q.kind, &owner)?))).await
 }
 
 async fn queue(

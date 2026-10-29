@@ -71,3 +71,16 @@ Clippy, browser-target Clippy for UI/protocol, all **449 Rust tests**, the works
 `cargo deny check`, **40 existing compact-browser assertions**, and the desktop workflow
 script above. The two history/upload-preservation regressions pass as part of that suite.
 Checks used only authored fixtures and the simulator. The remaining gates above are still open.
+
+## Preview ownership follow-up
+
+Private cut-copy previews now require their owner's authenticated stable principal. An HTTP
+regression queues an authored design as one account and checks that a second account receives
+404 with no geometry. Browser transport regressions cover waiting behind someone else's turn,
+a refused preview without losing the workspace connection, discarding a previous session's
+preview, and avoiding replay of an old Save result into a later dialog.
+
+Version 0.14.1 passed formatting, native and wasm Clippy, all 450 Rust tests, workspace
+build, dependency policy, the desktop simulated workflow and 40 compact-browser assertions.
+The transport regression script also passed after adding the session-change case. These checks
+ran locally against authored fixtures; they do not close the remaining M4 gates above.

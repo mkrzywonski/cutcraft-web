@@ -439,12 +439,20 @@ impl Service {
 
     /// Preview exactly the current turn and its next pattern, using the same planning path as
     /// Start. This is read-only and cannot claim a cutter or load material.
-    pub fn cut_preview(&self, cutter: &str, kind: Kind) -> Result<Value> {
+    pub fn cut_preview(&self, cutter: &str, kind: Kind, owner: &str) -> Result<Value> {
         let entry = self.cutter(cutter)?;
         let view = lock(&entry.shared).view();
         let turn = view
             .turn
             .ok_or_else(|| ApiError::bad_request("Nothing is prepared for this cutter."))?;
+        if crate::copies::is_copy(&turn.job.job_id)
+            && !self
+                .copies
+                .get(&turn.job.job_id, turn.job.revision)?
+                .owned_by(owner)
+        {
+            return Err(ApiError::not_found());
+        }
         let (plan, project) =
             self.plan_for_cut(entry, kind, &turn.job.job_id, turn.job.revision)?;
         let sheet = project
