@@ -131,7 +131,17 @@ fn public(method: &Method, path: &str) -> bool {
         (method.as_str(), path),
         (
             "GET",
-            "/" | "/app.js" | "/app.css" | "/icon.svg" | "/api/v1/me"
+            "/" | "/app.js"
+                | "/app.css"
+                | "/icon.svg"
+                | "/api/v1/me"
+                | "/desktop"
+                | "/desktop.js"
+                | "/desktop.css"
+                | "/layout.js"
+                | "/station"
+                | "/desktop/pkg/cutcraft_ui.js"
+                | "/desktop/pkg/cutcraft_ui_bg.wasm"
         ) | ("POST", "/api/v1/login")
     ) || matches!(path, "/api/v1/pair" | "/api/v1/pair/collect")
 }
@@ -141,6 +151,13 @@ fn while_must_change(path: &str) -> bool {
     matches!(
         path,
         "/" | "/app.js"
+            | "/desktop"
+            | "/desktop.js"
+            | "/desktop.css"
+            | "/layout.js"
+            | "/station"
+            | "/desktop/pkg/cutcraft_ui.js"
+            | "/desktop/pkg/cutcraft_ui_bg.wasm"
             | "/app.css"
             | "/icon.svg"
             | "/api/v1/me"
@@ -309,6 +326,7 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/state", get(state))
         .route("/api/v1/events", get(events))
         .route("/api/v1/cutters/{id}/queue", post(queue))
+        .route("/api/v1/cutters/{id}/preview", get(cut_preview))
         .route("/api/v1/cutters/{id}/start", post(start))
         .route("/api/v1/cutters/{id}/starts/{key}", get(start_result))
         .route("/api/v1/cutters/{id}/stop", post(stop))
@@ -384,6 +402,12 @@ pub fn router(app: App) -> Router {
         )
         .route("/api/v1/keys/{id}", delete(remove_key))
         .route("/", get(index))
+        .route("/station", get(station_index))
+        .route("/desktop", get(desktop_index))
+        .route("/desktop.js", get(desktop_js))
+        .route("/layout.js", get(layout_js))
+        .route("/desktop.css", get(desktop_css))
+        .route("/desktop/pkg/{name}", get(desktop_asset))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/icon.svg", get(icon))
@@ -415,6 +439,8 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/design/designs", get(crate::design::designs))
         .route("/api/v1/design/open", post(crate::design::open))
         .route("/api/v1/design/save", post(crate::design::save))
+        .route("/api/v1/design/update", post(crate::design::update))
+        .route("/api/v1/design/download", get(crate::design::download))
         .route(
             "/api/v1/design/upload",
             post(crate::design::upload)
@@ -547,6 +573,18 @@ struct QueueBody {
 #[derive(Deserialize)]
 struct TurnBody {
     turn: String,
+}
+
+#[derive(Deserialize)]
+struct CutPreviewQuery {
+    kind: cameo_pi_core::cutter::Kind,
+}
+async fn cut_preview(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<CutPreviewQuery>,
+) -> Result<Json<Value>> {
+    blocking(move || Ok(Json(app.service.cut_preview(&id, q.kind)?))).await
 }
 
 async fn queue(
@@ -1266,7 +1304,7 @@ async fn remove_key(
 
 /// The web interface's own pages and files, built into the binary: nothing is fetched from
 /// anywhere else, and the policy allows only cameo-pi's own scripts and styles (spec §14.3).
-const PAGE_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+const PAGE_POLICY: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
     img-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; \
     form-action 'self'; frame-ancestors 'none'";
 
@@ -1283,6 +1321,53 @@ fn asset(kind: &'static str, body: &'static str) -> Response {
 }
 
 async fn index() -> Response {
+    asset(
+        "text/html; charset=utf-8",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><script src=\"/layout.js\" defer></script></head><body>Opening CutCraft…</body></html>",
+    )
+}
+async fn layout_js() -> Response {
+    asset(
+        "text/javascript; charset=utf-8",
+        include_str!("../web/desktop/layout.js"),
+    )
+}
+async fn desktop_index() -> Response {
+    asset(
+        "text/html; charset=utf-8",
+        include_str!("../web/desktop/desktop.html"),
+    )
+}
+async fn desktop_js() -> Response {
+    asset(
+        "text/javascript; charset=utf-8",
+        include_str!("../web/desktop/desktop.js"),
+    )
+}
+async fn desktop_css() -> Response {
+    asset(
+        "text/css; charset=utf-8",
+        include_str!("../web/desktop/desktop.css"),
+    )
+}
+async fn desktop_asset(Path(name): Path<String>) -> Response {
+    match name.as_str() {
+        "cutcraft_ui.js" => asset(
+            "text/javascript; charset=utf-8",
+            include_str!("../web/desktop/pkg/cutcraft_ui.js"),
+        ),
+        "cutcraft_ui_bg.wasm" => (
+            [
+                (header::CONTENT_TYPE, "application/wasm"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            include_bytes!("../web/desktop/pkg/cutcraft_ui_bg.wasm").as_slice(),
+        )
+            .into_response(),
+        _ => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+async fn station_index() -> Response {
     let mut response = asset(
         "text/html; charset=utf-8",
         include_str!("../web/index.html"),

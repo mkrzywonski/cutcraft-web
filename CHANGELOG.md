@@ -4,6 +4,13 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.14.0 — 2026-10-29
+
+- Add the desktop browser workspace: graphical toolbar, comparison and mat views, editable sheet settings, material/mat dialogs, library saving and simulated cut controls. This independent M4 branch remains under development; see docs/m4-progress.md for outstanding parity work.
+- Save unfinished projects without certifying them for cutting. Preserve Undo/Redo through worker restarts and keep uploaded project bytes unchanged.
+- Prepare a validated test pattern independently of artwork readiness, preserving prior test areas when planning later cuts.
+- Bundle the desktop assets with the server and pin the matching build tools in the development shell.
+
 ## 0.13.1 — 2026-10-27
 
 - Return a durable refusal when a mat change or disconnect cancels Start before release; retries and lookup preserve it across restart. Failed receipt writes remain retryable storage errors and never report Started.

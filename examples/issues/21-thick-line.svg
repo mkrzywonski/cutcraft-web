@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+  <title>A thick line becomes a shape; a hairline is a cut line</title>
+  <path d="M10 35 C30 5, 50 5, 70 35" fill="none" stroke="#2c3e50" stroke-width="4" stroke-linecap="round"/>
+  <path d="M10 45 H90" fill="none" stroke="#e74c3c" stroke-width="0.1"/>
+</svg>

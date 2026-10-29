@@ -24,6 +24,9 @@ pkgs.mkShell {
   nativeBuildInputs = [
     rust
     pkgs.git
+    pkgs.nodejs
+    pkgs.chromium
+    (import ./nix/wasm-bindgen-cli.nix { inherit pkgs rust; })
     # The C compiler for the Pi build (scripts/zig-cc-aarch64-musl).
     pkgs.zig
     # The Debian package (scripts/build-deb.sh, scripts/apt-repo.sh).

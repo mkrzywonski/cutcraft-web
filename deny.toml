@@ -20,6 +20,8 @@ allow = [
   "0BSD",
   "CDLA-Permissive-2.0",
   "OFL-1.1",
+  # Unmodified egui default font; notices bundled in docs/help/font-licences.md and About.
+  "Ubuntu-font-1.0",
   # The Independent JPEG Group licence (jpeg-encoder, through VectorCraft's PDF output):
   # permissive, asking for credit in the documentation. Listed in docs/provenance.md.
   "IJG",

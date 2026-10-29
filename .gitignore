@@ -4,3 +4,8 @@
 .DS_Store
 /.claude/
 /spike/*/target
+
+/apps/server/web/desktop/pkg/
+
+# Local service state contains designs and private keys.
+/cameo-pi-data/

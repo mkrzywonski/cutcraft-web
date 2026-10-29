@@ -81,3 +81,92 @@ pub(crate) fn redact(params: &Value) -> Value {
         other => other.clone(),
     }
 }
+
+/// Durable session history. Source bytes are deduplicated by fingerprint; these records are
+/// private worker checkpoints, never part of the browser snapshot or a library project.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct HistoryArchive {
+    pub sources: std::collections::BTreeMap<String, crate::job::EmbeddedSource>,
+    pub undo: Vec<ArchivedStep>,
+    pub redo: Vec<ArchivedStep>,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArchivedStep {
+    pub label: String,
+    pub command: String,
+    pub origin: Origin,
+    pub source: String,
+    pub project: crate::job::Project,
+    pub inspection: Value,
+    pub answered_by: Vec<crate::Answered>,
+}
+impl crate::Controller {
+    pub fn archive_history(&self) -> Result<HistoryArchive, String> {
+        let s = self.snapshot()?;
+        let mut archive = HistoryArchive::default();
+        let mut pack = |steps: Vec<HistoryStep>| {
+            steps
+                .into_iter()
+                .map(|step| {
+                    let source = crate::job::EmbeddedSource::new(
+                        std::path::Path::new(&step.design.path),
+                        &step.design.bytes,
+                    );
+                    let hash = source.sha256.clone();
+                    archive.sources.insert(hash.clone(), source);
+                    ArchivedStep {
+                        label: step.label,
+                        command: step.command,
+                        origin: step.origin,
+                        source: hash,
+                        project: step.design.project.clone(),
+                        inspection: step.design.inspection.clone(),
+                        answered_by: step.design.answered_by.clone(),
+                    }
+                })
+                .collect()
+        };
+        archive.undo = pack(s.history.undo);
+        archive.redo = pack(s.history.redo);
+        Ok(archive)
+    }
+    pub fn restore_history(&self, archive: HistoryArchive) -> Result<(), String> {
+        let unpack = |steps: Vec<ArchivedStep>| -> Result<Vec<HistoryStep>, String> {
+            if steps.len() > MAX_STEPS {
+                return Err("Session history exceeds its limit.".into());
+            }
+            steps
+                .into_iter()
+                .map(|step| {
+                    let source = archive
+                        .sources
+                        .get(&step.source)
+                        .ok_or("History source is missing.")?;
+                    let bytes = source.bytes()?;
+                    let prepared =
+                        serde_json::to_value(&step.project.prepared).map_err(|e| e.to_string())?;
+                    Ok(HistoryStep {
+                        label: step.label,
+                        command: step.command,
+                        origin: step.origin,
+                        design: Arc::new(OpenDesign {
+                            path: source.original_path.clone(),
+                            project_path: None,
+                            inspection: step.inspection,
+                            recipe: step.project.prepared.recipe.clone(),
+                            prepared,
+                            project: step.project,
+                            bytes: Arc::new(bytes),
+                            answered_by: step.answered_by,
+                        }),
+                    })
+                })
+                .collect()
+        };
+        let history = History {
+            undo: unpack(archive.undo)?,
+            redo: unpack(archive.redo)?,
+        };
+        self.change(|s| s.history = history)
+    }
+}

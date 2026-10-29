@@ -37,7 +37,7 @@ pub enum Authority {
 }
 
 /// Who asked. Everything except the person's own input is automation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Origin {
     User,
@@ -231,6 +231,8 @@ struct SheetSetParams {
     mirror: Option<bool>,
     mat: Option<Mat>,
     weeding_box: Option<bool>,
+    /// Space around the artwork in millimetres, 0 to 100.
+    weeding_margin_mm: Option<f64>,
     /// A mat from `mats.list` by name (a unique start is enough): shown in the Cut preview, and
     /// the sheet loads at its length.
     mat_profile: Option<String>,
@@ -779,7 +781,7 @@ fn registry() -> Vec<Spec> {
             Some("View"),
             None,
             Edit,
-            Window,
+            Nothing,
             ViewParams,
             "Show a view of the window: side-by-side (artwork and cut lines), overlay, mat (the Cut Preview) or cut (the cutting steps)."
         ),
@@ -1210,8 +1212,8 @@ fn registry() -> Vec<Spec> {
             None,
             Read,
             Design,
-            NoParams,
-            "An immutable current-sheet project and plan, without queuing or moving a cutter."
+            CopyParams,
+            "An immutable current-sheet project and plan, without queuing or moving a cutter. With test=true, validate a test pattern even if the artwork is not ready."
         ),
         spec!(
             "cut.sheet",
@@ -1916,6 +1918,13 @@ impl Controller {
                     }
                     if let Some(profile) = mat_profile {
                         project.set_mat_profile(&id, profile)?;
+                    }
+                    if let Some(margin) = p.weeding_margin_mm {
+                        if !margin.is_finite() || !(0.0..=100.0).contains(&margin) {
+                            return Err("Weeding margin must be between 0 and 100 mm.".into());
+                        }
+                        project.sheets[0].weeding_margin_mm = margin;
+                        project.revision += 1;
                     }
                     if let Some(on) = p.weed_lines {
                         project.set_weed_lines(&id, on)?;
@@ -2630,9 +2639,9 @@ impl Controller {
                 value(json!({"cancel_requested":true}))
             }
             "cut.copy" => {
-                decode::<NoParams>(params)?;
+                let p: CopyParams = decode(params)?;
                 let design = self.design()?;
-                if !design.project.prepared.cut_ready {
+                if !p.test && !design.project.prepared.cut_ready {
                     return Err(CommandError::new(
                         "not-cut-ready",
                         "Review the design's issues before cutting.",
@@ -2646,11 +2655,27 @@ impl Controller {
                     .ok_or_else(|| CommandError::failed("There is nothing to cut."))?;
                 let plan =
                     cutcraft_path::plan_sheet(&project, &sheet.id).map_err(CommandError::failed)?;
-                if !plan.valid {
+                if !p.test && !plan.valid {
                     return Err(CommandError::new(
                         "not-cut-ready",
                         "Review the sheet's cutting problems first.",
                     ));
+                }
+                if p.test {
+                    let at = crate::next_test_spot(&plan, &[]).ok_or_else(|| {
+                        CommandError::new(
+                            "no-room",
+                            "There is no room for a test pattern on this material.",
+                        )
+                    })?;
+                    let test = cutcraft_path::test_cut_plan(&project, &sheet.id, at)
+                        .map_err(CommandError::failed)?;
+                    if !test.valid {
+                        return Err(CommandError::new(
+                            "not-cut-ready",
+                            "Review the test pattern's cutting problems first.",
+                        ));
+                    }
                 }
                 let file = ProjectFile::new(
                     project,
@@ -6178,4 +6203,12 @@ mod tests {
             "undo returns to the previous snapshot"
         );
     }
+}
+
+/// Prepare a test-only copy when artwork still needs decisions.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CopyParams {
+    #[serde(default)]
+    test: bool,
 }

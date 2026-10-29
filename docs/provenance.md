@@ -64,3 +64,13 @@ were licensed MIT OR Apache-2.0, as this repository is.
 
 - **VectorCraft** (`storytold/vectorcraft`) at `fa4e427`, and the patched PDF crates from
   `storytold/craft-libs` at `ca50d63`. Both are public, and pinned to full commits.
+
+## Desktop chrome (milestone 4)
+
+`crates/ui/src/chrome.rs` carries the original vector toolbar icons and panel group headers
+from CutCraft 1.0.5, commit `39654a9465ecdef7478703ee586276304dbc29c6`, under the same
+MIT OR Apache-2.0 licence. It uses egui directly and has neutral comments. The browser
+transport and desktop adapter are implemented here; no runtime dependency on that repository.
+
+The choice labels and issue/info titles in `crates/ui/src/panels.rs` also derive from
+the same reference app’s `choose.rs` and `prepare.rs`, with browser-safe inputs.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100mm" height="50mm" viewBox="0 0 100 50">
+  <title>Text on a path that is too short for it</title>
+  <defs><path id="arc" d="M10 40 Q50 5 90 40"/></defs>
+  <text font-family="Cantarell" font-size="12" fill="#000"><textPath xlink:href="#arc">Far too long for this little curve</textPath></text>
+</svg>

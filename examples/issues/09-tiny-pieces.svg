@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="40mm" viewBox="0 0 80 40">
+  <title>Specks smaller than 1 square mm</title>
+  <rect x="5" y="5" width="30" height="30" fill="#000"/>
+  <rect x="45" y="10" width="0.6" height="0.6" fill="#000"/>
+  <circle cx="60" cy="20" r="0.4" fill="#000"/>
+  <rect x="70" y="30" width="0.8" height="0.8" fill="#000"/>
+</svg>

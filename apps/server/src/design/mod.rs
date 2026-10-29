@@ -42,7 +42,22 @@ const LIST_EDITS: &[&str] = &[
 ];
 /// Designs CutCraft can open.
 const DESIGNS: &[&str] = &[
-    "svg", "svgz", "pdf", "ai", "eps", "dxf", "png", "jpg", "jpeg",
+    "svg",
+    "svgz",
+    "pdf",
+    "ai",
+    "eps",
+    "dxf",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "bmp",
+    "psd",
+    "psb",
+    "vectorcraft",
+    "drawcraft",
+    "cutcraft",
 ];
 /// The index of a person's uploads, in their area.
 const INDEX: &str = "designs/index.json";
@@ -510,7 +525,7 @@ impl Sessions {
                                 // request is a stale command or a replay, rather than a Snapshot.
                                 if !matches!(request, WorkerRequest::Snapshot) {
                                     match worker.ask(&WorkerRequest::Snapshot).await {
-                                        Ok(WorkerReply::Snapshot(snapshot)) => cache_snapshot(&session, snapshot),
+                                        Ok(WorkerReply::Snapshot(snapshot)) => cache_snapshot(&session, *snapshot),
                                         _ => { worker.close().await; return Err(ApiError::new(503,"worker-stopped","The design worker could not recover its draft.")); }
                                     }
                                 }
@@ -537,7 +552,7 @@ impl Sessions {
             }
             let result = match worker.ask_inner(&request,Some(&session)).await {
                 Ok(reply) => {
-                    if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,snapshot.clone()); }
+                    if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,*snapshot.clone()); }
                     Ok(reply)
                 },
                 Err(e) => {
@@ -832,7 +847,11 @@ pub(crate) async fn prepare_copy(
         let _operation = session.operations.lock().await;
         let request = CommandRequest {
             id: "cut.copy".into(),
-            params: serde_json::json!({}),
+            params: if body.test {
+                serde_json::json!({"test":true})
+            } else {
+                serde_json::json!({})
+            },
             key: body.key,
             incarnation: body.incarnation,
             revision: Some(body.revision),
@@ -886,7 +905,15 @@ pub(crate) async fn prepare_copy(
             )
         })
         .await
-        .map_err(storage)??;
+        .map_err(storage)?;
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) if error.error == "not-cut-ready" => CommandReply::Refused {
+                code: error.error,
+                message: error.message,
+            },
+            Err(error) => return Err(error),
+        };
         if matches!(reply, CommandReply::Applied { .. }) {
             // The copy's own receipt remains authoritative even if the worker dies here.
             let _ = app
@@ -967,7 +994,7 @@ pub(crate) async fn session_status(
         return Ok(snapshot);
     }
     match app.design.ask(p, WorkerRequest::Snapshot).await? {
-        WorkerReply::Snapshot(snapshot) => Ok(snapshot),
+        WorkerReply::Snapshot(snapshot) => Ok(*snapshot),
         _ => Err(unexpected()),
     }
 }
@@ -1083,9 +1110,13 @@ pub async fn command(
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
     if body.id == "cut.copy" {
-        if body.params != serde_json::json!({}) && !body.params.is_null() {
+        if body.params != serde_json::json!({})
+            && body.params != serde_json::json!({"test":true})
+            && body.params != serde_json::json!({"test":false})
+            && !body.params.is_null()
+        {
             return Err(ApiError::bad_request(
-                "Prepare cut copy takes no parameters.",
+                "Prepare cut copy accepts only the optional test flag.",
             ));
         }
         let Some(revision) = body.revision else {
@@ -1099,6 +1130,7 @@ pub async fn command(
                 app,
                 p,
                 cutcraft_web_protocol::CopyRequest {
+                    test: body.params["test"] == true,
                     key: body.key,
                     incarnation: body.incarnation,
                     revision,
@@ -1676,7 +1708,7 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
     let result =
         tokio::task::spawn_blocking(move || -> Result<Result<SavedRef, Response>, ApiError> {
             let expected = job_id.as_ref().and(base.as_ref()).map(|b| b.revision);
-            let details = service.upload_with_base(
+            let details = service.save_preparation(
                 crate::service::Upload {
                     folder,
                     name,
@@ -1687,7 +1719,6 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
                     key,
                 },
                 &by,
-                None,
                 expected,
                 Some(receipt),
             );
@@ -1726,6 +1757,86 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct DownloadQuery {
+    kind: String,
+}
+pub async fn download(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(q): Query<DownloadQuery>,
+) -> Result<Response, ApiError> {
+    let p = who(&caller, &headers, &uri)?;
+    match app
+        .design
+        .ask(&p, WorkerRequest::Download { kind: q.kind })
+        .await?
+    {
+        WorkerReply::Download { mime, bytes } => Ok((
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CONTENT_DISPOSITION, "attachment".into()),
+                (header::CACHE_CONTROL, "no-store".into()),
+            ],
+            bytes,
+        )
+            .into_response()),
+        WorkerReply::Failed { message } => Err(ApiError::new(422, "export", message)),
+        _ => Err(unexpected()),
+    }
+}
+pub async fn update(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(body): Json<OpenBody>,
+) -> Result<Response, ApiError> {
+    let p = who(&caller, &headers, &uri)?;
+    let session = app.design.session(&p)?;
+    let _operation = session.operations.lock().await;
+    let request = CommandRequest {
+        id: "session.update".into(),
+        params: serde_json::to_value(&body).map_err(storage)?,
+        key: body.key,
+        incarnation: body.incarnation,
+        revision: Some(body.revision),
+    };
+    if let Some(reply) = replay(&app, &p, &request).await? {
+        return Ok(Json(reply).into_response());
+    }
+    let id = body
+        .design
+        .ok_or_else(|| ApiError::bad_request("Choose an uploaded design."))?;
+    let upload = read_index(&session.area)
+        .into_iter()
+        .find(|u| u.id == id)
+        .ok_or_else(ApiError::not_found)?;
+    if upload.ext == "cutcraft" {
+        return Err(ApiError::bad_request(
+            "Update needs a design file, not a saved project.",
+        ));
+    }
+    let reply = app
+        .design
+        .ask(
+            &p,
+            WorkerRequest::Update {
+                request,
+                file: format!("{}.{}", upload.id, upload.ext),
+                name: upload.name,
+            },
+        )
+        .await?;
+    app.design.publish(&p).await;
+    match reply {
+        WorkerReply::Command(reply) => Ok(Json(reply).into_response()),
+        _ => Err(unexpected()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1738,7 +1849,7 @@ mod tests {
     }
     async fn snap(sessions: &Sessions, p: &Principal) -> cutcraft_web_protocol::SessionSnapshot {
         match sessions.ask(p, WorkerRequest::Snapshot).await.unwrap() {
-            WorkerReply::Snapshot(s) => s,
+            WorkerReply::Snapshot(s) => *s,
             other => panic!("{other:?}"),
         }
     }

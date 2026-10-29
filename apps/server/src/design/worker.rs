@@ -33,6 +33,10 @@ const DRAFT: &str = "drafts/session.json";
 /// atomic file so they can never disagree after a crash (spec §7).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Draft {
+    #[serde(default)]
+    screen: cutcraft_control::Screen,
+    #[serde(default)]
+    history: cutcraft_control::HistoryArchive,
     schema: u32,
     name: Option<String>,
     project: Option<ProjectFile>,
@@ -354,7 +358,7 @@ impl Worker {
                     return Ok(draft);
                 };
                 let file = self.area.join("drafts/restoring.cutcraft");
-                project.save(&file)?;
+                self.local_project(project.clone())?.save(&file)?;
                 let opened = self
                     .controller
                     .execute(
@@ -369,6 +373,15 @@ impl Worker {
             });
         match opened {
             Ok(draft) => {
+                let _ = self.controller.execute(
+                    Origin::User,
+                    "view.show",
+                    json!({"screen":draft.screen}),
+                    None,
+                );
+                if let Err(e) = self.controller.restore_history(draft.history) {
+                    eprintln!("History could not be restored: {e}");
+                }
                 self.name = draft.name;
                 self.unsaved = draft.unsaved;
                 self.saved = draft.saved;
@@ -417,6 +430,8 @@ impl Worker {
             }
         }
         let draft = Draft {
+            screen: snapshot.view.screen,
+            history: self.controller.archive_history()?,
             schema: 2,
             name: self.name.clone(),
             project: snapshot.design.as_ref().map(|open| {
@@ -484,7 +499,7 @@ impl Worker {
                 None => KeyLookup::NotApplied,
             }),
             WorkerRequest::Snapshot => match self.snapshot() {
-                Ok(s) => WorkerReply::Snapshot(s),
+                Ok(s) => WorkerReply::Snapshot(Box::new(s)),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Geometry => match self.geometry() {
@@ -492,6 +507,14 @@ impl Worker {
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Open(o) => WorkerReply::Command(self.open(o)),
+            WorkerRequest::Update {
+                request,
+                file,
+                name,
+            } => WorkerReply::Command(self.update(request, file, name)),
+            WorkerRequest::Download { kind } => self
+                .download(&kind)
+                .unwrap_or_else(|message| WorkerReply::Failed { message }),
             WorkerRequest::Export => match self.export() {
                 Ok(e) => e,
                 Err(message) => WorkerReply::Failed { message },
@@ -504,7 +527,7 @@ impl Worker {
                 .reload_lists()
                 .and_then(|()| self.snapshot())
             {
-                Ok(s) => WorkerReply::Snapshot(s),
+                Ok(s) => WorkerReply::Snapshot(Box::new(s)),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Picture(p) => match self.picture(&p) {
@@ -556,6 +579,11 @@ impl Worker {
         } else {
             c.params.clone()
         };
+        let before = self
+            .controller
+            .snapshot()
+            .ok()
+            .and_then(|s| s.design.as_ref().map(|d| d.project.revision));
         let reply = match self
             .controller
             .execute(Origin::User, &c.id, params, c.revision)
@@ -571,10 +599,17 @@ impl Worker {
             Err(e) => refused(e.code, e.message),
         };
         if matches!(reply, CommandReply::Applied { .. }) && !self.reads.contains(&c.id.as_str()) {
-            self.unsaved = self.controller.snapshot().is_ok_and(|s| s.design.is_some());
-            if !self.unsaved {
+            let after = self
+                .controller
+                .snapshot()
+                .ok()
+                .and_then(|s| s.design.as_ref().map(|d| d.project.revision));
+            if after.is_none() {
+                self.unsaved = false;
                 self.saved = None;
                 self.name = None;
+            } else if after != before {
+                self.unsaved = true;
             }
             self.changed();
         }
@@ -664,11 +699,17 @@ impl Worker {
             return Err("unsafe file name".into());
         }
         self.keep_previous()?;
-        let path = self.area.join(folder).join(file);
+        let mut path = self.area.join(folder).join(file);
         let command = match source {
+            OpenSource::Upload { file, .. } if file.ends_with(".cutcraft") => "project.open",
             OpenSource::Upload { .. } => "design.open",
             OpenSource::Project { .. } => "project.open",
         };
+        if command == "project.open" {
+            let file = ProjectFile::open(&path)?;
+            path = self.area.join("drafts").join("opening.cutcraft");
+            self.local_project(file)?.save(&path)?;
+        }
         self.controller
             .execute(
                 Origin::User,
@@ -677,7 +718,7 @@ impl Worker {
                 None,
             )
             .map_err(|e| e.message)?;
-        if let OpenSource::Project { .. } = source {
+        if command == "project.open" {
             let _ = std::fs::remove_file(&path);
         }
         let (name, saved) = match source {
@@ -688,6 +729,26 @@ impl Worker {
         self.saved = saved;
         self.unsaved = false;
         Ok(self.controller.snapshot()?.revision)
+    }
+
+    /// Rebind an embedded source to this principal's owned area. A saved project's historical
+    /// original_path is untrusted metadata, never permission to read another filesystem path.
+    fn local_project(&self, mut project: ProjectFile) -> Result<ProjectFile, String> {
+        let bytes = project.source.bytes()?;
+        let ext = Path::new(&project.source.file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("svg");
+        if !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err("Invalid embedded source type.".into());
+        }
+        let source = self
+            .area
+            .join("drafts")
+            .join(format!("source-{}.{}", project.source.sha256, ext));
+        cameo_pi_core::journal::write_atomic(&source, &bytes).map_err(|e| e.to_string())?;
+        project.source.original_path = source.to_string_lossy().into_owned();
+        Ok(project)
     }
 
     /// The open project's draft, kept as `drafts/previous-<time>.json` before it's replaced.
@@ -726,15 +787,104 @@ impl Worker {
     /// The open project as a `.cutcraft` file and its first sheet's plan, for the server to save
     /// in the library (spec §11).
     fn export(&self) -> Result<WorkerReply, String> {
-        let output = self
-            .controller
-            .execute(Origin::User, "cut.copy", json!({}), None)
-            .map_err(|e| e.message)?;
+        let snapshot = self.controller.snapshot()?;
+        let open = snapshot.design.as_ref().ok_or("Open a design first.")?;
+        let mut project = ProjectFile::new(
+            open.project.clone(),
+            Path::new(&open.path),
+            &open.bytes,
+            cutcraft_control::APP_BUILD,
+        );
+        // Downloads and library files never disclose the worker's server-local source path.
+        project.source.original_path = project.source.file_name.clone();
+        let sheet = open
+            .project
+            .sheets
+            .first()
+            .ok_or("This design has no sheet.")?;
+        let plan = cutcraft_path::plan_sheet(&open.project, &sheet.id)?;
         Ok(WorkerReply::Export {
             name: self.name.clone().unwrap_or_else(|| "Design".into()),
-            project: serde_json::to_string(&output.value["project"]).map_err(|e| e.to_string())?,
-            plan: serde_json::to_string(&output.value["plan"]).map_err(|e| e.to_string())?,
+            project: serde_json::to_string(&project).map_err(|e| e.to_string())?,
+            plan: serde_json::to_string(&plan).map_err(|e| e.to_string())?,
             saved: self.saved.clone(),
+        })
+    }
+
+    fn update(&mut self, request: CommandRequest, file: String, name: String) -> CommandReply {
+        if let Some(reply) = self.replay(&request) {
+            return reply;
+        }
+        if request.incarnation != self.incarnation {
+            return refused(
+                codes::STALE_INCARNATION,
+                "This project was reopened. Refresh first.",
+            );
+        }
+        if request.revision != Some(self.controller.snapshot().map_or(0, |s| s.revision)) {
+            return refused(codes::STALE_REVISION, "The project changed. Refresh first.");
+        }
+        if file.contains('/') || file.starts_with('.') || file.is_empty() {
+            return refused("invalid-source", "Invalid uploaded design.");
+        }
+        let path = self.area.join("designs").join(file);
+        let reply = match self.controller.execute(
+            Origin::User,
+            "project.update",
+            json!({"path":path.to_string_lossy()}),
+            request.revision,
+        ) {
+            Ok(out) => {
+                self.name = Some(name);
+                self.unsaved = true;
+                self.changed();
+                CommandReply::Applied {
+                    revision: out.revision,
+                    value: json!({"updated":true}),
+                }
+            }
+            Err(e) => refused(e.code, e.message),
+        };
+        self.record(request, &reply);
+        reply
+    }
+    fn download(&self, kind: &str) -> Result<WorkerReply, String> {
+        if kind == "project" {
+            let WorkerReply::Export { project, .. } = self.export()? else {
+                return Err("Project unavailable.".into());
+            };
+            return Ok(WorkerReply::Download {
+                mime: "application/json".into(),
+                bytes: project.into_bytes(),
+            });
+        }
+        if !["preview-svg", "preview-png", "cutter-file", "plan"].contains(&kind) {
+            return Err("Unknown export format.".into());
+        }
+        let output = self
+            .controller
+            .execute(Origin::User, "export", json!({"kind":kind}), None)
+            .map_err(|e| e.message)?;
+        let value = output.value;
+        let bytes = if let Some(b) = value["dataBase64"].as_str() {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(b)
+                .map_err(|e| e.to_string())?
+        } else if let Some(s) = value["content"].as_str() {
+            s.as_bytes().to_vec()
+        } else {
+            serde_json::to_vec(&value).map_err(|e| e.to_string())?
+        };
+        Ok(WorkerReply::Download {
+            mime: match kind {
+                "preview-svg" => "image/svg+xml",
+                "preview-png" => "image/png",
+                "plan" => "application/json",
+                _ => "application/octet-stream",
+            }
+            .into(),
+            bytes,
         })
     }
 
@@ -788,7 +938,10 @@ impl Worker {
                     name: self.name.clone().unwrap_or_else(|| "Design".into()),
                     project_revision: project.revision,
                     cut_ready: report["cut_ready"].as_bool().unwrap_or(false),
-                    issues: report["pending"].as_array().map_or(0, |p| p.len() as u32),
+                    issues: report["pending"].as_array().map_or(0, |p| p.len() as u32)
+                        + report["diagnostics"].as_array().map_or(0, |ds| {
+                            ds.iter().filter(|d| d["severity"] == "blocking").count() as u32
+                        }),
                     geometry: Some(GeometryRef {
                         id: geometry_id(project.revision, plan.as_ref()),
                     }),
@@ -804,7 +957,92 @@ impl Worker {
                 })
             }
         };
+        let mut ui = cutcraft_web_protocol::Presentation {
+            screen: serde_json::to_value(s.view.screen)
+                .unwrap_or_default()
+                .as_str()
+                .unwrap_or("side-by-side")
+                .into(),
+            units: serde_json::to_value(s.units)
+                .unwrap_or_default()
+                .as_str()
+                .unwrap_or("mm")
+                .into(),
+            font_size: s.font_size,
+            snap: json!({"enabled":s.snap.enabled,"step_mm":s.snap.step(s.units)}),
+            panel: json!(s.panel),
+            defaults: json!(s.new_design),
+            history: json!(s.history),
+            materials: s.materials.iter().map(|m| json!(m)).collect(),
+            mats: s.mats.iter().map(|m| json!(m)).collect(),
+            commands: self
+                .controller
+                .commands()
+                .into_iter()
+                .filter(|c| policy(c.id, c.authority).is_ok())
+                .map(|c| json!(c))
+                .collect(),
+            ..Default::default()
+        };
+        if let Some(open) = &s.design {
+            ui.sheet = json!(open.project.sheets.first());
+            if let Some(sheet) = open.project.sheets.first() {
+                ui.sheet["mat_profile"] = json!(sheet.mat_profile());
+            }
+            ui.rows = cutcraft_control::rows(open);
+            for row in &mut ui.rows {
+                if let Ok(key) = serde_json::from_value::<cutcraft_job::RowKey>(row["row"].clone())
+                {
+                    row["items"] = json!(
+                        open.project
+                            .prepared
+                            .pieces
+                            .iter()
+                            .filter(|p| key.has_piece(&p.colour, &p.layer))
+                            .map(|p| p.id.clone())
+                            .chain(
+                                open.project
+                                    .prepared
+                                    .cut_lines
+                                    .iter()
+                                    .filter(|p| key.has_line(&p.colour, &p.layer))
+                                    .map(|p| p.id.clone())
+                            )
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+            ui.group_by = serde_json::to_value(open.project.group_by)
+                .unwrap_or_default()
+                .as_str()
+                .unwrap_or("colour")
+                .into();
+            ui.size_mm = cutcraft_path::design_size_mm(&open.project);
+            // Deliberately select presentation fields: inspection contains filesystem paths and
+            // embedded-source metadata which must never cross this boundary.
+            let mut report = serde_json::Map::new();
+            for key in [
+                "pending",
+                "changes",
+                "diagnostics",
+                "cut_ready",
+                "stroked_fills",
+            ] {
+                if let Some(value) = open.prepared.get(key) {
+                    report.insert(key.into(), value.clone());
+                }
+            }
+            ui.report = Value::Object(report);
+            ui.report["recipe"] = json!(open.recipe);
+            ui.report["answered_by"] = json!(open.answered_by);
+            if let Some(sheet) = open.project.sheets.first()
+                && let Ok(plan) = cutcraft_path::plan_sheet(&open.project, &sheet.id)
+            {
+                ui.plan = json!({"valid": plan.valid, "estimate_s": plan.estimate_s,"diagnostics":plan.diagnostics,"bounds_mm":plan.bounds_mm,"design_size_mm":plan.design_size_mm,"cut_length_mm":plan.cut_length_mm,"travel_length_mm":plan.travel_length_mm});
+            }
+        }
         Ok(SessionSnapshot {
+            ui,
             busy_key: None,
             protocol: PROTOCOL_VERSION,
             incarnation: self.incarnation.clone(),
@@ -825,8 +1063,31 @@ impl Worker {
         let project = &open.project;
         let lines = cutcraft_path::assembly(project)
             .into_iter()
-            .filter(|(_, included)| *included)
-            .map(|(op, _)| stroke(&op, [0.0, 0.0]))
+            .map(|(op, included)| {
+                let mut line = stroke(&op, [0.0, 0.0]);
+                line.included = included;
+                line.source_ids = op
+                    .item
+                    .as_ref()
+                    .and_then(|id| {
+                        project
+                            .prepared
+                            .pieces
+                            .iter()
+                            .find(|p| &p.id == id)
+                            .map(|p| p.source_ids.clone())
+                            .or_else(|| {
+                                project
+                                    .prepared
+                                    .cut_lines
+                                    .iter()
+                                    .find(|p| &p.id == id)
+                                    .map(|p| p.source_ids.clone())
+                            })
+                    })
+                    .unwrap_or_default();
+                line
+            })
             .collect();
         let Some(sheet) = project.sheets.first() else {
             return Ok(Geometry {
@@ -916,6 +1177,9 @@ impl Worker {
 
 fn stroke(op: &cutcraft_path::Operation, origin: [f64; 2]) -> Stroke {
     Stroke {
+        item: op.item.clone(),
+        source_ids: Vec::new(),
+        included: true,
         colour: op.colour.clone().unwrap_or_else(|| "#000000".into()),
         aid: op.kind.is_aid(),
         points: op
@@ -1035,7 +1299,7 @@ mod tests {
 
     fn snapshot(w: &mut Worker) -> SessionSnapshot {
         match w.answer(WorkerRequest::Snapshot) {
-            WorkerReply::Snapshot(s) => s,
+            WorkerReply::Snapshot(s) => *s,
             other => panic!("{other:?}"),
         }
     }
@@ -1460,5 +1724,137 @@ mod tests {
             matches!(reply, WorkerReply::Command(CommandReply::Refused { code, .. }) if code == codes::STALE_REVISION)
         );
         assert!(snapshot(&mut w).design.unwrap().unsaved);
+    }
+    // Regression from the M3 parity review: Save is independent of cut readiness.
+    #[test]
+    fn desktop_unfinished_export_keeps_questions_and_hides_paths() {
+        let dir = area();
+        std::fs::write(
+            dir.path().join("designs/star.svg"),
+            STAR.replace("width=\"80mm\" height=\"60mm\"", ""),
+        )
+        .unwrap();
+        let mut worker = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let snapshot = open(&mut worker);
+        assert!(!snapshot.design.as_ref().unwrap().cut_ready);
+        assert!(!snapshot.ui.report["pending"].as_array().unwrap().is_empty());
+        let encoded = serde_json::to_string(&snapshot).unwrap();
+        assert!(!encoded.contains(dir.path().to_str().unwrap()));
+        let WorkerReply::Export { project, .. } = worker.answer(WorkerRequest::Export) else {
+            panic!("unfinished work must save")
+        };
+        assert!(!project.contains(dir.path().to_str().unwrap()));
+        let file: ProjectFile = serde_json::from_str(&project).unwrap();
+        assert!(!file.project.prepared.cut_ready);
+        assert!(!file.project.prepared.pending.is_empty());
+    }
+    #[test]
+    fn desktop_screen_is_shared_and_updates_keep_sheet_settings() {
+        let dir = area();
+        let mut worker = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        open(&mut worker);
+        let mut run = |id: &str, params: Value| {
+            let s = snapshot(&mut worker);
+            worker.command(CommandRequest {
+                id: id.into(),
+                params,
+                key: crate::keys::random_hex(8),
+                incarnation: s.incarnation,
+                revision: Some(s.revision),
+            })
+        };
+        assert!(matches!(
+            run("view.show", json!({"screen":"overlay"})),
+            CommandReply::Applied { .. }
+        ));
+        assert!(matches!(
+            run("sheet.adjust", json!({"force":23})),
+            CommandReply::Applied { .. }
+        ));
+        let s = snapshot(&mut worker);
+        assert_eq!(s.ui.screen, "overlay");
+        std::fs::write(
+            dir.path().join("designs/new.svg"),
+            STAR.replace("#d22", "#22d"),
+        )
+        .unwrap();
+        let request = CommandRequest {
+            id: "session.update".into(),
+            params: json!({"design":"owned"}),
+            key: "update".into(),
+            incarnation: s.incarnation,
+            revision: Some(s.revision),
+        };
+        let result = worker.update(request.clone(), "new.svg".into(), "new.svg".into());
+        assert!(matches!(result, CommandReply::Applied { .. }), "{result:?}");
+        assert_eq!(snapshot(&mut worker).ui.sheet["material"]["force"], 23);
+        assert_eq!(
+            worker.update(request, "new.svg".into(), "new.svg".into()),
+            result
+        );
+    }
+    #[test]
+    fn desktop_view_changes_do_not_dirty_a_design_and_undo_survives_restart() {
+        let dir = area();
+        let lists = dir.path().join("lists");
+        let mut worker = Worker::new(dir.path(), &lists).unwrap();
+        open(&mut worker);
+        fn edit(worker: &mut Worker, id: &str, params: Value) {
+            let s = snapshot(worker);
+            let answer = worker.command(CommandRequest {
+                id: id.into(),
+                params,
+                key: crate::keys::random_hex(8),
+                incarnation: s.incarnation,
+                revision: Some(s.revision),
+            });
+            assert!(matches!(answer, CommandReply::Applied { .. }), "{answer:?}");
+        }
+        edit(&mut worker, "view.show", json!({"screen":"mat"}));
+        assert!(!snapshot(&mut worker).design.unwrap().unsaved);
+        let original = snapshot(&mut worker).ui.sheet["material"]["force"].clone();
+        edit(&mut worker, "sheet.adjust", json!({"force":23}));
+        worker.checkpoint().unwrap();
+        drop(worker);
+        let mut worker = Worker::new(dir.path(), &lists).unwrap();
+        assert_eq!(snapshot(&mut worker).ui.sheet["material"]["force"], 23);
+        edit(&mut worker, "history.undo", json!({}));
+        assert_eq!(
+            snapshot(&mut worker).ui.sheet["material"]["force"],
+            original
+        );
+        edit(&mut worker, "history.redo", json!({}));
+        assert_eq!(snapshot(&mut worker).ui.sheet["material"]["force"], 23);
+    }
+
+    #[test]
+    fn opening_uploaded_project_preserves_the_original_upload_bytes() {
+        let dir = area();
+        let lists = dir.path().join("lists");
+        let mut worker = Worker::new(dir.path(), &lists).unwrap();
+        open(&mut worker);
+        let WorkerReply::Export { project, .. } = worker.answer(WorkerRequest::Export) else {
+            panic!("export");
+        };
+        let path = dir.path().join("designs/upload.cutcraft");
+        std::fs::write(&path, &project).unwrap();
+        let s = snapshot(&mut worker);
+        let answer = worker.answer(WorkerRequest::Open(OpenRequest {
+            request: None,
+            source: OpenSource::Upload {
+                file: "upload.cutcraft".into(),
+                name: "upload.cutcraft".into(),
+            },
+            key: "open-project".into(),
+            incarnation: s.incarnation,
+            revision: s.revision,
+            replace_unsaved: true,
+        }));
+        assert!(
+            matches!(answer, WorkerReply::Command(CommandReply::Applied { .. })),
+            "{answer:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), project.as_bytes());
+        assert!(snapshot(&mut worker).design.unwrap().cut_ready);
     }
 }

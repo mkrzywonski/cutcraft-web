@@ -47,7 +47,7 @@ function check(name, ok, detail) {
 await cdp("Page.enable");
 await cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 await cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-await cdp("Page.navigate", { url: `${pageUrl}/?nolive` });
+await cdp("Page.navigate", { url: `${pageUrl}?nolive` });
 await sleep(1000);
 
 const project = await fs.readFile(`${fixtures}/square.cutcraft`, "utf8");

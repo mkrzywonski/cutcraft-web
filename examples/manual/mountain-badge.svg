@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="4in" height="3in" viewBox="0 0 400 300">
+  <title>Mountain badge: the CutCraft manual's walkthrough design</title>
+  <rect x="0" y="0" width="400" height="300" fill="#f4ecd8"/>
+  <circle cx="275" cy="105" r="45" fill="#e67e22"/>
+  <path d="M30 250 L140 95 L195 170 L235 120 L370 250 Z" fill="#1f3a5f"/>
+  <path d="M140 95 L165 130 L150 125 L140 140 L128 122 L116 128 Z" fill="#ffffff"/>
+  <path d="M235 120 L255 146 L243 142 L235 152 L226 140 L216 145 Z" fill="#ffffff"/>
+  <rect x="30" y="262" width="340" height="14" rx="7" fill="#1f3a5f"/>
+</svg>

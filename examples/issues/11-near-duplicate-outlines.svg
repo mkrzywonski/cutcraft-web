@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60">
+  <title>A stray copy of a cut line almost on top of the original</title>
+  <path d="M10 10 H50 V50 H10 Z" fill="none" stroke="#000" stroke-width="0.1"/>
+  <path d="M10.15 10.15 H50.15 V50.15 H10.15 Z" fill="none" stroke="#000" stroke-width="0.1"/>
+</svg>

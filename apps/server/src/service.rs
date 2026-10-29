@@ -337,16 +337,41 @@ impl Service {
     }
 
     /// The test cut or main cut for a stored revision, encoded for the cutter (spec §5.5).
-    fn runnable(
+    fn plan_for_cut(
         &self,
         entry: &CutterEntry,
         kind: Kind,
         job_id: &str,
         revision: u32,
-    ) -> Result<Runnable> {
+    ) -> Result<(CutPlan, ProjectFile)> {
         let (project, plan, digest) = if crate::copies::is_copy(job_id) {
             let stored = self.copies.get(job_id, revision)?;
-            (stored.project, stored.plan, Some(stored.view.digest))
+            if stored.view.test_only {
+                if kind == Kind::Main {
+                    return Err(ApiError::new(
+                        422,
+                        "test-only",
+                        "This copy is only reviewed for a test pattern. Prepare the design cut separately.",
+                    ));
+                }
+                use sha2::Digest;
+                let digest = format!(
+                    "{:x}",
+                    sha2::Sha256::digest(
+                        serde_json::to_vec(&stored.plan).map_err(|e| ApiError::new(
+                            500,
+                            "storage",
+                            e.to_string()
+                        ))?
+                    )
+                );
+                if digest != stored.view.digest {
+                    return Err(ApiError::new(422, "damaged-copy", "The test copy changed."));
+                }
+                (stored.project, stored.plan, None)
+            } else {
+                (stored.project, stored.plan, Some(stored.view.digest))
+            }
         } else {
             let project_path = self
                 .library
@@ -373,37 +398,68 @@ impl Service {
                 ));
             }
         }
+        let taken = lock(&entry.shared)
+            .view()
+            .turn
+            .map(|t| t.taken)
+            .unwrap_or_default();
         let plan = match kind {
-            Kind::Main => plan,
+            Kind::Main => {
+                if taken.iter().any(|area| plan.overlaps_art(*area)) {
+                    return Err(ApiError::new(
+                        409,
+                        "test-overlap",
+                        "The design overlaps an earlier test cut. Load fresh material before cutting.",
+                    ));
+                }
+                plan
+            }
             Kind::Test => {
-                let taken = lock(&entry.shared)
-                    .view()
-                    .turn
-                    .map(|t| t.taken)
-                    .unwrap_or_default();
-                let mut occupied: Vec<[f64; 4]> = plan.bounds_mm.into_iter().collect();
-                occupied.extend(taken);
-                let area = [0.0, 0.0, plan.cutting_area_mm[0], plan.cutting_area_mm[1]];
-                let at = plan
-                    .test_spot_mm
-                    .filter(|_| occupied.len() == 1)
-                    .or_else(|| cutcraft_path::test_cut_spot(area, &occupied))
-                    .ok_or_else(|| {
-                        ApiError::new(
-                            409,
-                            "no-room",
-                            "There's no room left on this mat for a test cut.",
-                        )
-                    })?;
+                let at=cutcraft_control::next_test_spot(&plan,&taken).ok_or_else(||ApiError::new(409,"no-room","There is no room left for a test cut on this material. Load fresh material."))?;
                 cutcraft_path::test_cut_plan(&project.project, &plan.sheet, at)
                     .map_err(ApiError::bad_request)?
             }
         };
-        let run = Runnable::new(&plan, &CAMEO_1, machine).map_err(|problems| {
+        Ok((plan, project))
+    }
+    fn runnable(
+        &self,
+        entry: &CutterEntry,
+        kind: Kind,
+        job_id: &str,
+        revision: u32,
+    ) -> Result<Runnable> {
+        let (plan, _) = self.plan_for_cut(entry, kind, job_id, revision)?;
+        let run = Runnable::new(&plan, &CAMEO_1, &self.machine).map_err(|problems| {
             let lines: Vec<String> = problems.iter().map(|d| d.message.clone()).collect();
             ApiError::bad_request(lines.join("; "))
         })?;
         Ok(run)
+    }
+
+    /// Preview exactly the current turn and its next pattern, using the same planning path as
+    /// Start. This is read-only and cannot claim a cutter or load material.
+    pub fn cut_preview(&self, cutter: &str, kind: Kind) -> Result<Value> {
+        let entry = self.cutter(cutter)?;
+        let view = lock(&entry.shared).view();
+        let turn = view
+            .turn
+            .ok_or_else(|| ApiError::bad_request("Nothing is prepared for this cutter."))?;
+        let (plan, project) =
+            self.plan_for_cut(entry, kind, &turn.job.job_id, turn.job.revision)?;
+        let sheet = project
+            .project
+            .sheets
+            .first()
+            .ok_or_else(|| ApiError::bad_request("The cut has no sheet."))?;
+        let profile = sheet.mat_profile();
+        let origin = profile.cut_origin_mm;
+        let strokes:Vec<_>=plan.operations.iter().map(|o|json!({"colour":o.colour.as_deref().unwrap_or("#235f5a"),"aid":o.kind.is_aid(),"points":o.points.iter().map(|p|[p[0]+origin[0],p[1]+origin[1]]).collect::<Vec<_>>()})).collect();
+        Ok(
+            json!({"job":turn.job,"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
+            "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin},"sheet":strokes,"lines":[]},
+            "estimate_s":plan.estimate_s}),
+        )
     }
 
     pub fn start(&self, cutter: &str, body: StartBody, actor: Actor) -> Result<Answer> {
@@ -969,6 +1025,80 @@ impl Service {
                 if let Some(expected) = expected
                     && self.library.details(id)?.current_revision != expected
                 {
+                    return Err(ApiError::new(
+                        409,
+                        "saved-elsewhere",
+                        "Someone saved this project since you opened it. Reload it, or Save As a new project.",
+                    ));
+                }
+                let details = self.library.add_revision(id, &files, meta, by)?;
+                for entry in &self.cutters {
+                    lock(&entry.shared).job_updated(id, details.current_revision);
+                    self.persist_queue(&entry.id)?;
+                }
+                Ok(details)
+            }
+        }
+    }
+
+    /// Save preparation work, including unresolved questions. This trusted entry receives a
+    /// snapshot from the isolated worker, never an uploaded client's claimed cut plan. Cutting
+    /// still validates and freezes its own copy; saving is not certification to run a cutter.
+    pub(crate) fn save_preparation(
+        &self,
+        upload: Upload,
+        by: &str,
+        expected: Option<u32>,
+        receipt: Option<Vec<u8>>,
+    ) -> Result<JobDetails> {
+        let project: cutcraft_job::ProjectFile = serde_json::from_slice(&upload.project)
+            .map_err(|e| ApiError::new(422, "project", e.to_string()))?;
+        project
+            .source
+            .bytes()
+            .map_err(|e| ApiError::new(422, "project", e))?;
+        let sheet = project
+            .project
+            .sheets
+            .first()
+            .ok_or_else(|| ApiError::bad_request("The project has no sheet."))?;
+        let plan = cutcraft_path::plan_sheet(&project.project, &sheet.id)
+            .map_err(|e| ApiError::new(422, "plan", e))?;
+        let plan_json =
+            serde_json::to_vec(&plan).map_err(|e| ApiError::new(500, "storage", e.to_string()))?;
+        let preview = cutcraft_path::preview_svg(&plan);
+        let files = RevisionFiles {
+            receipt: receipt.as_deref(),
+            project: &upload.project,
+            plan: &plan_json,
+            preview_svg: preview.as_bytes(),
+        };
+        let meta = RevisionMeta {
+            schema_version: REVISION_SCHEMA,
+            revision: 0,
+            created_at: 0,
+            created_by: by.into(),
+            model: CAMEO_1.name.into(),
+            material: plan.material.name.clone(),
+            mat: serde_json::to_value(plan.mat)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            size_mm: plan.design_size_mm,
+            estimate_s: plan.estimate_s,
+            // Only a frozen, validated copy has a runnable digest.
+            digest: String::new(),
+            planner: validate::PLANNER.into(),
+            adjusted_from: None,
+        };
+        let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        match &upload.job_id {
+            None => self
+                .library
+                .add_job(&upload.folder, &upload.name, &files, meta, by)
+                .map_err(Into::into),
+            Some(id) => {
+                if expected != Some(self.library.details(id)?.current_revision) {
                     return Err(ApiError::new(
                         409,
                         "saved-elsewhere",

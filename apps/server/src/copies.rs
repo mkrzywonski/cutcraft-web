@@ -143,25 +143,70 @@ impl Store {
         let checked =
             validate::validate(project, plan, validate::PLANNER, &CAMEO_1, machine, &stage);
         let _ = std::fs::remove_dir_all(&stage);
-        let checked = checked.map_err(|e| ApiError::new(422, "not-cut-ready", e))?;
+        let (project, plan, digest, test_only) = match checked {
+            Ok(checked) => (
+                checked.project,
+                checked.plan,
+                checked.runnable.digest,
+                false,
+            ),
+            Err(_) if request.params["test"] == true => {
+                let project: ProjectFile = serde_json::from_slice(project)
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                project.source.bytes().map_err(ApiError::bad_request)?;
+                let sheet = project
+                    .project
+                    .sheets
+                    .first()
+                    .ok_or_else(|| ApiError::bad_request("Open a design first."))?;
+                let plan = cutcraft_path::plan_sheet(&project.project, &sheet.id)
+                    .map_err(ApiError::bad_request)?;
+                let at = cutcraft_control::next_test_spot(&plan, &[]).ok_or_else(|| {
+                    ApiError::new(
+                        422,
+                        "no-room",
+                        "There is no room for a test pattern on this material.",
+                    )
+                })?;
+                let test = cutcraft_path::test_cut_plan(&project.project, &sheet.id, at)
+                    .map_err(ApiError::bad_request)?;
+                cameo_pi_core::runnable::Runnable::new(&test, &CAMEO_1, machine).map_err(|ds| {
+                    ApiError::new(
+                        422,
+                        "not-cut-ready",
+                        ds.iter()
+                            .map(|d| d.message.clone())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    )
+                })?;
+                let digest = format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&plan).map_err(storage)?)
+                );
+                (project, plan, digest, true)
+            }
+            Err(e) => return Err(ApiError::new(422, "not-cut-ready", e)),
+        };
         let id = id_for(owner, &request.key);
         let view = CutCopy {
+            test_only,
             id: id.clone(),
             name,
             revision: 1,
-            project_revision: checked.plan.project_revision,
-            sheet: checked.plan.sheet.clone(),
-            material: checked.plan.material.name.clone(),
-            mirrored: checked.plan.mirror,
-            digest: checked.runnable.digest,
+            project_revision: plan.project_revision,
+            sheet: plan.sheet.clone(),
+            material: plan.material.name.clone(),
+            mirrored: plan.mirror,
+            digest,
         };
         let stored = Stored {
             schema_version: 1,
             owner: owner.into(),
             request,
             view,
-            project: checked.project,
-            plan: checked.plan,
+            project,
+            plan,
         };
         let _publication = self.publish.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(first) = self.read(&id)? {

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,6 +77,10 @@ pub mod codes {
 /// server paths. Pushed at each new revision.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    /// Browser-safe presentation state. No source paths, source bytes or device authority.
+    #[serde(default)]
+    pub ui: Presentation,
+
     pub protocol: u32,
     pub incarnation: String,
     pub revision: u64,
@@ -92,6 +96,28 @@ pub struct SessionSnapshot {
     /// The person's material list, by name, for choosing one.
     #[serde(default)]
     pub materials: Vec<String>,
+}
+
+/// Full desktop presentation, projected explicitly from the controller. JSON values here use
+/// the shared registry's existing material, mat, report and row schemas; they are not commands.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Presentation {
+    pub screen: String,
+    pub units: String,
+    pub font_size: f32,
+    pub snap: Value,
+    pub panel: Value,
+    pub defaults: Value,
+    pub history: Value,
+    pub materials: Vec<Value>,
+    pub mats: Vec<Value>,
+    pub sheet: Value,
+    pub rows: Vec<Value>,
+    pub group_by: String,
+    pub size_mm: Option<[f64; 2]>,
+    pub report: Value,
+    pub plan: Value,
+    pub commands: Vec<Value>,
 }
 
 /// The open project, as the screens need it.
@@ -196,6 +222,12 @@ pub struct MatGeometry {
 /// One polyline, drawn in its colour.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Stroke {
+    #[serde(default)]
+    pub item: Option<String>,
+    #[serde(default)]
+    pub source_ids: Vec<String>,
+    #[serde(default = "included_by_default")]
+    pub included: bool,
     /// `#rrggbb`.
     pub colour: String,
     /// An aid (weeding box, weed line, layering mark), drawn lighter.
@@ -203,6 +235,10 @@ pub struct Stroke {
     pub aid: bool,
     /// Single precision is plenty on screen and halves the transfer.
     pub points: Vec<[f32; 2]>,
+}
+
+fn included_by_default() -> bool {
+    true
 }
 
 /// One picture of the artwork (spec §12), named by everything that affects it, so the browser
@@ -237,6 +273,8 @@ impl PictureRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopyRequest {
+    #[serde(default)]
+    pub test: bool,
     pub key: String,
     pub incarnation: String,
     pub revision: u64,
@@ -245,6 +283,8 @@ pub struct CopyRequest {
 /// The immutable copy named by queue, loading preview and Start. Its stored revision is 1.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CutCopy {
+    #[serde(default)]
+    pub test_only: bool,
     pub id: String,
     pub name: String,
     pub revision: u32,
@@ -284,6 +324,14 @@ pub mod worker {
             key: String,
         },
         Snapshot,
+        Update {
+            request: CommandRequest,
+            file: String,
+            name: String,
+        },
+        Download {
+            kind: String,
+        },
         Geometry,
         Picture(PictureRequest),
         /// Open something in place of the session's project: a change, keyed and checked like
@@ -345,6 +393,10 @@ pub mod worker {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "reply", rename_all = "snake_case")]
     pub enum WorkerReply {
+        Download {
+            mime: String,
+            bytes: Vec<u8>,
+        },
         Command(CommandReply),
         Cancel {
             requested: bool,
@@ -353,7 +405,7 @@ pub mod worker {
             result: Option<CommandReply>,
         },
         Lookup(KeyLookup),
-        Snapshot(SessionSnapshot),
+        Snapshot(Box<SessionSnapshot>),
         Geometry(Geometry),
         /// A PNG, base64-encoded (a JSON line can't carry bytes).
         Picture {

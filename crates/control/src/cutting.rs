@@ -1269,7 +1269,7 @@ fn overlaps_art_at(plan: &CutPlan, at: [f64; 2]) -> bool {
 /// Where the next test cut goes (spec §5.5): where they put it, unless an earlier test cut on
 /// this mat is already there; otherwise the first spot clear of the design and every earlier
 /// test cut. None when nothing fits.
-pub(crate) fn next_test_spot(plan: &CutPlan, used: &[[f64; 4]]) -> Option<[f64; 2]> {
+pub fn next_test_spot(plan: &CutPlan, used: &[[f64; 4]]) -> Option<[f64; 2]> {
     let free = |at: [f64; 2]| {
         let [x0, y0, x1, y1] = test_square(at);
         used.iter()

@@ -1,10 +1,32 @@
 # CutCraft-Web specification
 
-Status: **version 1.1** (2026-10-27), written before any code, after two rounds of review by
-Codex and Grok ([§26](#26-revision-history)). It records the developer's decisions
-([§2](#2-decisions)) and the design for them. Items marked **(provisional)** are engineering
-starting points that milestone 0 measures and may revise ([§23](#23-open-questions)). Nothing here
-has been built or measured yet.
+Status: **version 2, design proposal** (2026-10-28). This revision recovers the detailed
+CutCraft contract before UI implementation continues. Architecture and security decisions from
+version 1 remain; detailed behaviour is now specified rather than delegated to a missing document.
+This is a requirement set, not a claim that every milestone is implemented or accepted.
+
+**Read this specification together with its normative companion:**
+[CutCraft behaviour carried into the web application](cutcraft-ui.md). Its stable requirement IDs
+cover import/preparation, all menus/panels/dialogs, placement, materials/mats, cutting and help.
+The [intentional differences register](layout-exceptions.md) is also normative; proposed decisions
+are not approved exceptions until the developer agrees. [§23](#23-port-decisions-and-open-measurements) records the two
+port decisions confirmed by the developer.
+
+**Design provenance and acceptance:**
+- [Original-spec coverage and contradictions](design-audit/source-map.md).
+- [Every commit through 1.0.5](design-audit/history.md): 162 commits, including merges.
+- [Authored examples and required regression workflows](design-audit/acceptance.md).
+- [M1–M3 conformance review](design-audit/m3-review.md) and
+  [requirement-by-requirement code matrix](design-audit/m3-conformance.md).
+
+**Reference:** CutCraft **1.0.5**, full commit
+`39654a9465ecdef7478703ee586276304dbc29c6`, before cameo-pi integration. The imported backend may
+contain later station/safety improvements; those do not redefine the UI reference. The final
+reference workflow wins over superseded earlier sketches. This document's web authority,
+shared-session and frozen-cut rules override native filesystem/process assumptions only where
+explicitly recorded. Missing or broken features cannot be excused as browser limitations without
+a listed, approved difference. Unimplemented original requirements are identified in the audit,
+not quietly dropped. Implementation remains paused for this design review.
 
 ## 1. Purpose
 
@@ -96,7 +118,7 @@ From the developer, 2026-10-26:
 | **Cutter** | One Cameo plugged into the server, under its name. |
 | **Material**, **Mat** | As in CutCraft. |
 | **Make cut-ready**, **Test cut**, **Cut preview** | As in CutCraft. |
-| **Load the mat** | As in cameo-pi: a fresh mat for each cut. |
+| **Load the mat** | Fresh loading unless the safe retained-load context (§23 Q2) permits reuse. |
 | **User**, **Admin** | As in cameo-pi. |
 
 Avoid "job", "server", "session", "endpoint", "token", "WebAssembly", "worker" and "revision" in the
@@ -120,7 +142,7 @@ AI tool ─────────── MCP ───────────�
 - **The front** owns HTTPS, logins, the authority policy ([§6](#6-who-may-do-what)), the browser
   API ([§13](#13-between-browser-and-server)), MCP, the library, users and backups.
 - **The cutter service** owns the cutters, as cameo-pi's per-cutter workers do: turns, the queue, the
-  fresh-mat rule, Start, Pause and Stop. It is small and never parses a design.
+  fresh-mat rule with the §23 Q2 reuse exception, Start, Pause and Stop. It is small and never parses a design.
 - **Each person's design session runs in a preparation worker:** a child process running
   CutCraft's controller. This was the developer's leaning, and both reviewers agreed: a thread can't
   be capped in memory or stopped without risking the whole program. The front and the cutter
@@ -189,9 +211,8 @@ let one person, or their AI key, reach another person's work or the server's sec
   - **The same checks** cover images, geometry, downloads and WebSocket subscriptions.
 - **Areas:**
   - **Each person's own:** designs, fonts, drafts and settings. No one else can read it.
-  - **Shared by the household:** the library, where every user can open, save, move and delete
-    any project, as in cameo-pi's household model; and the material and mat lists ([§8](#8-settings)).
-    Any user can change those lists, and every user sees the change.
+  - **Shared by the household:** the project library and material/mat lists. Every user can
+    change them; saved projects retain their own setting snapshots.
 - **Open mode** (no users yet, as in cameo-pi): one household principal. When the first admin is
   created, the household's area becomes theirs.
 - **Cutting keeps the actor.** A worker reaches the cutter service as its person, with a per-person
@@ -249,13 +270,12 @@ Each setting lives where it belongs:
 |---|---|---|
 | **Per project** | Units, snap and its step, the decisions, what to cut, material, mat, placement, the test-cut spot. | In the project (`.cutcraft`). A saved project keeps its material, so editing a material list never changes saved projects. |
 | **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their fonts. | In their area, backed up. |
-| **Global** | The material and mat lists (the developer, 2026-10-27). | One list for the household (`data/catalog/`), backed up. It's also the list the library's Adjust uses. |
-| **Per device** | Zoom and pan, which panel groups are folded, the layout override (computer or phone). | In that browser only. |
+| **Global** | Material and mat lists (developer decision, 2026-10-27). | One household catalog, backed up and used by library Adjust. |
+| **Per device** | Zoom and pan, which panel groups are folded, compact-layout presentation preferences. | In that browser only. |
 | **Per session** | The desktop layout's screen (Side by side, Overlay, Cut preview, cut screen), set by `view.show`. It is shared by the person's desktop layouts and MCP, as one window is today. | In the session. |
 
-- **Global lists, changed safely:** an edit to the material or mat list reads the shared list
-  again, under a lock, before changing it. Two people's edits never undo each other, and every open
-  session shows the new list.
+- **Global lists, changed safely:** read the latest catalog under a lock before editing it;
+  concurrent edits must not erase each other. Refresh every open session after changes.
 - **The compact layout never calls `view.show`.** Its screens are pages, so opening the cut page on
   the phone leaves the laptop on Cut preview.
 - **What changes from CutCraft:** units and snap move from the app settings into the project; a new
@@ -269,16 +289,18 @@ Each setting lives where it belongs:
   - **Desktop:** at least 1024 CSS pixels wide, or at least 768 wide with a mouse or trackpad
     (`pointer: fine`).
   - **Compact:** everything else.
-- **A switch in the menu** overrides the choice on that device, and the device remembers it.
-  Turning the device or resizing across the threshold offers the other layout once; it never
-  switches by itself in the middle of work.
+- **Wide windows open the desktop layout.** A saved phone preference must not keep a wide
+  window on compact pages. There is no Phone item in the desktop View menu (developer decision,
+  Zulip #118). Turning the device or resizing across the threshold offers the other layout once;
+  it never switches by itself in the middle of work.
 - **Switching loses nothing:** the work is in the session.
 
 ### 9.2 Desktop layout: follows CutCraft
 
 - **CutCraft's UI, compiled to WebAssembly, not rewritten:** its menu bar, toolbar, views (Side by
-  side, Overlay, Cut preview), right panel and cut screen. It follows CutCraft's spec, which comes
-  into this repository as `docs/cutcraft-ui.md`.
+  side, Overlay, Cut preview), right panel and cut screen. It follows [the detailed reference contract](cutcraft-ui.md), with
+  [explicit adaptations](layout-exceptions.md). This is feature-for-feature and control-for-control
+  fidelity to 1.0.5, including the later fixes and preferences, not merely a visual inspiration.
 - **What differs from the desktop app:**
   - **Open:** the browser's file picker, a drop onto the window, the person's uploaded designs, or
     the library.
@@ -292,6 +314,9 @@ Each setting lives where it belongs:
 
 ### 9.3 Compact layout: the phone's own UI
 
+The [M5 mobile design guide](mobile-design.md) proposes the detailed phone presentation and
+acceptance scenarios for this section.
+
 cameo-pi's HTML pages, extended to the full workflow. Each screen does one thing, the controls are
 large, and a phone in portrait is the design size. **The same capabilities as the desktop layout,
 presented for a phone:**
@@ -304,7 +329,7 @@ presented for a phone:**
 | Comparing | One view at a time, swiped or toggled: artwork, cut lines, overlay. This replaces side by side, which doesn't fit a phone. |
 | What to cut | The colours or layers as a ticked list. |
 | Material and mat | Choose, adjust (blade, force, speed, passes, mirror, overcut), save; the material and mat lists. |
-| Cut preview and placement | The mat, with touch dragging of the design and the test-cut spot, two-finger resize, typed positions and sizes, Fit, snap. |
+| Cut preview and placement | The mat, with touch dragging of the design, media and test-cut spot, explicit resize handles, typed positions and sizes, Fit, snap. Inspection gestures must not silently resize physical artwork; see the M5 guide. |
 | Cutting | cameo-pi's pages: cutter choice, test cut, queue, Load the mat, Start, Pause, Stop, the live cut viewer. |
 | Undo and Redo | The shared history ([§7](#7-sessions)). |
 | Save, Save As, Download, Update from Design | As on the desktop. |
@@ -312,10 +337,12 @@ presented for a phone:**
 
 - **Same capabilities is a rule, checked by a test.** Every user-facing registry command must be
   reachable from both layouts, or be listed in `docs/layout-exceptions.md` with the developer's
-  agreement ([§22](#22-testing)). That list starts empty.
-  - **Window commands are outside the test:** `view.show`, `view.inspect`, `view.capture`,
-    `help.show`, `settings.mcp`. They act on the desktop window, its pictures or the AI setup
-    screen, not on the project. The phone shows the same things with its own pages.
+  agreement ([§22](#22-testing)). That list now records the proposed adaptations and inherited exclusions; new exclusions need
+  the developer's agreement. An unfinished implementation is not an exception.
+  - **Window-specific mechanics** do not require identical compact navigation: `view.show`,
+    `view.inspect`, `view.capture`, `help.show`, `settings.mcp`. Their underlying capabilities
+    are not exempt: help, AI settings, previews and inspection remain reachable. Browser capture
+    must identify a real attached client or say unavailable (AUTO-02). The phone uses its own pages.
 - **Presentation may differ, the outcome may not.** The phone may reach a result in more steps, or
   with a different control, but it reaches the same result through the same commands.
 
@@ -328,8 +355,24 @@ presented for a phone:**
 3. **The parity test** ([§9.3](#93-compact-layout-the-phones-own-ui)) and the browser checks run for
    both layouts.
 
+### 9.5 Reference completion gate
+
+The complete menu/toolbar/panel/dialog inventory, availability rules, keyboard/touch alternatives
+and visual requirements are in [UI/VIEW/PANEL/MAT/CUT](cutcraft-ui.md). Every supported reference
+capability needs a demonstrated user route; a painted button, a backend test or a declaration of
+registry parity is insufficient. M4 evidence compares the same authored fixture in reference 1.0.5
+and the browser: all three views, source alignment, every group/editor, Help and all simulated
+cutting states. Also exercise failure, reload, another tab and another person.
+
+Preserve the reference's simple workflow: no material certification or wizard, one sheet,
+editable settings with explicit preset saves, one toolbar Cut entry and one Test Cut entry.
+First Save asks a library folder/name. All ten inspector groups are present in all design views.
+Unsupported/later features are handled explicitly, never silently omitted.
+
 ## 10. Designs, fonts and files
 
+- **Supported formats and import policies:** OPEN-01–10 and PREP-01–08 in
+  [the detailed contract](cutcraft-ui.md). Picker, upload route, worker, help and MCP agree.
 - **Designs arrive by upload:** the file picker or a drop. Each upload becomes a server-owned copy
   in the person's area, listed under their designs.
 - **Update from Design:** uploading a newer version of a project's design keeps the project's
@@ -348,6 +391,10 @@ presented for a phone:**
 - **Downloads:** a project as `.cutcraft`, and its cut lines as SVG.
 
 ## 11. Saving
+
+- **First Save is Save As:** without a chosen library project, ask folder/name; cancelling writes
+  nothing. Subsequent saves use that project. Download is separate. Failures/refusals are visible
+  and retain the unsaved draft. Detailed persistence/update rules are SAVE-01–03.
 
 - **Save names its base:** the library revision the project was opened from, as well as the
   session's revision. If someone else saved that project since, Save offers **Reload** (their
@@ -419,9 +466,16 @@ picture of the visible region at the current zoom. The browser does the same:
 
 - **The same cutting as cameo-pi:** turns, the queue, the fresh-mat rule, test cuts, live progress,
   Pause and Stop, and cut history, in both layouts.
-- **A frozen copy:** Cut makes a validated, immutable copy of the project's current sheet and its
-  plan. The queue entry, the loading screen and Start all name that copy, so later edits in the
-  session can't change what's cut. Editing after Cut makes a new copy only if Cut is pressed again.
+- **Navigation is separate from handoff:** toolbar/menu **Cut** only opens the cut screen and
+  requires a current ready plan. It never prepares, queues or starts a cut. That screen's explicit
+  **Cut / Cut again / Cut pattern** action creates the validated frozen copy for review/queueing;
+  loading confirmation and **Start** are separate actions. Test Cut uses the same principle.
+- **A frozen copy:** the handoff makes an immutable copy of the current sheet and its plan. The
+  queue entry, loading screen and Start all name it; later preparation edits cannot change what
+  executes. A new handoff is required to use new settings. CUT-01–09 supplies the reference
+  controls, progress, Exit, test pattern, driver and safety regressions.
+- **Repeat test cuts:** safe reuse of a loaded mat is allowed under the cutter-owned context
+  and invalidation rules in §23 Q2. Each cut requires Start; otherwise the fresh-mat rule applies.
 - **One authority:** for the actor, the turn, the mat generation, the action epoch and request keys,
   across both layouts and MCP.
 - **Start and Stop survive everything:** a session unloading, a worker crashing, a reconnecting
@@ -457,6 +511,9 @@ picture of the visible region at the current zoom. The browser does the same:
   and authority policy ([§6](#6-who-may-do-what)). Keys name objects by explicit ids and revisions,
   never by a device's view.
 - **Admin stays web-only:** backup setup, users and keys.
+- **Detailed parity:** AUTO-01–03 covers tools/resources/prompts/completions, errors, progress,
+  origin marks and real-client capture. Retired native loopback settings are explicitly adapted,
+  not copied into the web UI.
 
 ## 16. The library
 
@@ -480,7 +537,10 @@ Preparation parses untrusted files and can use a lot of memory. Cutting must not
 
 - **Limits** (provisional; milestone 0 records the peaks):
   - **Uploads:** 64 MB per file.
-  - **Pictures:** 100 megapixels decoded per design.
+  - **Pictures:** 100 megapixels decoded per design is the provisional web ceiling. The imported
+    1.0.5 decoder has a stricter 40-megapixel limit; that remains the effective supported limit
+    until measured decoder/memory acceptance justifies raising it. Show the effective limit
+    consistently; upload acceptance must not promise a size the worker cannot decode.
   - **PDFs:** 100 pages.
   - **Memory:** 1.5 GB per preparation worker. On 8 GB, two full workers plus the cutter service,
     the front and the system is the budget to watch.
@@ -588,7 +648,7 @@ UI split:
   - Save conflicts on a shared project.
 - **The layout parity test:** every user-facing registry command, except the window commands of
   §9.3, is reached by a browser check in both layouts, or listed in `docs/layout-exceptions.md`
-  (empty at the start).
+  with explicit approval; window mechanics do not exempt the corresponding user capability.
 - **The desktop parity test:** the desktop layout and the test-harness desktop app give the same
   snapshots for the same commands on authored fixtures, and on the developer's archive locally.
 - **Cutting on the Simulated Cameo, early:**
@@ -602,9 +662,26 @@ UI split:
 - **Acceptance with the end user:** their MacBook in Safari and their phone, for a real project from
   design to cut, each on its own. The developer is present for any motion.
 
-## 23. Open questions
+## 23. Port decisions and open measurements
 
-None. What's left to settle is measurement, not decisions:
+The developer confirmed both port decisions on 2026-10-28.
+
+**Q1 — Temporary material adjustments (decided).** Preserve session carry-over and draft
+settings across browser reloads, worker eviction, sign-out and service restarts. Selecting a
+preset replaces the temporary settings; explicitly closing the design session ends carry-over.
+Never save a preset implicitly: Material Save or Save As remains required. Saved projects reopen
+with their own sheet values. Recovery remains scoped to the authenticated person. See MAT-02/A13.
+
+**Q2 — Reusing loaded material for tests (decided).** Allow consecutive test cuts and the
+following design to reuse the loaded mat. The cutter service owns a retained-load context for
+the same person, cutter and mat generation, with occupied test geometry retained. Every cut
+still requires explicit Start and a newly validated frozen plan. Unloading, disconnecting,
+Stop, changing users, uncertain motion or mismatched setup invalidates reuse and requires fresh
+loading. After service restart, do not infer physical loading from a saved preparation draft.
+The fresh-mat rule applies whenever this context cannot be proven valid. Safety regression tests
+must cover both permitted reuse and every invalidation before this is enabled. See CUT-07/A08.
+
+**Measurements (unchanged):**
 
 - **Provisional values:** the draft timings (§7), the idle unload (§7), the limits (§18) and the
   targets (§19) are engineering starting points. The developer has no view on them yet.
@@ -627,7 +704,12 @@ In the order the reviews recommended: contracts and risks first, layouts after.
    Save conflicts.
 3. **The cut handoff and isolation:** frozen copies, the cutter service apart from the workers, the
    Start/Stop simulator regressions, Stop under load, updates that wait.
-4. **The desktop layout,** complete: everything CutCraft's UI does.
+4. **The desktop layout, complete:** all required controls and behaviours in
+   [the detailed 1.0.5 contract](cutcraft-ui.md), the [regression catalogue](design-audit/acceptance.md)
+   and the approved [differences register](layout-exceptions.md). Close the design questions first.
+   Start with the transport adapter, login/results/live state, then source/geometry views, all
+   panels/editors, saving/help and simulated cut/test workflows. Prove each slice with browser
+   interactions and reference comparisons; no M5 start while required M4 capabilities remain gaps.
 5. **The compact layout,** complete: the same capabilities, the parity test passing.
 6. **MCP** at one address, with session parity.
 7. **Backups and migration** (schema 3, people mapping, importing today's library and projects).
@@ -636,6 +718,9 @@ In the order the reviews recommended: contracts and risks first, layouts after.
 9. **Acceptance** with the end user, the developer present for motion.
 
 ## 25. Out of scope
+
+The [differences register](layout-exceptions.md) additionally records inherited deferred scope and
+features deliberately removed before 1.0.5. No other missing reference feature is intentional.
 
 - Using CutCraft-Web from outside the home network. The developer's reverse proxy is the
   developer's own.
@@ -648,8 +733,16 @@ In the order the reviews recommended: contracts and risks first, layouts after.
 
 ## 26. Revision history
 
-- **Version 1.1 (2026-10-27):** material and mat lists are global, shared by the household (the
-  developer), not per person (§6, §8).
+- **Version 2 proposal (2026-10-28):** audit of the complete original spec and 162 commits through
+  1.0.5. Adds the missing normative UI/behaviour contract, original-spec coverage map,
+  commit ledger, explicit adaptations/removals/deferred scope, authored example set and
+  acceptance catalogue. Reconciles stale original prose and clarifies Cut navigation versus
+  frozen handoff, first Save, supported formats and decoder limits. Q1/Q2 record material
+  lifetime and loaded-mat reuse decisions confirmed by the developer on 2026-10-28. No application code changed.
+
+- **Version 1.1 (2026-10-27):** material and mat catalogs shared by the household, confirmed
+  by the developer (Zulip decision #76). This decision remains in version 2.
+
 - **Version 1, final (2026-10-26):** draft 2 with the developer's answers (#41) and the reviewers'
   last clarifications (Codex #45, Grok #46).
   - **Settled:** no history; the Pi 5 target with amd64 kept; preparation processes as the

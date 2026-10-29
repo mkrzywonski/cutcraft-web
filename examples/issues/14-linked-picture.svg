@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100mm" height="60mm" viewBox="0 0 100 60">
+  <title>A picture linked from a separate file that is missing</title>
+  <rect x="5" y="10" width="40" height="40" fill="#c0392b"/>
+  <image x="55" y="15" width="40" height="30" xlink:href="missing-photo.png"/>
+</svg>

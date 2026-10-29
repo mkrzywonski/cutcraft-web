@@ -15,9 +15,10 @@ pub use cutcraft_import::SourceView;
 pub use cutcraft_import::job;
 pub use cutcraft_path as path;
 pub use cutting::{
-    CutJob, CutState, CuttingView, HARDWARE_TESTING_ENV, JobKind, VirtualMat, test_cut_markers,
+    CutJob, CutState, CuttingView, HARDWARE_TESTING_ENV, JobKind, VirtualMat, next_test_spot,
+    test_cut_markers,
 };
-pub use history::{History, HistoryStep, JournalEntry};
+pub use history::{History, HistoryArchive, HistoryStep, JournalEntry};
 pub use settings::{
     AccessKey, DEFAULT_MCP_PORT, LOCAL_ADDRESS, McpSettings, NewDesign, PANEL_GROUPS, PanelLayout,
     PortState, SettingsStore, Snap, Units, port_state,
@@ -124,7 +125,7 @@ pub struct OpenDesign {
 }
 
 /// An answer in the recipe and the origin that gave it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Answered {
     pub decision: Decision,
     pub origin: Origin,

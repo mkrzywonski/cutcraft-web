@@ -761,7 +761,9 @@ async fn the_web_interface_loads_before_login_with_a_strict_policy() {
             .to_str()
             .unwrap();
         assert!(
-            policy.contains("script-src 'self'") && !policy.contains("unsafe"),
+            policy.contains("script-src 'self'")
+                && !policy.contains("'unsafe-inline'")
+                && !policy.contains("'unsafe-eval'"),
             "{policy}"
         );
     }
@@ -3265,4 +3267,52 @@ fn a_start_cancelled_before_release_replays_a_durable_refusal() {
         );
         assert!(lock(&shared).take_pending().is_none());
     }
+}
+
+#[tokio::test]
+async fn desktop_saves_unfinished_work_but_refuses_cut_copy() {
+    let h = harness();
+    let mut upload = upload_star(None);
+    *upload.body_mut() = Body::from(STAR.replace("width=\"80mm\" height=\"60mm\"", ""));
+    let (status, uploaded) = send(&h.app, upload).await;
+    assert_eq!(status, StatusCode::OK);
+    let s = now(&h.app, None).await;
+    let opened=post_design(&h.app,"/api/v1/design/open",json!({"design":uploaded["design"]["id"],"key":"open-unfinished","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(opened["answer"], "applied");
+    let s = now(&h.app, None).await;
+    assert_eq!(s["design"]["cut_ready"], false);
+    let saved=post_design(&h.app,"/api/v1/design/save",json!({"as":{"name":"Unfinished","folder":[]},"key":"save-unfinished","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(saved["answer"], "applied", "{saved}");
+    let s = now(&h.app, None).await;
+    let copy=post_design(&h.app,"/api/v1/design/command",json!({"id":"cut.copy","params":{},"key":"copy-unfinished","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(copy["answer"], "refused", "{copy}");
+    let test_copy=post_design(&h.app,"/api/v1/design/command",json!({"id":"cut.copy","params":{"test":true},"key":"test-unfinished","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(test_copy["answer"], "applied", "{test_copy}");
+    assert_eq!(test_copy["value"]["copy"]["test_only"], true);
+    let copy_id = test_copy["value"]["copy"]["id"].as_str().unwrap();
+    h.app
+        .service
+        .queue(
+            "practice",
+            copy_id,
+            Some(1),
+            cameo_pi_core::cutter::Actor {
+                user: None,
+                client: "browser".into(),
+            },
+            "queue-test-only",
+        )
+        .unwrap();
+    assert!(
+        h.app
+            .service
+            .cut_preview("practice", cameo_pi_core::cutter::Kind::Test)
+            .is_ok()
+    );
+    assert!(
+        h.app
+            .service
+            .cut_preview("practice", cameo_pi_core::cutter::Kind::Main)
+            .is_err()
+    );
 }

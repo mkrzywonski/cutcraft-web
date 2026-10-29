@@ -31,4 +31,4 @@ for _ in $(seq 50); do
   sleep 0.2
 done
 
-node scripts/browser-check.mjs "http://127.0.0.1:$port" "$debug" "$work" "$planner"
+node scripts/browser-check.mjs "http://127.0.0.1:$port/station" "$debug" "$work" "$planner"
