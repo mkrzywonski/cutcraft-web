@@ -335,35 +335,9 @@ struct MaterialsFile {
     materials: Vec<Material>,
 }
 
-/// How lengths are shown and typed in the window (stored values are always mm).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Units {
-    #[default]
-    Inches,
-    Millimetres,
-}
-
-/// Snap to grid on the Cut preview: drags land on multiples of `step_mm` on the mat's rulers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct Snap {
-    pub enabled: bool,
-    /// The grid step; none until they set one (¼ in, or 5 mm when lengths are in mm).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_mm: Option<f64>,
-}
-
-impl Snap {
-    /// The step in use.
-    pub fn step(&self, units: Units) -> f64 {
-        self.step_mm.unwrap_or(match units {
-            Units::Inches => 6.35,
-            Units::Millimetres => 5.0,
-        })
-    }
-}
+/// How lengths are shown, and the Cut preview's snap: kept with the project (spec §8), defined
+/// beside it in `cutcraft-job`.
+pub use cutcraft_import::job::{Snap, Units};
 
 /// The groups of the window's right panel, by title.
 pub const PANEL_GROUPS: &[&str] = &[
@@ -434,6 +408,8 @@ struct PreferencesFile {
     #[serde(default = "default_font_size")]
     font_size: f32,
     #[serde(default)]
+    theme: Theme,
+    #[serde(default)]
     panel: PanelLayout,
     #[serde(default)]
     new_design: NewDesign,
@@ -443,6 +419,19 @@ fn default_font_size() -> f32 {
     14.0
 }
 
+/// The interface's colour scheme (spec §8: the person's, not the project's).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    /// Whatever the device prefers.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 impl Default for PreferencesFile {
     fn default() -> Self {
         Self {
@@ -450,6 +439,7 @@ impl Default for PreferencesFile {
             units: Units::default(),
             snap: Snap::default(),
             font_size: default_font_size(),
+            theme: Theme::default(),
             panel: PanelLayout::default(),
             new_design: NewDesign::default(),
         }
@@ -608,6 +598,22 @@ impl SettingsStore {
             &PreferencesFile {
                 schema_version: 1,
                 font_size,
+                ..self.preferences()
+            },
+        )
+    }
+
+    /// The interface's colour scheme.
+    pub fn load_theme(&self) -> Theme {
+        self.preferences().theme
+    }
+
+    pub fn save_theme(&self, theme: Theme) -> Result<(), String> {
+        self.write(
+            "preferences.json",
+            &PreferencesFile {
+                schema_version: 1,
+                theme,
                 ..self.preferences()
             },
         )

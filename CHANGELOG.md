@@ -4,6 +4,27 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.14.0 — 2026-10-31
+
+- Type the desktop's whole view of the session in `cutcraft-web-protocol` 6: the issue, info and
+  change cards, the what-to-cut rows with their prepared items, the sheet's full settings
+  (placement, piece, weeding, marks, mirror), the material and mat lists with registry field
+  names, per-project units and snap, per-person theme and font size, the panel arrangement,
+  history with each step's origin, and the shared screen. The server paints it from the one
+  controller state; nothing is computed client-side.
+- Carry the plan in the geometry the browser draws: its operations in cut order with kind, colour,
+  tool path and item identity, the cutting area, the piece, the plan's diagnostics, mirror and
+  material, and the mat's rulers, grid origin and class (spec §12).
+- Units and snap move into the project (spec §8): `settings.units` and `settings.snap` save with
+  the open project, a new project takes the person's defaults, and opening or closing a design
+  follows what it says. `settings.theme` sets the interface's colour scheme, per person.
+- Split the export the cut-copy handoff receives (`cut.copy`, refused unless cut-ready) from the
+  best-effort export Save uses: an unfinished project carries its unchecked plan, and one that
+  cannot be planned is refused with that reason. Neither names the worker's local source path
+  (codex/m4's fix, adopted).
+- The worker applies an uploaded newer design file (`project.update`) and re-prepares the open
+  design when the person's fonts change, replaying its decisions in both cases (spec §10).
+
 ## 0.13.1 — 2026-10-27
 
 - Return a durable refusal when a mat change or disconnect cancels Start before release; retries and lookup preserve it across restart. Failed receipt writes remain retryable storage errors and never report Started.

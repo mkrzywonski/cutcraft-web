@@ -20,7 +20,7 @@ pub use cutting::{
 pub use history::{History, HistoryStep, JournalEntry};
 pub use settings::{
     AccessKey, DEFAULT_MCP_PORT, LOCAL_ADDRESS, McpSettings, NewDesign, PANEL_GROUPS, PanelLayout,
-    PortState, SettingsStore, Snap, Units, port_state,
+    PortState, SettingsStore, Snap, Theme, Units, port_state,
 };
 pub use stations::{
     FoundStation, PairingState, PairingView, RemoteCutter, StationView, StationsView,
@@ -171,6 +171,8 @@ pub struct Snapshot {
     pub units: Units,
     /// Base interface font size in points.
     pub font_size: f32,
+    /// The interface's colour scheme (spec §8: the person's).
+    pub theme: crate::settings::Theme,
     /// Snap to grid on the Cut preview.
     pub snap: Snap,
     /// How they arranged the right panel.
@@ -456,6 +458,7 @@ impl Controller {
         let recent = store.load_recent();
         let units = store.load_units();
         let font_size = store.load_font_size();
+        let theme = store.load_theme();
         let snap = store.load_snap();
         let panel = store.load_panel();
         let new_design = store.load_new_design();
@@ -506,6 +509,7 @@ impl Controller {
                 mats,
                 units,
                 font_size,
+                theme,
                 snap,
                 panel,
                 new_design,
@@ -639,11 +643,16 @@ impl Controller {
             }
             Action::OpenDesign(path) => self.open_design(path, Recipe::new()),
             Action::CloseDesign => {
+                let units = self.0.store.load_units();
+                let snap = self.0.store.load_snap();
                 self.change(|s| {
                     s.revision += 1;
                     s.design = None;
                     s.loading_path = None;
                     s.last_error = None;
+                    // Back to the person's defaults for the next design (spec §8).
+                    s.units = units;
+                    s.snap = snap;
                 })?;
                 Ok(ActionOutput::json(json!({"closed": true})))
             }
@@ -760,6 +769,10 @@ impl Controller {
                 {
                     project.set_mat_profile(&id, mat.clone())?;
                 }
+                // A new design starts with the person's units and snap (spec §8); a saved
+                // project keeps its own, which `open_project` opens as they were saved.
+                let snapshot = self.snapshot()?;
+                project.set_display(snapshot.units, snapshot.snap);
                 Ok(OpenDesign {
                     path: path.to_string_lossy().into_owned(),
                     project_path: None,
@@ -871,6 +884,56 @@ impl Controller {
         Ok(ActionOutput::json(value))
     }
 
+    /// Re-prepare the open design from its stored bytes (spec §10): the person's fonts may have
+    /// changed in their area, so text is re-rendered with whatever is available now. Its
+    /// decisions are kept, exactly as an update from a changed design keeps them.
+    pub fn reload_fonts(&self) -> Result<ActionOutput, String> {
+        let design = self.snapshot()?.design.ok_or("Open a design first.")?;
+        let source = PathBuf::from(&design.path);
+        let bytes = (*design.bytes).clone();
+        let revision = {
+            let mut state = self
+                .0
+                .state
+                .lock()
+                .map_err(|_| "Application state is unavailable.")?;
+            state.revision += 1;
+            state.revision
+        };
+        self.wake();
+        let (inspection, prepared) =
+            cutcraft_import::inspect_and_prepare(&source, &bytes, &design.recipe)?;
+        let project = carry_over(&design.project, prepared.clone());
+        let labels = |p: &Project| -> Vec<String> {
+            p.sheets
+                .iter()
+                .flat_map(|s| s.rows.iter().map(|r| r.label()))
+                .collect()
+        };
+        let (before, after) = (labels(&design.project), labels(&project));
+        let added: Vec<&String> = after.iter().filter(|l| !before.contains(l)).collect();
+        let removed: Vec<&String> = before.iter().filter(|l| !after.contains(l)).collect();
+        let value = json!({
+            "changed": true,
+            "fonts": true,
+            "rows_added": added,
+            "rows_removed": removed,
+            "cut_ready": prepared.cut_ready,
+        });
+        let updated = OpenDesign {
+            path: design.path.clone(),
+            project_path: design.project_path.clone(),
+            inspection: serde_json::to_value(inspection).map_err(|e| e.to_string())?,
+            recipe: design.recipe.clone(),
+            prepared: serde_json::to_value(&prepared).map_err(|e| e.to_string())?,
+            project,
+            bytes: Arc::new(bytes),
+            answered_by: design.answered_by.clone(),
+        };
+        self.finish_open(revision, Ok(updated))?;
+        Ok(ActionOutput::json(value))
+    }
+
     fn finish_open(
         &self,
         revision: u64,
@@ -892,6 +955,9 @@ impl Controller {
             match imported {
                 Ok(design) => {
                     let design = Arc::new(design);
+                    // The window's units and snap follow the project now open (spec §8).
+                    state.units = design.project.units;
+                    state.snap = design.project.snap;
                     state.design = Some(design.clone());
                     state.last_error = None;
                     drop(state);
@@ -990,6 +1056,7 @@ fn carry_over(old: &Project, prepared: PreparedDesign) -> Project {
     let mut project = Project::new(prepared, old.machine.clone());
     project.scale = old.scale;
     project.set_group_by(old.group_by);
+    project.set_display(old.units, old.snap);
     if let (Some(sheet), Some(previous)) = (project.sheets.first_mut(), old.sheets.first()) {
         *sheet = Sheet {
             id: sheet.id.clone(),

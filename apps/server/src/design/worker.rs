@@ -7,14 +7,15 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use cutcraft_control::job::ProjectFile;
+use cutcraft_control::job::{Decision, GroupBy, ProjectFile};
 
 use cutcraft_control::{Controller, Origin, Roots};
 use cutcraft_web_protocol::worker::{OpenRequest, OpenSource, WorkerReply, WorkerRequest};
 use cutcraft_web_protocol::{
-    ArtView, CommandReply, CommandRequest, DesignView, Geometry, GeometryRef, KeyLookup,
-    MatGeometry, PROTOCOL_VERSION, PictureRequest, SavedRef, SessionSnapshot, SheetView, Stroke,
-    codes,
+    ArtView, Card, CommandReply, CommandRequest, DesignView, Geometry, GeometryRef,
+    HistoryStepView, HistoryView, KeyLookup, MatGeometry, MatView, MaterialView, NewDesignView,
+    PROTOCOL_VERSION, PanelView, PictureRequest, PieceView, PlanDiag, PlanOp, PreparedView,
+    RowView, SavedRef, Screen, SessionSnapshot, SheetView, SnapView, Stroke, Theme, Units, codes,
 };
 use serde_json::{Value, json};
 
@@ -484,16 +485,28 @@ impl Worker {
                 None => KeyLookup::NotApplied,
             }),
             WorkerRequest::Snapshot => match self.snapshot() {
-                Ok(s) => WorkerReply::Snapshot(s),
+                Ok(s) => WorkerReply::Snapshot(Box::new(s)),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Geometry => match self.geometry() {
-                Ok(g) => WorkerReply::Geometry(g),
+                Ok(g) => WorkerReply::Geometry(Box::new(g)),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Open(o) => WorkerReply::Command(self.open(o)),
             WorkerRequest::Export => match self.export() {
                 Ok(e) => e,
+                Err(message) => WorkerReply::Failed { message },
+            },
+            WorkerRequest::ExportValidated => match self.export_validated() {
+                Ok(e) => e,
+                Err(message) => WorkerReply::Failed { message },
+            },
+            WorkerRequest::Update { file } => WorkerReply::Command(self.update(file)),
+            WorkerRequest::ReloadFonts => match self.controller.reload_fonts() {
+                Ok(_) => match self.snapshot() {
+                    Ok(s) => WorkerReply::Snapshot(Box::new(s)),
+                    Err(message) => WorkerReply::Failed { message },
+                },
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Saved { request, saved } => {
@@ -504,7 +517,7 @@ impl Worker {
                 .reload_lists()
                 .and_then(|()| self.snapshot())
             {
-                Ok(s) => WorkerReply::Snapshot(s),
+                Ok(s) => WorkerReply::Snapshot(Box::new(s)),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Picture(p) => match self.picture(&p) {
@@ -724,18 +737,84 @@ impl Worker {
     }
 
     /// The open project as a `.cutcraft` file and its first sheet's plan, for the server to save
-    /// in the library (spec §11).
+    /// in the library (spec §11). Best-effort: an unfinished project carries its unchecked plan,
+    /// and one that cannot be planned at all carries none.
     fn export(&self) -> Result<WorkerReply, String> {
+        let s = self.controller.snapshot()?;
+        let open = s.design.as_ref().ok_or("Open a design first.")?;
+        let mut file = ProjectFile::new(
+            open.project.clone(),
+            Path::new(&open.path),
+            &open.bytes,
+            cutcraft_control::APP_BUILD,
+        );
+        // Downloads and library files never disclose the worker's server-local source path
+        // (codex/m4's fix, adopted here).
+        file.source.original_path = file.source.file_name.clone();
+        let plan = open
+            .project
+            .sheets
+            .first()
+            .and_then(|sheet| cutcraft_path::plan_sheet(&open.project, &sheet.id).ok())
+            .and_then(|plan| serde_json::to_string(&plan).ok());
+        Ok(WorkerReply::Export {
+            name: self.name.clone().unwrap_or_else(|| "Design".into()),
+            project: serde_json::to_string(&file).map_err(|e| e.to_string())?,
+            plan,
+            saved: self.saved.clone(),
+        })
+    }
+
+    /// The validated execution export (`cut.copy`), for the cut-copy handoff: refused unless the
+    /// project is cut-ready and its plan is valid.
+    fn export_validated(&self) -> Result<WorkerReply, String> {
         let output = self
             .controller
             .execute(Origin::User, "cut.copy", json!({}), None)
             .map_err(|e| e.message)?;
-        Ok(WorkerReply::Export {
+        let mut project = serde_json::from_value::<ProjectFile>(output.value["project"].clone())
+            .map_err(|e| e.to_string())?;
+        project.source.original_path = project.source.file_name.clone();
+        Ok(WorkerReply::ExportValidated {
             name: self.name.clone().unwrap_or_else(|| "Design".into()),
-            project: serde_json::to_string(&output.value["project"]).map_err(|e| e.to_string())?,
+            project: serde_json::to_string(&project).map_err(|e| e.to_string())?,
             plan: serde_json::to_string(&output.value["plan"]).map_err(|e| e.to_string())?,
             saved: self.saved.clone(),
         })
+    }
+
+    /// Replace the stored bytes of the design the session opened with a newer upload and replay
+    /// the project's decisions on it (`project.update`, spec §10). The file is already in the
+    /// person's area under a name the server chose.
+    fn update(&mut self, file: String) -> CommandReply {
+        if file.contains('/') || file.starts_with('.') || file.is_empty() {
+            return refused("invalid", "unsafe file name");
+        }
+        let path = self.area.join("designs").join(file);
+        let reply = match self.controller.execute(
+            Origin::User,
+            "project.update",
+            json!({"path": path.to_string_lossy()}),
+            None,
+        ) {
+            Ok(output) => CommandReply::Applied {
+                revision: output.revision,
+                value: output.value,
+            },
+            Err(e) if e.code == "revision-mismatch" => refused(
+                codes::STALE_REVISION,
+                "This project changed since. Here it is now.",
+            ),
+            Err(e) => refused(e.code, e.message),
+        };
+        if matches!(reply, CommandReply::Applied { .. }) {
+            self.unsaved = true;
+            self.changed();
+            if let Err(e) = self.checkpoint() {
+                eprintln!("cameo-pi worker: the draft couldn't be written: {e}");
+            }
+        }
+        reply
     }
 
     /// The server saved the project: it's now that library revision, with nothing unsaved.
@@ -772,7 +851,30 @@ impl Worker {
 
     fn snapshot(&self) -> Result<SessionSnapshot, String> {
         let s = self.controller.snapshot()?;
-        let materials = s.materials.iter().map(|m| m.name.clone()).collect();
+        let materials = s.materials.iter().map(material_view).collect::<Vec<_>>();
+        let mats = s.mats.iter().map(mat_view).collect::<Vec<_>>();
+        let history = HistoryView {
+            undo: s
+                .history
+                .undo
+                .iter()
+                .map(|step| HistoryStepView {
+                    label: step.label.clone(),
+                    command: step.command.clone(),
+                    ai: step.origin != Origin::User,
+                })
+                .collect(),
+            redo: s
+                .history
+                .redo
+                .iter()
+                .map(|step| HistoryStepView {
+                    label: step.label.clone(),
+                    command: step.command.clone(),
+                    ai: step.origin != Origin::User,
+                })
+                .collect(),
+        };
         let design = match &s.design {
             None => None,
             Some(open) => {
@@ -782,25 +884,123 @@ impl Worker {
                     .execute(Origin::User, "prepare.report", json!({}), None)
                     .map(|o| o.value)
                     .unwrap_or(Value::Null);
+                let card = |item: &Value| Card {
+                    code: item["code"].as_str().map(str::to_owned),
+                    decision: item["decision"].as_str().map(str::to_owned),
+                    message: item["message"].as_str().unwrap_or_default().to_owned(),
+                    choices: item["choices"].as_array().cloned().unwrap_or_default(),
+                    source_ids: item["source_ids"]
+                        .as_array()
+                        .map(|ids| {
+                            ids.iter()
+                                .filter_map(|i| i.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                };
+                let empty = Vec::new();
+                let questions = report["pending"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(&card)
+                    .collect::<Vec<_>>();
+                let diagnostics = report["diagnostics"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(&card)
+                    .collect::<Vec<_>>();
+                let problems: Vec<_> = report["diagnostics"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .filter(|d| d["severity"] == "blocking")
+                    .map(&card)
+                    .collect();
+                let changes = report["changes"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(card)
+                    .collect::<Vec<_>>();
+                let outline_role = project
+                    .prepared
+                    .recipe
+                    .decisions
+                    .iter()
+                    .find_map(|d| match d {
+                        Decision::OutlinesOnFills { role } => {
+                            Some(serde_json::to_value(role).ok()?.as_str().map(str::to_owned))
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .filter(|_| project.prepared.stroked_fills > 0);
                 let sheet = project.sheets.first();
                 let plan = sheet.and_then(|sh| cutcraft_path::plan_sheet(project, &sh.id).ok());
                 Some(DesignView {
                     name: self.name.clone().unwrap_or_else(|| "Design".into()),
                     project_revision: project.revision,
                     cut_ready: report["cut_ready"].as_bool().unwrap_or(false),
-                    issues: report["pending"].as_array().map_or(0, |p| p.len() as u32),
+                    issues: (questions.len() + problems.len()) as u32,
                     geometry: Some(GeometryRef {
                         id: geometry_id(project.revision, plan.as_ref()),
                     }),
                     art: art_view(open, &self.incarnation),
-                    sheet: sheet.map(|sh| SheetView {
-                        material: sh.material.name.clone(),
-                        mat: sh.mat_profile().name.clone(),
-                        plan_valid: plan.as_ref().is_some_and(|p| p.valid),
-                        estimate_s: plan.as_ref().map(|p| p.estimate_s),
+                    sheet: sheet.map(|sh| {
+                        let roll = sh.mat == cutcraft_control::job::Mat::Roll;
+                        let profile = sh.mat_profile();
+                        let mut settings = material_view(&sh.material);
+                        settings.mirror = sh.mirror;
+                        SheetView {
+                            material: sh.material.name.clone(),
+                            mat: if roll {
+                                "Roll".into()
+                            } else {
+                                profile.name.clone()
+                            },
+                            plan_valid: plan.as_ref().is_some_and(|p| p.valid),
+                            estimate_s: plan.as_ref().map(|p| p.estimate_s),
+                            settings,
+                            mirror: sh.mirror,
+                            mat_class: mat_name(sh.mat),
+                            placement: [
+                                sh.placement.offset_mm[0],
+                                sh.placement.offset_mm[1],
+                                sh.placement.rotation_deg,
+                            ],
+                            piece: sh.piece_mm.map(|size_mm| PieceView {
+                                size_mm,
+                                at_mm: sh.piece_at_mm.unwrap_or([0.0, 0.0]),
+                            }),
+                            weeding_box: sh.weeding_box,
+                            weed_lines: sh.weed_lines,
+                            weed_inverted: sh.weed_inverted,
+                            layering_marks: sh.layering_marks,
+                            test_spot_mm: sh.test_spot_mm,
+                            rows: sh.rows.len() as u32,
+                        }
                     }),
                     unsaved: self.unsaved,
                     saved: self.saved.clone(),
+                    prepared: PreparedView {
+                        questions,
+                        problems,
+                        changes,
+                        diagnostics,
+                        answered_by_ai: open.answered_by.len() as u32,
+                        answered_any: !open.recipe.decisions.is_empty(),
+                        rows: rows_with_ids(project),
+                        group_by: match project.group_by {
+                            GroupBy::Colour => "colour".to_owned(),
+                            GroupBy::Layer => "layer".to_owned(),
+                        },
+                        outlines_on_fills: outline_role,
+                        size_mm: cutcraft_control::path::design_size_mm(project),
+                        scale: project.scale,
+                        excluded_rows: project.excluded_rows.len() as u32,
+                    },
                 })
             }
         };
@@ -816,6 +1016,39 @@ impl Worker {
             error: s.last_error.clone(),
             design,
             materials,
+            mats,
+            new_design: NewDesignView {
+                material: s.new_design.material.clone(),
+                mat: s.new_design.mat.clone(),
+            },
+            materials_error: s.materials_error.clone(),
+            units: match s.units {
+                cutcraft_control::Units::Inches => Units::Inches,
+                cutcraft_control::Units::Millimetres => Units::Millimetres,
+            },
+            font_size: s.font_size,
+            theme: match s.theme {
+                cutcraft_control::Theme::System => Theme::System,
+                cutcraft_control::Theme::Light => Theme::Light,
+                cutcraft_control::Theme::Dark => Theme::Dark,
+            },
+            snap: SnapView {
+                enabled: s.snap.enabled,
+                step_mm: s.snap.step_mm,
+            },
+            panel: PanelView {
+                order: s.panel.order.clone(),
+                locked: s.panel.locked.clone(),
+                open: s.panel.open.clone().into_iter().collect(),
+            },
+            screen: match s.view.screen {
+                cutcraft_control::Screen::SideBySide => Screen::SideBySide,
+                cutcraft_control::Screen::Overlay => Screen::Overlay,
+                cutcraft_control::Screen::Mat => Screen::Mat,
+                cutcraft_control::Screen::Cut => Screen::Cut,
+                cutcraft_control::Screen::TestCut => Screen::TestCut,
+            },
+            history,
         })
     }
 
@@ -881,8 +1114,56 @@ impl Worker {
                     profile.sticky_mm
                 },
                 origin_mm: origin,
+                grid_origin_mm: profile.grid_origin_mm,
+                rulers: profile.rulers.map(ruler_name),
+                class: mat_name(sheet.mat),
+                approximate: profile.approximate,
             }),
             sheet: plan.operations.iter().map(|o| stroke(o, origin)).collect(),
+            ops: plan
+                .operations
+                .iter()
+                .map(|o| {
+                    let shift =
+                        |p: &[f64; 2]| [(p[0] + origin[0]) as f32, (p[1] + origin[1]) as f32];
+                    PlanOp {
+                        kind: serde_json::to_value(o.kind)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_owned))
+                            .unwrap_or_default(),
+                        colour: o.colour.clone(),
+                        item: o.item.clone(),
+                        sources: Vec::new(),
+                        points: o.points.iter().map(shift).collect(),
+                        tool_path: o
+                            .tool_path
+                            .as_ref()
+                            .map(|path| path.iter().map(shift).collect()),
+                    }
+                })
+                .collect(),
+            piece_mm: sheet.piece_mm.map(|size| {
+                let at = sheet.piece_at_mm.unwrap_or([0.0, 0.0]);
+                [at[0] + origin[0], at[1] + origin[1], size[0], size[1]]
+            }),
+            cutting_area_mm: plan.cutting_area_mm,
+            diagnostics: plan
+                .diagnostics
+                .iter()
+                .map(|d| PlanDiag {
+                    code: d.code.clone(),
+                    severity: match d.severity {
+                        cutcraft_control::job::Severity::Blocking => "blocking".into(),
+                        cutcraft_control::job::Severity::Info => "info".into(),
+                    },
+                    message: d.message.clone(),
+                    source_ids: d.source_ids.clone(),
+                })
+                .collect(),
+            mirror: plan.mirror,
+            material: plan.material.name.clone(),
+            design_size_mm: plan.design_size_mm,
+            bounds_mm: plan.bounds_mm.map(shift),
             art_box_mm: art.map(shift),
             test_spot_mm: spot,
             lines,
@@ -923,7 +1204,100 @@ fn stroke(op: &cutcraft_path::Operation, origin: [f64; 2]) -> Stroke {
             .iter()
             .map(|p| [(p[0] + origin[0]) as f32, (p[1] + origin[1]) as f32])
             .collect(),
+        item: op.item.clone(),
+        sources: Vec::new(),
+        included: true,
+        closed: op.closed,
     }
+}
+
+/// A registry `Material` as the browser's view of it: the same field names, so commands
+/// round-trip it unchanged.
+fn material_view(material: &cutcraft_control::job::Material) -> MaterialView {
+    MaterialView {
+        name: material.name.clone(),
+        blade: material.blade,
+        force: material.force,
+        speed: material.speed,
+        passes: material.passes,
+        mirror: material.mirror,
+        offset_method: serde_json::to_value(material.offset_method)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "off".into()),
+        offset_mm: material.offset_mm,
+        overcut_mm: material.overcut_mm,
+        notes: material.notes.clone(),
+        roll: material.roll,
+    }
+}
+
+/// A registry `MatProfile` as the browser's view of it: the same field names, so `mats.save`
+/// round-trips it unchanged.
+fn mat_view(mat: &cutcraft_control::job::MatProfile) -> MatView {
+    MatView {
+        name: mat.name.clone(),
+        outer_mm: mat.outer_mm,
+        sticky_mm: mat.sticky_mm,
+        grid_origin_mm: mat.grid_origin_mm,
+        rulers: mat.rulers.map(ruler_name),
+        cut_origin_mm: mat.cut_origin_mm,
+        class: mat_name(mat.class),
+        approximate: mat.approximate,
+    }
+}
+
+/// A ruler edge's units, as the registry names them.
+fn ruler_name(unit: cutcraft_control::job::RulerUnit) -> String {
+    match unit {
+        cutcraft_control::job::RulerUnit::Inches => "inches".to_owned(),
+        cutcraft_control::job::RulerUnit::Centimetres => "centimetres".to_owned(),
+        cutcraft_control::job::RulerUnit::None => "none".to_owned(),
+    }
+}
+
+fn mat_name(mat: cutcraft_control::job::Mat) -> String {
+    serde_json::to_value(mat)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "mat12x12".into())
+}
+
+/// The rows of What to cut (spec §5.3), with the prepared items each covers, so *Show me* and
+/// pointing work without another round trip.
+fn rows_with_ids(project: &cutcraft_control::job::Project) -> Vec<RowView> {
+    let prepared = &project.prepared;
+    project
+        .sheets
+        .iter()
+        .flat_map(|s| s.rows.iter())
+        .map(|row| {
+            let mut pieces = 0;
+            let mut lines = 0;
+            let mut ids = Vec::new();
+            for piece in &prepared.pieces {
+                if row.has_piece(&piece.colour, &piece.layer) {
+                    pieces += 1;
+                    ids.push(piece.id.clone());
+                }
+            }
+            for line in &prepared.cut_lines {
+                if row.has_line(&line.colour, &line.layer) {
+                    lines += 1;
+                    ids.push(line.id.clone());
+                }
+            }
+            RowView {
+                key: serde_json::to_value(row).unwrap_or(Value::Null),
+                label: row.label(),
+                colour: row.colour().map(|c| c.hex.clone()),
+                included: !project.excluded_rows.contains(row),
+                pieces,
+                cut_lines: lines,
+                ids,
+            }
+        })
+        .collect()
 }
 
 /// Changes whenever the vectors or the plan change.
@@ -1035,7 +1409,7 @@ mod tests {
 
     fn snapshot(w: &mut Worker) -> SessionSnapshot {
         match w.answer(WorkerRequest::Snapshot) {
-            WorkerReply::Snapshot(s) => s,
+            WorkerReply::Snapshot(s) => *s,
             other => panic!("{other:?}"),
         }
     }
@@ -1335,7 +1709,8 @@ mod tests {
             panic!("no export");
         };
         assert!(saved.is_none());
-        assert!(project.contains("cutcraft-project") && plan.contains("plan_id"));
+        assert!(project.contains("cutcraft-project"));
+        assert!(plan.as_deref().is_some_and(|p| p.contains("plan_id")));
         let saved = SavedRef {
             job: "j1".into(),
             revision: 1,
@@ -1353,6 +1728,150 @@ mod tests {
         let design = snapshot(&mut w).design.unwrap();
         assert!(!design.unsaved);
         assert_eq!(design.saved, Some(saved));
+    }
+
+    /// A design whose questions are unanswered is not cut-ready: it still saves (spec §11), but
+    /// the validated cut copy is refused. Neither names the worker's server-local source path.
+    #[test]
+    fn an_unfinished_project_saves_but_has_no_validated_copy() {
+        const TINY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><circle cx="5" cy="5" r="0.2" fill="#d22"/></svg>"##;
+        let dir = area();
+        std::fs::write(dir.path().join("designs/tiny.svg"), TINY).unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let s = snapshot(&mut w);
+        assert!(matches!(
+            w.answer(WorkerRequest::Open(OpenRequest {
+                source: OpenSource::Upload {
+                    file: "tiny.svg".into(),
+                    name: "tiny.svg".into(),
+                },
+                request: None,
+                key: "open".into(),
+                incarnation: s.incarnation,
+                revision: s.revision,
+                replace_unsaved: false,
+            })),
+            WorkerReply::Command(CommandReply::Applied { .. })
+        ));
+        let s = snapshot(&mut w);
+        let design = s.design.unwrap();
+        assert!(!design.cut_ready, "{:?}", design.prepared.questions);
+        assert!(!design.prepared.questions.is_empty());
+        let WorkerReply::Export { project, plan, .. } = w.answer(WorkerRequest::Export) else {
+            panic!("no export");
+        };
+        // The project saves, plan best-effort, and neither betrays where the worker reads it.
+        let area = dir.path().to_string_lossy().into_owned();
+        assert!(!project.contains(&area), "the export names its area");
+        assert!(plan.is_some());
+        match w.answer(WorkerRequest::ExportValidated) {
+            WorkerReply::Failed { message } => {
+                assert!(message.contains("issues"), "{message}")
+            }
+            other => panic!("the validated copy was not refused: {other:?}"),
+        }
+    }
+
+    /// The validated export is what the cut-copy handoff receives: a checked plan, and no local
+    /// path either.
+    #[test]
+    fn the_validated_export_carries_a_checked_plan_and_no_local_path() {
+        let dir = area();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        open(&mut w);
+        let WorkerReply::ExportValidated { project, plan, .. } =
+            w.answer(WorkerRequest::ExportValidated)
+        else {
+            panic!("no validated export");
+        };
+        assert!(plan.contains("plan_id"));
+        let area = dir.path().to_string_lossy().into_owned();
+        assert!(!project.contains(&area), "the copy names its area");
+    }
+
+    /// Spec §12: the geometry the desktop draws carries the plan's operations in cut order, on
+    /// the mat, and the mat's own rulers and class.
+    #[test]
+    fn the_geometry_carries_the_plan_and_the_mat_for_the_desktop() {
+        let dir = area();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        open(&mut w);
+        let WorkerReply::Geometry(g) = w.answer(WorkerRequest::Geometry) else {
+            panic!("no geometry");
+        };
+        let mat = g.mat.as_ref().expect("a mat");
+        assert_eq!(mat.class, "mat12x12");
+        assert_eq!(mat.rulers, ["inches", "inches", "inches", "inches"]);
+        assert!(g.cutting_area_mm[0] > 0.0 && g.cutting_area_mm[1] > 0.0);
+        assert!(!g.material.is_empty());
+        assert!(!g.ops.is_empty());
+        assert!(g.ops.iter().all(|o| {
+            matches!(
+                o.kind.as_str(),
+                "hole" | "outline" | "line" | "weeding_box" | "weed_line" | "mark"
+            )
+        }));
+        // On the mat, in mat mm: every point falls inside the mat's outer size.
+        assert!(g.ops.iter().all(|o| {
+            o.points.iter().all(|p| {
+                p[0] >= 0.0
+                    && p[0] <= mat.outer_mm[0] as f32
+                    && p[1] >= 0.0
+                    && p[1] <= mat.outer_mm[1] as f32
+            })
+        }));
+        assert!(!g.sheet.is_empty());
+    }
+
+    /// Spec §10: the browser uploads a newer design file and the session replays its decisions
+    /// on it. The file is already in the person's area; an unsafe name never reaches the disk.
+    #[test]
+    fn an_update_from_a_newer_file_replays_the_project() {
+        let dir = area();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let opened = open(&mut w);
+        std::fs::write(
+            dir.path().join("designs/star.svg"),
+            STAR.replace("#d22", "#22d"),
+        )
+        .unwrap();
+        let WorkerReply::Command(reply) = w.answer(WorkerRequest::Update {
+            file: "star.svg".into(),
+        }) else {
+            panic!("no update reply");
+        };
+        let CommandReply::Applied { revision, .. } = reply else {
+            panic!("{reply:?}")
+        };
+        assert!(revision > opened.revision);
+        let design = snapshot(&mut w).design.unwrap();
+        assert_eq!(design.prepared.rows[0].colour.as_deref(), Some("#2222dd"));
+        let WorkerReply::Command(refused) = w.answer(WorkerRequest::Update {
+            file: "../outside.svg".into(),
+        }) else {
+            panic!("no update reply");
+        };
+        assert!(
+            matches!(refused, CommandReply::Refused { .. }),
+            "{refused:?}"
+        );
+    }
+
+    /// Spec §10: the person's fonts changed in their area, so the open design is prepared again
+    /// from its stored bytes with its decisions kept.
+    #[test]
+    fn reloading_fonts_prepares_the_open_design_again() {
+        let dir = area();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let opened = open(&mut w);
+        match w.answer(WorkerRequest::ReloadFonts) {
+            WorkerReply::Snapshot(s) => {
+                assert!(s.revision > opened.revision);
+                let design = s.design.expect("the design stays open");
+                assert_eq!(design.name, "star.svg");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// Spec §8: the material and mat lists are the household's. Two people's workers edit them
@@ -1387,8 +1906,8 @@ mod tests {
             snapshot(w).materials
         };
         for list in [names(&mut sam), names(&mut alex)] {
-            assert!(list.iter().any(|m| m == "Sam's vinyl"), "{list:?}");
-            assert!(list.iter().any(|m| m == "Alex's vinyl"), "{list:?}");
+            assert!(list.iter().any(|m| m.name == "Sam's vinyl"), "{list:?}");
+            assert!(list.iter().any(|m| m.name == "Alex's vinyl"), "{list:?}");
         }
         assert!(lists.path().join("materials.json").is_file());
     }

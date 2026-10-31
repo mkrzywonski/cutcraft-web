@@ -13,6 +13,6 @@ pub use prepared::{
 };
 pub use project::{
     CompletedSheet, CutRecord, GroupBy, MachineProfile, Mat, MatProfile, Material, OffsetMethod,
-    Placement, Project, RowKey, RulerUnit, Sheet, Status,
+    Placement, Project, RowKey, RulerUnit, Sheet, Snap, Status, Units,
 };
 pub use project_file::{EmbeddedSource, ProjectFile};

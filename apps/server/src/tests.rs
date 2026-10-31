@@ -2046,7 +2046,7 @@ async fn a_material_saved_by_one_person_reaches_everyone_elses_session() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|m| m == "Household glitter"),
+            .any(|m| m["name"] == "Household glitter"),
         "{alexs}"
     );
     assert!(h.app.service.lists.join("materials.json").is_file());

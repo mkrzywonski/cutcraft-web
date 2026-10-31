@@ -510,7 +510,7 @@ impl Sessions {
                                 // request is a stale command or a replay, rather than a Snapshot.
                                 if !matches!(request, WorkerRequest::Snapshot) {
                                     match worker.ask(&WorkerRequest::Snapshot).await {
-                                        Ok(WorkerReply::Snapshot(snapshot)) => cache_snapshot(&session, snapshot),
+                                        Ok(WorkerReply::Snapshot(snapshot)) => cache_snapshot(&session, *snapshot),
                                         _ => { worker.close().await; return Err(ApiError::new(503,"worker-stopped","The design worker could not recover its draft.")); }
                                     }
                                 }
@@ -523,7 +523,7 @@ impl Sessions {
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
             }
-            set_phase(&session,match &request { WorkerRequest::Open(_)=>Some("Opening and making cut-ready…"),WorkerRequest::Picture(_)=>Some("Rendering preview…"),WorkerRequest::Command(_)|WorkerRequest::Export=>Some("Preparing…"),_=>None });
+            set_phase(&session,match &request { WorkerRequest::Open(_)=>Some("Opening and making cut-ready…"),WorkerRequest::Picture(_)=>Some("Rendering preview…"),WorkerRequest::Command(_)|WorkerRequest::Export=>Some("Preparing…"),WorkerRequest::Update{..}=>Some("Updating from the newer file…"),_=>None });
             *session.current_key.lock().unwrap_or_else(|p|p.into_inner())=key.clone();
             let worker=link.as_mut().expect("just started");
             let obsolete=picture.is_some_and(|generation|generation!=session.pictures.load(std::sync::atomic::Ordering::SeqCst))
@@ -537,7 +537,7 @@ impl Sessions {
             }
             let result = match worker.ask_inner(&request,Some(&session)).await {
                 Ok(reply) => {
-                    if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,snapshot.clone()); }
+                    if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,(**snapshot).clone()); }
                     Ok(reply)
                 },
                 Err(e) => {
@@ -859,8 +859,9 @@ pub(crate) async fn prepare_copy(
                 "This project changed. Review it before cutting.",
             ));
         }
-        let (name, project, plan) = match app.design.ask(&p, WorkerRequest::Export).await? {
-            WorkerReply::Export {
+        let (name, project, plan) = match app.design.ask(&p, WorkerRequest::ExportValidated).await?
+        {
+            WorkerReply::ExportValidated {
                 name,
                 project,
                 plan,
@@ -967,7 +968,7 @@ pub(crate) async fn session_status(
         return Ok(snapshot);
     }
     match app.design.ask(p, WorkerRequest::Snapshot).await? {
-        WorkerReply::Snapshot(snapshot) => Ok(snapshot),
+        WorkerReply::Snapshot(snapshot) => Ok(*snapshot),
         _ => Err(unexpected()),
     }
 }
@@ -1221,7 +1222,7 @@ pub async fn geometry(
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
     match app.design.ask(&p, WorkerRequest::Geometry).await? {
-        WorkerReply::Geometry(g) => Ok(Json(g).into_response()),
+        WorkerReply::Geometry(g) => Ok(Json(*g).into_response()),
         WorkerReply::Failed { message } => Err(ApiError::new(422, "plan-unavailable", message)),
         _ => Err(unexpected()),
     }
@@ -1655,6 +1656,14 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
         WorkerReply::Failed { message } => return Err(ApiError::new(422, "design", message)),
         _ => return Err(unexpected()),
     };
+    // Best-effort export carries the plan even when it is invalid; a project that cannot be
+    // planned at all cannot be saved, because the library's cut path reads the plan (spec §11).
+    let Some(plan) = plan else {
+        return Ok(refusal(
+            "not-planned",
+            "This design can't be planned yet: finish choosing what to cut, then save.",
+        ));
+    };
     let (job_id, folder, name) = match (&body.save_as, &saved) {
         (Some(as_), _) => (None, as_.folder.clone(), as_.name.clone()),
         (None, Some(base)) => (Some(base.job.clone()), Vec::new(), name),
@@ -1738,7 +1747,7 @@ mod tests {
     }
     async fn snap(sessions: &Sessions, p: &Principal) -> cutcraft_web_protocol::SessionSnapshot {
         match sessions.ask(p, WorkerRequest::Snapshot).await.unwrap() {
-            WorkerReply::Snapshot(s) => s,
+            WorkerReply::Snapshot(s) => *s,
             other => panic!("{other:?}"),
         }
     }

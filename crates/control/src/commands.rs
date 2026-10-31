@@ -579,6 +579,13 @@ struct FontSizeParams {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct ThemeParams {
+    /// `system`, `light` or `dark`.
+    theme: crate::settings::Theme,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct NewDesignParams {
     /// A material name from `materials.list` (a unique start is enough); "" goes back to the
     /// material last used. Left out, it is unchanged.
@@ -1072,6 +1079,16 @@ fn registry() -> Vec<Spec> {
             Nothing,
             FontSizeParams,
             "Set the saved font size for menus, panels and dialogs, from 10 to 24 points (default 14)."
+        ),
+        spec!(
+            "settings.theme",
+            "Colour scheme",
+            Some("View"),
+            None,
+            Edit,
+            Nothing,
+            ThemeParams,
+            "Set the interface's colour scheme: follow the device, light or dark."
         ),
         spec!(
             "settings.snap",
@@ -2390,12 +2407,27 @@ impl Controller {
             }
             "settings.units" => {
                 let p: UnitsParams = decode(params)?;
-                self.0
-                    .store
-                    .save_units(p.units)
-                    .map_err(CommandError::failed)?;
-                self.change(|s| s.units = p.units)
-                    .map_err(CommandError::failed)?;
+                // With a design open the choice belongs to the project, so it is saved with it
+                // (spec §8); without one it becomes the person's default for new designs.
+                if self
+                    .snapshot()
+                    .map_err(CommandError::failed)?
+                    .design
+                    .is_some()
+                {
+                    self.edit_project(|project| {
+                        let snap = project.snap;
+                        project.set_display(p.units, snap);
+                        Ok(json!({"units": p.units}))
+                    })?;
+                } else {
+                    self.0
+                        .store
+                        .save_units(p.units)
+                        .map_err(CommandError::failed)?;
+                    self.change(|s| s.units = p.units)
+                        .map_err(CommandError::failed)?;
+                }
                 value(json!({"units": p.units}))
             }
             "settings.font_size" => {
@@ -2414,6 +2446,16 @@ impl Controller {
                     .map_err(CommandError::failed)?;
                 value(json!({"points": p.points}))
             }
+            "settings.theme" => {
+                let p: ThemeParams = decode(params)?;
+                self.0
+                    .store
+                    .save_theme(p.theme)
+                    .map_err(CommandError::failed)?;
+                self.change(|s| s.theme = p.theme)
+                    .map_err(CommandError::failed)?;
+                value(json!({"theme": p.theme}))
+            }
             "settings.snap" => {
                 let p: SnapParams = decode(params)?;
                 let mut snap = self.snapshot().map_err(CommandError::failed)?.snap;
@@ -2429,9 +2471,24 @@ impl Controller {
                 if let Some(enabled) = p.enabled {
                     snap.enabled = enabled;
                 }
-                self.0.store.save_snap(snap).map_err(CommandError::failed)?;
-                self.change(|s| s.snap = snap)
-                    .map_err(CommandError::failed)?;
+                // Like units: the open project's own snap, saved with it; the person's default
+                // only when nothing is open (spec §8).
+                if self
+                    .snapshot()
+                    .map_err(CommandError::failed)?
+                    .design
+                    .is_some()
+                {
+                    self.edit_project(|project| {
+                        let units = project.units;
+                        project.set_display(units, snap);
+                        Ok(json!(snap))
+                    })?;
+                } else {
+                    self.0.store.save_snap(snap).map_err(CommandError::failed)?;
+                    self.change(|s| s.snap = snap)
+                        .map_err(CommandError::failed)?;
+                }
                 value(json!(snap))
             }
             "settings.panel" => {
@@ -2812,6 +2869,9 @@ impl Controller {
             material.mirror = s.mirror;
             material
         });
+        // Units and snap live in the project (spec §8): the window follows whatever it says now.
+        state.units = changed.project.units;
+        state.snap = changed.project.snap;
         state.design = Some(Arc::new(changed));
         state.revision += 1;
         drop(state);
@@ -3844,6 +3904,7 @@ pub(crate) fn result_schema(id: &str) -> Value {
         "mats.list" => schema::<Vec<cutcraft_import::job::MatProfile>>(),
         "settings.units" => fields(&[("units", S, "inches or millimetres.")]),
         "settings.font_size" => fields(&[("points", N, "Base interface font size in points.")]),
+        "settings.theme" => fields(&[("theme", S, "system, light or dark.")]),
         "settings.snap" => schema::<crate::Snap>(),
         "settings.panel" => schema::<crate::PanelLayout>(),
         "settings.new_design" => schema::<crate::NewDesign>(),

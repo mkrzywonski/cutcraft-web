@@ -61,6 +61,14 @@ impl RowKey {
         rows
     }
 
+    /// The row's colour, when it is one (a layer row spans colours).
+    pub fn colour(&self) -> Option<&Colour> {
+        match self {
+            RowKey::Pieces { colour } | RowKey::CutLines { colour } => Some(colour),
+            RowKey::Layer { .. } => None,
+        }
+    }
+
     pub fn has_piece(&self, colour: &Colour, layer: &str) -> bool {
         match self {
             RowKey::Pieces { colour: c } => c == colour,
@@ -295,6 +303,38 @@ pub enum Mat {
     /// Material straight from a roll, loaded without a mat. Planned and simulated; cutting it
     /// on the real Cameo waits for its own hardware tests (spec §7.2).
     Roll,
+}
+
+/// How lengths are shown and typed (stored values are always mm). Kept with the project, so
+/// everyone who opens it sees the same (spec §8); a new project takes the person's default.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Units {
+    #[default]
+    Inches,
+    Millimetres,
+}
+
+/// Snap to grid on the Cut preview: drags land on multiples of `step_mm` on the mat's rulers.
+/// Kept with the project (spec §8), like [`Units`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Snap {
+    pub enabled: bool,
+    /// The grid step; none until they set one (¼ in, or 5 mm when lengths are in mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_mm: Option<f64>,
+}
+
+impl Snap {
+    /// The step in use.
+    pub fn step(&self, units: Units) -> f64 {
+        self.step_mm.unwrap_or(match units {
+            Units::Inches => 6.35,
+            Units::Millimetres => 5.0,
+        })
+    }
 }
 
 /// The units printed along one edge of a mat's grid.
@@ -624,6 +664,12 @@ pub struct Project {
     /// colours still fit together (spec §5.1.1).
     #[serde(default = "unit_scale")]
     pub scale: f64,
+    /// How lengths are shown and typed, and the Cut preview's snap (spec §8). Projects saved
+    /// before these fields exist read with the defaults, inches and snap off.
+    #[serde(default)]
+    pub units: Units,
+    #[serde(default)]
+    pub snap: Snap,
     /// Increases with every change; a plan records the revision it was made from.
     pub revision: u64,
     /// Sheets already cut. Not an edit: it changes neither the revision nor any plan.
@@ -674,9 +720,18 @@ impl Project {
             sheets,
             machine,
             scale: 1.0,
+            units: Units::default(),
+            snap: Snap::default(),
             revision: 0,
             cut_record: CutRecord::default(),
         }
+    }
+
+    /// How lengths are shown, and the Cut preview's snap (spec §8). Not an edit: they change
+    /// neither the revision nor any plan, but they are saved with the project.
+    pub fn set_display(&mut self, units: Units, snap: Snap) {
+        self.units = units;
+        self.snap = snap;
     }
 
     /// Resize the whole design, keeping its proportions (spec §5.1.1).
