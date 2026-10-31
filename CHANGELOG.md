@@ -4,6 +4,21 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.15.0 — 2026-10-31
+
+- 
+
+## 0.15.0 — 2026-10-31
+
+- Start `cutcraft-ui`, the desktop layout's client half, with the typed session model (spec §7,
+  §13): changes are recorded under host-minted keys and the same key twice is refused however it
+  is asked; applied and refused replies both settle their key for good and are kept (bounded) for
+  a reloaded dialog; after a reconnect or reload nothing is re-sent blindly — pending changes are
+  looked up, and only a *not applied* result frees the same key to carry the same body again; a
+  new incarnation voids pending and keeps answers; a `Checkpoint` round-trips through storage so
+  a reload resumes the session instead of minting keys. Nine unit tests cover each rule; the
+  transport and the window that use it come next.
+
 ## 0.14.0 — 2026-10-31
 
 - Type the desktop's whole view of the session in `cutcraft-web-protocol` 6: the issue, info and

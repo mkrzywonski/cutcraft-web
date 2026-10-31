@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -22,6 +22,7 @@ cutcraft-sim = { path = "crates/sim" }
 cutcraft-station = { path = "crates/station" }
 cameo-pi-core = { path = "crates/cameo-pi-core" }
 cutcraft-web-protocol = { path = "crates/protocol" }
+cutcraft-ui = { path = "crates/ui" }
 # The design engine: the one external code dependency, pinned to a full commit.
 vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }
 vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft", rev = "fa4e42762bf4e2b81d60c1043b2b729223d07fe7" }

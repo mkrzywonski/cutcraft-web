@@ -16,6 +16,9 @@ anonymous JSON.
 
 ## Landed
 
+- **0.15.0 — the typed client session model (`crates/ui`).** `Session`/`Reconciled`/`Checkpoint`
+  with reconcile-by-key, durable refusals, incarnation voiding and reload checkpoints, pure and
+  unit-tested (9 tests). Not yet wired to a transport or window.
 - **0.14.0 — the typed desktop view (protocol 6).** The session snapshot carries the issue/info
   cards, the rows with their prepared items, the sheet's settings, the material and mat lists in
   the registry's own field names, per-project units and snap, per-person theme, the panel
@@ -29,10 +32,10 @@ anonymous JSON.
 
 ## Open gates
 
-- [ ] The desktop window: `crates/ui` (egui to wasm), CutCraft's chrome and panels drawn from the
-      typed snapshot, served at `/desktop` behind the account check (§9.2).
-- [ ] The client session model in Rust: typed `Session`/`Pending`/`Settle` with reconcile-by-key
-      and reload checkpoints (the class of bug that failed Grok's first attempt), unit-tested.
+- [ ] The desktop window: `crates/ui` grows its egui-to-wasm half — CutCraft's chrome and panels
+      drawn from the typed snapshot, served at `/desktop` behind the account check (§9.2) — with
+      the session model above as its client half (host: keys from real randomness, WebSocket
+      snapshots, lookup on reconnect, checkpoints in localStorage).
 - [ ] Desktop browser e2e: Save-As on first Save, view navigation, drag resizing, test cuts then
       a design cut, reload at both held points (the §13 row's currency).
 - [ ] Fonts licence check for the egui build (no default fonts; Source Sans 3 under OFL-1.1 as

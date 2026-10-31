@@ -1,0 +1,15 @@
+[package]
+name = "cutcraft-ui"
+description = "The desktop layout's client half: the typed session model now, the window to come (spec §7, §13)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+cutcraft-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
