@@ -84,3 +84,23 @@ Version 0.14.1 passed formatting, native and wasm Clippy, all 450 Rust tests, wo
 build, dependency policy, the desktop simulated workflow and 40 compact-browser assertions.
 The transport regression script also passed after adding the session-change case. These checks
 ran locally against authored fixtures; they do not close the remaining M4 gates above.
+
+## Prepared cut recovery
+
+The desktop can recover the current owned cut copy through the read-only preview response.
+Reloading before loading or between successful tests does not enqueue another turn or start
+motion. Cutter selection is a local display preference; Start still uses the current server
+boot, turn, revision, mat generation and action epoch. Waiting copies show their queue state.
+The desktop browser workflow now reloads both before loading and after the first test and
+checks that the turn and occupied test area survive.
+
+This does not yet close recovery acceptance: active-motion reload, unknown Start outcomes,
+Stop/account changes, and replacing a prepared copy after edits still need their complete
+implementation and failure tests. Replacement must compare source/session identity as well as
+project revision; a revision number alone is not an identity for a different opened design.
+
+Version 0.14.2 also passed formatting, native/wasm Clippy, all 450 Rust tests, workspace
+build and dependency policy. The expanded desktop workflow passed both reload points and
+continued through two tests and a design cut on the same simulated mat. Transport tests cover
+read-only recovery and dropping an in-flight preview after switching cutters. Compact-browser
+checks last passed at 0.14.1; the recovery change does not modify the compact client.

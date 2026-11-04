@@ -34,12 +34,13 @@ async function refresh(){
   if(snapshot.design?.geometry?.id && (snapshot.design.geometry.id!==old.design?.geometry?.id || !model.geometry.id)){
    const geometry=await api('/api/v1/design/geometry');if(model.snapshot.incarnation===snapshot.incarnation && model.snapshot.design?.geometry?.id===geometry.id)model.geometry=geometry;
   }
+  model.selectedCutter ||= model.preferences.cutter || model.state.cutters?.[0]?.id;
   const cutter=model.state.cutters?.find(c=>c.id===model.selectedCutter);
-  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && model.cut_preview?.copy && cutter.view.turn.job.job_id===model.cut_preview.copy.id && cutter.view.activity==='idle'){
+  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || cutter.view.turn.job.job_id===model.cut_preview.copy.id) && cutter.view.activity==='idle'){
     try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
-    model.cut_preview={...preview,copy:model.cut_preview?.copy};
-    } catch(e) {model.cut_preview={copy:model.cut_preview.copy};model.message=e.message;}
+    if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen)model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
+    } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
   }
   if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
   const art=snapshot.design?.art;
@@ -62,7 +63,7 @@ async function upload(file){if(!file)return;await execute(async()=>{const r=awai
 async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
 async function dispatch({action,params:p}){
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});await refresh();}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}return;}
- if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;return;}
+ if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='preference'){Object.assign(model.preferences,p);localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='reset-folds'){model.preferences.folds={};localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='layout'){localStorage.setItem('cutcraft.layout',p.layout);location.assign('/station');return;}

@@ -3373,6 +3373,7 @@ async fn queued_private_cut_preview_remains_owned_by_its_creator() {
     let (status, preview) = send(&h.app, request(&first)).await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert!(preview["geometry"]["sheet"].is_array());
+    assert_eq!(preview["copy"], copied["value"]["copy"]);
     let (status, body) = send(&h.app, request(&other)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(body.get("geometry").is_none());

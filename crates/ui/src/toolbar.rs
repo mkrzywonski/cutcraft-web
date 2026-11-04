@@ -257,7 +257,7 @@ impl Desktop {
             "view.show",
             json!({"screen":if test{"test-cut"}else{"cut"}}),
         );
-        self.cut_copy = None;
+
         self.send("select-cutter", json!({"cutter":self.cutter}));
     }
     pub fn cut_busy(&self) -> bool {
@@ -309,10 +309,10 @@ impl Desktop {
         egui::Panel::right("loading-controls").default_size(370.).min_size(310.).show(ui,|ui|{
             ui.heading(if test{"Test Cut"}else{"Cut"});
             let cutters=list(&self.remote.state["cutters"]);
-            if self.cutter.is_empty()&& let Some(c)=cutters.first(){self.cutter=text(&c["id"]).into();}
+            if self.cutter.is_empty(){self.cutter=text(&self.remote.preferences["cutter"]).into();if self.cutter.is_empty()&& let Some(c)=cutters.first(){self.cutter=text(&c["id"]).into();}}
             let before=self.cutter.clone();
             egui::ComboBox::from_label("Cutter").selected_text(&self.cutter).show_ui(ui,|ui|{for c in &cutters{let id=text(&c["id"]);ui.selectable_value(&mut self.cutter,id.into(),text(&c["view"]["name"]));}});
-            if self.cutter!=before{self.cut_copy=None;self.send("select-cutter",json!({"cutter":self.cutter}));}
+            if self.cutter!=before{self.send("select-cutter",json!({"cutter":self.cutter}));}
             let cutter=cutters.iter().find(|c|c["id"]==self.cutter).cloned().unwrap_or_default();let v=cutter["view"].clone();
             ui.separator();
             let preview=self.remote.cut_preview.clone();let busy=self.cut_busy();
@@ -320,7 +320,9 @@ impl Desktop {
             ui.strong(text(&material["name"]));
             ui.label(format!("Blade {} · force {} · speed {} · {} pass(es)",material["blade"],material["force"],material["speed"],material["passes"]));
             for (n,step) in list(&preview["steps"]).iter().enumerate(){ui.label(format!("{}. {}",n+1,text(step)));}
-            if preview.is_null() || preview["geometry"].is_null(){ui.label("Choose a cutter to prepare the loading instructions.");if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
+            let waiting=preview["copy"]["id"].as_str().is_some_and(|id|list(&v["queue"]).iter().any(|q|q["job"]["job_id"]==id));
+            if waiting{ui.strong("Waiting for this cutter");ui.label("Your prepared cut is in the queue. Start will be available when it is your turn and the mat is ready.");}
+            if !waiting && (preview.is_null() || preview["geometry"].is_null()){ui.label("Choose a cutter to prepare the loading instructions.");if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
             ui.separator();
             let state=text(&v["activity"]);ui.strong(match state{"testing"=>"Test cut in progress","cutting"=>"Cutting","paused"=>"Paused","stopping"=>"Stopping — waiting for confirmation","confirming-stop"=>"Checking that the cutter stopped","check-cutter"=>"Check the cutter",_=>if v["mat_loaded"]==true{"Mat loaded"}else{"Load the mat"}});
             if busy {
@@ -339,7 +341,7 @@ impl Desktop {
                     ui.label("Check how the pattern weeds. Adjust material settings if needed, or try another pattern.");
                     if self.button(ui,"Try another pattern",!self.remote.pending){self.reviewed_tests=tests;}
                 }
-                let own_copy=self.cut_copy.as_ref().or(preview.get("copy"));
+                let own_copy=preview.get("copy").filter(|c|!c.is_null());
                 let ready=(!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
                 if self.button(ui,"Start",ready){let start=json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});self.send("start",json!({"cutter":self.cutter,"start":start}));}
                 if v["mat"]["state"]=="used" {ui.strong("Cut finished");ui.label("Unload and load fresh material for another cut.");}

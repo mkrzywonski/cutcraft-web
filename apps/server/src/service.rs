@@ -445,14 +445,15 @@ impl Service {
         let turn = view
             .turn
             .ok_or_else(|| ApiError::bad_request("Nothing is prepared for this cutter."))?;
-        if crate::copies::is_copy(&turn.job.job_id)
-            && !self
-                .copies
-                .get(&turn.job.job_id, turn.job.revision)?
-                .owned_by(owner)
-        {
-            return Err(ApiError::not_found());
-        }
+        let copy = if crate::copies::is_copy(&turn.job.job_id) {
+            let stored = self.copies.get(&turn.job.job_id, turn.job.revision)?;
+            if !stored.owned_by(owner) {
+                return Err(ApiError::not_found());
+            }
+            Some(stored.view)
+        } else {
+            None
+        };
         let (plan, project) =
             self.plan_for_cut(entry, kind, &turn.job.job_id, turn.job.revision)?;
         let sheet = project
@@ -464,7 +465,7 @@ impl Service {
         let origin = profile.cut_origin_mm;
         let strokes:Vec<_>=plan.operations.iter().map(|o|json!({"colour":o.colour.as_deref().unwrap_or("#235f5a"),"aid":o.kind.is_aid(),"points":o.points.iter().map(|p|[p[0]+origin[0],p[1]+origin[1]]).collect::<Vec<_>>()})).collect();
         Ok(
-            json!({"job":turn.job,"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
+            json!({"copy":copy,"job":turn.job,"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
             "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin},"sheet":strokes,"lines":[]},
             "estimate_s":plan.estimate_s}),
         )

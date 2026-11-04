@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.14.2 — 2026-10-29
+
+- Recover an owned prepared cut after reloading the desktop page without queueing another copy or starting motion. Retain the selected cutter and show when a prepared copy is waiting in its queue.
+
 ## 0.14.1 — 2026-10-29
 
 - Keep queued private cut previews visible only to their owner. Waiting cuts no longer request another person’s preview, and preview errors leave the rest of the workspace connected.

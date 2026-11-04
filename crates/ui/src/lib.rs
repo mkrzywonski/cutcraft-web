@@ -69,7 +69,6 @@ pub struct Desktop {
     pub playing: bool,
     pub cutter: String,
     pub last_result: u64,
-    pub cut_copy: Option<Value>,
     pub close_after_save: bool,
     pub reviewed_tests: u64,
     pub dark: bool,
@@ -98,7 +97,6 @@ impl Default for Desktop {
             playing: false,
             cutter: String::new(),
             last_result: 0,
-            cut_copy: None,
             close_after_save: false,
             reviewed_tests: 0,
             dark: false,
@@ -174,9 +172,6 @@ impl Desktop {
         self.dark = self.remote.preferences["dark"].as_bool().unwrap_or(false);
         if self.remote.result_id != self.last_result {
             self.last_result = self.remote.result_id;
-            if let Some(copy) = self.remote.result.get("copy") {
-                self.cut_copy = Some(copy.clone());
-            }
             if self.remote.result["error_code"] == "saved-elsewhere" {
                 self.open_dialog("save-conflict", "This project was saved elsewhere");
             }
