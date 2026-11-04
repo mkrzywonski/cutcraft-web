@@ -104,3 +104,19 @@ build and dependency policy. The expanded desktop workflow passed both reload po
 continued through two tests and a design cut on the same simulated mat. Transport tests cover
 read-only recovery and dropping an in-flight preview after switching cutters. Compact-browser
 checks last passed at 0.14.1; the recovery change does not modify the compact client.
+
+## Comparison canvas follow-up (2026-11-04)
+
+Addressed Zulip #126: the checkerboard now uses its pane's paint clip, so panning cannot
+paint across the comparison divider. The regression inspects actual canvas paint clips in
+both pan directions; it fails when the old whole-canvas clip is restored. Comparison views
+now pan with the wheel (Shift for horizontal motion), support middle-button drag, and anchor
+modifier-wheel/pinch zoom to the pointer, including zoom limits. The panned browser capture
+was inspected visually. These display gestures do not change project state.
+
+This closes the reported pane bleed and the pointer-anchor issue. Region rendering, full
+reference gesture acceptance, rulers, settling overlays and playback remain open as listed above.
+
+Version 0.14.3 passed formatting, native/wasm Clippy, all 452 Rust tests, workspace build,
+dependency policy, transport regressions and the expanded desktop browser workflow (including
+pan/Fit, reload recovery and simulated cuts). No hardware or Safari acceptance is claimed.

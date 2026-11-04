@@ -86,13 +86,38 @@ impl Desktop {
             },
         );
         if !mat {
-            if response.dragged() {
-                self.pan += response.drag_delta();
+            let middle = response.dragged_by(egui::PointerButton::Middle);
+            if middle || response.dragged_by(egui::PointerButton::Primary) {
+                self.pan += ui.input(|i| i.pointer.delta());
             }
             if response.hovered() {
-                let delta = ui.input(|i| i.smooth_scroll_delta.y);
-                if delta != 0. {
-                    self.zoom = (self.zoom * (delta * 0.002).exp()).clamp(0.1, 50.);
+                let (mut scroll, shift, zoom, pointer) = ui.input(|i| {
+                    (
+                        i.smooth_scroll_delta,
+                        i.modifiers.shift,
+                        i.zoom_delta(),
+                        i.pointer.hover_pos(),
+                    )
+                });
+                if zoom != 1. {
+                    if let Some(pointer) = pointer {
+                        let panes = if self.screen() == "side-by-side" {
+                            2.
+                        } else {
+                            1.
+                        };
+                        let width = rect.width() / panes;
+                        let pane = ((pointer.x - rect.left()) / width)
+                            .floor()
+                            .clamp(0., panes - 1.);
+                        let centre = Pos2::new(rect.left() + (pane + 0.5) * width, rect.center().y);
+                        zoom_at(&mut self.zoom, &mut self.pan, pointer - centre, zoom);
+                    }
+                } else {
+                    if shift && scroll.x == 0. {
+                        scroll = Vec2::new(scroll.y, 0.);
+                    }
+                    self.pan += scroll;
                 }
             }
         }
@@ -169,7 +194,7 @@ impl Desktop {
             let page = Rect::from_min_max(point(bounds[0], bounds[1]), point(bounds[2], bounds[3]));
             painter.rect_filled(page, 2, Color32::WHITE);
             if !mat {
-                let clipped = page.intersect(rect);
+                let clipped = page.intersect(painter.clip_rect());
                 let checker = ui.painter_at(clipped);
                 for y in 0..(clipped.height() / 12.).ceil() as i32 {
                     for x in 0..(clipped.width() / 12.).ceil() as i32 {
@@ -552,9 +577,67 @@ impl CanvasDrag {
         }
     }
 }
+/// Keep the source coordinate under the pointer fixed, including at zoom limits.
+fn zoom_at(zoom: &mut f32, pan: &mut Vec2, anchor: Vec2, factor: f32) {
+    let next = (*zoom * factor).clamp(0.1, 50.);
+    *pan = anchor + (*pan - anchor) * (next / *zoom);
+    *zoom = next;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn zoom_keeps_the_point_under_the_pointer_in_both_panes() {
+        for anchor in [Vec2::new(-70., 35.), Vec2::new(120., -80.)] {
+            let mut zoom = 1.;
+            let mut pan = Vec2::new(42., -19.);
+            let source = (anchor - pan) / zoom;
+            for factor in [2., 0.5, 1000., 0.00001] {
+                zoom_at(&mut zoom, &mut pan, anchor, factor);
+                assert!((pan + source * zoom - anchor).length() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn panned_comparison_checkerboard_stays_inside_its_pane() {
+        // Regression for the review's pane-divider bleed: inspect actual paint clips,
+        // with each page crossing its pane edge in either direction.
+        for pan_x in [-230., 230.] {
+            let mut desktop = Desktop::default();
+            desktop.remote.snapshot.design = Some(Default::default());
+            desktop.remote.snapshot.ui.screen = "side-by-side".into();
+            desktop.pan = Vec2::new(pan_x, 0.);
+            desktop.zoom = 2.;
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800., 600.))),
+                    ..Default::default()
+                },
+                |ui| desktop.canvas(ui),
+            );
+            output.textures_delta.clear();
+            let canvas = desktop.controls["Preview canvas"];
+            let divider = (canvas[0] + canvas[2]) * 0.5;
+            let mut checks = 0;
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Rect(rect) = shape.shape
+                    && rect.fill == Color32::from_gray(225)
+                {
+                    checks += 1;
+                    assert!(
+                        shape.clip_rect.right() <= divider || shape.clip_rect.left() >= divider,
+                        "checkerboard crossed the pane divider: {:?}",
+                        shape.clip_rect
+                    );
+                }
+            }
+            assert!(checks > 0);
+        }
+    }
+
     fn drag(target: &str, kind: &str) -> CanvasDrag {
         CanvasDrag {
             kind: kind.into(),

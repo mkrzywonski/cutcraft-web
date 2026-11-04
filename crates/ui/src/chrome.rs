@@ -1,4 +1,6 @@
-//! Original vector-drawn application chrome. No icon fonts or bitmap assets are required.
+//! Vector chrome adapted from CutCraft 1.0.5 (39654a9465ecdef7478703ee586276304dbc29c6),
+//! as retained in the M4 desktop work. See docs/provenance.md for the source files.
+//! No icon fonts or bitmap assets are required.
 use egui::{self, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 #[derive(Clone, Copy)]
