@@ -852,6 +852,7 @@ async fn a_new_revision_moves_the_turn_and_a_page_showing_the_old_one_starts_not
     let (_, j) = upload(&h.app, "revision-1").await;
     let id = j["id"].as_str().unwrap().to_owned();
     let actor = || Actor {
+        principal: "household".into(),
         user: None,
         client: "a browser".into(),
     };
@@ -2594,6 +2595,7 @@ async fn http_and_mcp_replay_the_same_copy_after_losing_the_worker_checkpoint() 
     let first = post_design(&h.app, "/api/v1/design/command", request.clone(), None).await;
     let caller = crate::http::Caller {
         actor: cameo_pi_core::cutter::Actor {
+            principal: "household".into(),
             user: None,
             client: "copy-test".into(),
         },
@@ -2755,6 +2757,7 @@ async fn an_acknowledged_start_survives_restart_before_the_driver_takes_it() {
     // Ordinary library/history removal cannot delete the cutter authority's accepted result.
     service.delete_job(&id).unwrap();
     let actor = cameo_pi_core::cutter::Actor {
+        principal: "household".into(),
         user: None,
         client: "reconnected".into(),
     };
@@ -2820,6 +2823,7 @@ fn stop_preempts_a_start_blocked_on_record_persistence() {
                 "practice",
                 serde_json::from_value(body).unwrap(),
                 cameo_pi_core::cutter::Actor {
+                    principal: "household".into(),
                     user: None,
                     client: "test".into(),
                 },
@@ -2928,6 +2932,7 @@ async fn waiting_turns_and_original_queue_results_survive_restart_without_mat_au
     let mut h = harness();
     let (id, _) = ready_start(&mut h, "queue-recovery").await;
     let actor = cameo_pi_core::cutter::Actor {
+        principal: "household".into(),
         user: Some("Tester".into()),
         client: "phone".into(),
     };
@@ -3001,6 +3006,7 @@ async fn a_main_start_consumed_before_queue_checkpoint_cannot_return_after_resta
     let mut h = harness();
     let (id, mut body) = ready_start(&mut h, "consumed-turn").await;
     let actor = cameo_pi_core::cutter::Actor {
+        principal: "household".into(),
         user: None,
         client: "phone".into(),
     };
@@ -3133,6 +3139,7 @@ fn a_start_cancelled_before_release_replays_a_durable_refusal() {
                     "practice",
                     serde_json::from_value(body).unwrap(),
                     cameo_pi_core::cutter::Actor {
+                        principal: "household".into(),
                         user: None,
                         client: "test".into(),
                     },
@@ -3157,6 +3164,7 @@ fn a_start_cancelled_before_release_replays_a_durable_refusal() {
             "start-cancelled"
         );
         let actor = cameo_pi_core::cutter::Actor {
+            principal: "household".into(),
             user: None,
             client: "retry".into(),
         };
@@ -3297,6 +3305,7 @@ async fn desktop_saves_unfinished_work_but_refuses_cut_copy() {
             copy_id,
             Some(1),
             cameo_pi_core::cutter::Actor {
+                principal: "household".into(),
                 user: None,
                 client: "browser".into(),
             },
@@ -3343,19 +3352,26 @@ async fn queued_private_cut_preview_remains_owned_by_its_creator() {
     let s = now(&h.app, Some(&first)).await;
     let copied=post_design(&h.app,"/api/v1/design/command",json!({"id":"cut.copy","params":{},"key":"private-copy","incarnation":s["incarnation"],"revision":s["revision"]}),Some(&first)).await;
     assert_eq!(copied["answer"], "applied", "{copied}");
-    h.app
-        .service
-        .queue(
-            "practice",
-            copied["value"]["copy"]["id"].as_str().unwrap(),
-            Some(1),
-            cameo_pi_core::cutter::Actor {
-                user: Some("Owner".into()),
-                client: "browser".into(),
-            },
-            "queue-private",
-        )
-        .unwrap();
+    let queued = post_design(
+        &h.app,
+        "/api/v1/cutters/practice/queue",
+        json!({"job_id":copied["value"]["copy"]["id"],"revision":1,"key":"queue-private"}),
+        Some(&first),
+    )
+    .await;
+    assert_eq!(queued["answer"], "queued", "{queued}");
+    let crate::users::Identity::User { id, .. } = users.identify(Some(&first)) else {
+        panic!("no owner")
+    };
+    assert_eq!(
+        cameo_pi_core::worker::lock(&h.app.service.cutter("practice").unwrap().shared)
+            .view()
+            .turn
+            .unwrap()
+            .actor
+            .principal,
+        id
+    );
     let request = |session: &str| {
         let mut request = page(
             "GET",

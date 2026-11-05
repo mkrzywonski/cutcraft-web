@@ -535,7 +535,15 @@ impl Service {
                 );
                 return Err(error);
             }
-            let committed = lock(&entry.shared).commit_start(&execution.id);
+            let committed = self
+                .users
+                .admit_principal(&execution.actor.principal, || {
+                    lock(&entry.shared).commit_start(&execution.id)
+                })
+                .unwrap_or_else(|| {
+                    lock(&entry.shared).abort_start(&execution.id);
+                    false
+                });
             if !committed {
                 lock(&entry.shared).remember_start_refusal(
                     execution.key.clone(),

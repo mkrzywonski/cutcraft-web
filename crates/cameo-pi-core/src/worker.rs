@@ -334,6 +334,7 @@ mod tests {
             run: Arc::new(calibration()),
             key: key.into(),
             actor: Actor {
+                principal: "household".into(),
                 user: None,
                 client: "test".into(),
             },

@@ -120,3 +120,19 @@ reference gesture acceptance, rulers, settling overlays and playback remain open
 Version 0.14.3 passed formatting, native/wasm Clippy, all 452 Rust tests, workspace build,
 dependency policy, transport regressions and the expanded desktop browser workflow (including
 pan/Fit, reload recovery and simulated cuts). No hardware or Safari acceptance is claimed.
+
+## Retained-load account identity (0.14.4)
+
+The cutter now binds retained test areas and manual fresh-mat confirmations to the authenticated
+stable account id. A second browser for that account can continue; another account or a legacy
+record without identity must load fresh material. A new physical load resets that binding.
+The service rechecks that the account still exists and is allowed to act immediately before
+releasing a staged Start, under the account lock. Deleted/recreated names and transition out of
+open mode do not inherit authority. HTTP queue tests verify the authenticated id reaches the
+cutter; core tests cover same-account reuse, another account, legacy identity, manual confirmation
+and fresh loading. Account tests cover removal/recreation and forced password changes.
+
+Formatting, native/wasm Clippy, all 456 Rust tests, workspace build, dependency policy,
+transport regressions, the desktop simulated workflow and 40 compact-browser assertions passed.
+This addresses the account-identity portion of retained-load reuse; compatible prepared-copy
+replacement and its failure tests remain required. No physical cutter was used.

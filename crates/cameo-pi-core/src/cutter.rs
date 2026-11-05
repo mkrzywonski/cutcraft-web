@@ -18,8 +18,18 @@ use crate::runnable::Runnable;
 /// Who asked: the user (when users exist) and the device, browser or program (spec §14.1).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
+    /// Authenticated account id, never a display name or browser-supplied label.
+    /// Legacy records have no authority to reuse a loaded mat.
+    #[serde(default)]
+    pub principal: String,
     pub user: Option<String>,
     pub client: String,
+}
+
+impl Actor {
+    fn same_person(&self, other: &Self) -> bool {
+        !self.principal.is_empty() && self.principal == other.principal
+    }
 }
 
 /// A job revision: what a turn is for. Revisions never change once published (spec §7.1).
@@ -988,6 +998,17 @@ impl Cutter {
         {
             return Err(Refusal::StaleMat);
         }
+        if self
+            .turn
+            .as_ref()
+            .is_some_and(|turn| turn.mat.is_some() && !turn.actor.same_person(&request.actor))
+            || self.confirmed.as_ref().is_some_and(|(confirmed, actor)| {
+                *confirmed == generation && !actor.same_person(&request.actor)
+            })
+        {
+            // Another person's confirmation or successful test is not fresh loading.
+            return Err(Refusal::StaleMat);
+        }
         let area = request.run.bounds_mm;
         if let (Some(turn), Some(area)) = (&self.turn, area)
             && turn.taken.iter().any(|t| overlaps(*t, area))
@@ -1009,6 +1030,7 @@ impl Cutter {
         let execution = self.new_id("exec");
         let controls = Arc::new(Controls::default());
         let turn = self.turn.as_mut().expect("a turn was just ensured");
+        turn.actor = request.actor.clone();
         turn.mat = Some(generation);
         let turn_id = turn.id.clone();
         self.activity = Activity::Running {
@@ -1449,6 +1471,7 @@ mod tests {
 
     fn actor() -> Actor {
         Actor {
+            principal: "household".into(),
             user: None,
             client: "test".into(),
         }
@@ -1515,6 +1538,63 @@ mod tests {
         let history = c.take_finished();
         assert_eq!(history.len(), 2);
         assert!(history.iter().all(|h| h.ended == Ended::Finished));
+    }
+
+    #[test]
+    fn retained_mat_belongs_to_the_account_not_its_name_or_browser() {
+        for principal in ["different-account", ""] {
+            let mut c = ready_cutter();
+            let (exec, turn) = started(c.start(request(&c, Kind::Test, None, "first")));
+            c.take_pending();
+            c.finished(&exec, Outcome::Completed { duration_s: 1. });
+            let before = c.view();
+            let mut next = request(&c, Kind::Main, Some(&turn), "other");
+            next.actor.principal = principal.into();
+            // Same display name/client must not authorize another account or legacy record.
+            assert_eq!(c.start(next), Err(Refusal::StaleMat));
+            assert!(c.take_pending().is_none());
+            assert_eq!(c.view().turn, before.turn);
+            let mut same = request(&c, Kind::Main, Some(&turn), "same");
+            same.actor.client = "another browser".into();
+            same.actor.user = Some("renamed account".into());
+            assert!(c.start(same).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_fresh_physical_load_allows_a_different_person_to_continue_the_turn() {
+        let mut c = ready_cutter();
+        let (exec, turn) = started(c.start(request(&c, Kind::Test, None, "first")));
+        c.take_pending();
+        c.finished(&exec, Outcome::Completed { duration_s: 1. });
+        c.observe(20., Reading::NoMedia);
+        c.observe(20.5, Reading::NoMedia);
+        for i in 0..8 {
+            c.observe(21. + f64::from(i) * 0.5, Reading::Ready);
+        }
+        let mut next = request(&c, Kind::Test, Some(&turn), "new-load");
+        next.generation = 2;
+        next.actor.principal = "new-account".into();
+        assert!(c.start(next).is_ok());
+        assert_eq!(c.view().turn.unwrap().actor.principal, "new-account");
+    }
+
+    #[test]
+    fn another_account_cannot_use_a_fresh_mat_confirmation() {
+        let mut c = ready_cutter();
+        c.disconnected();
+        c.connected();
+        for i in 0..8 {
+            c.observe(20. + f64::from(i) * 0.5, Reading::Ready);
+        }
+        let Answer::MatConfirmed { generation } = c.confirm_fresh(actor()).unwrap() else {
+            panic!("expected confirmation")
+        };
+        let mut next = request(&c, Kind::Main, None, "other");
+        next.generation = generation;
+        next.actor.principal = "another-account".into();
+        assert_eq!(c.start(next), Err(Refusal::StaleMat));
+        assert!(c.take_pending().is_none());
     }
 
     #[test]

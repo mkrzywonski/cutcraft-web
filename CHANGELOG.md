@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.14.4 — 2026-11-04
+
+- Bind loaded-mat reuse and fresh-mat confirmations to the same account, across its browsers. A different or recreated account must load fresh material. Recheck account authority before releasing a recorded Start to the cutter.
+
 ## 0.14.3 — 2026-11-04
 
 - Keep comparison-view backgrounds inside their own panes when panning. Scroll to pan, Shift-scroll horizontally, and use modifier-scroll or pinch to zoom around the pointer.

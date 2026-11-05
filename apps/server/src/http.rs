@@ -298,8 +298,15 @@ async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Resp
         Identity::User { name, .. } => Some(name.clone()),
         _ => None,
     };
+    let principal = crate::people::Principal::of(&identity)
+        .map(|p| p.id)
+        .unwrap_or_default();
     request.extensions_mut().insert(Caller {
-        actor: Actor { user, client },
+        actor: Actor {
+            principal,
+            user,
+            client,
+        },
         identity,
         session,
         key,

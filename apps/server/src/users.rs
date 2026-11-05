@@ -314,6 +314,23 @@ impl Users {
         matches!(&self.store().0, Ok(store) if store.users.is_empty())
     }
 
+    /// Release a staged cut only while its stable principal still exists and may act.
+    /// The short callback runs under the account lock, excluding concurrent account edits.
+    /// Callers must acquire this before the cutter lock, never the other way around.
+    pub fn admit_principal<T>(&self, principal: &str, release: impl FnOnce() -> T) -> Option<T> {
+        let guard = self.store();
+        let store = guard.0.as_ref().ok()?;
+        let allowed = if store.users.is_empty() {
+            principal == crate::people::HOUSEHOLD
+        } else {
+            store
+                .users
+                .iter()
+                .any(|u| u.id == principal && !u.must_change)
+        };
+        allowed.then(release)
+    }
+
     /// Who presents this session cookie, checked against the current users and sessions.
     pub fn identify(&self, session: Option<&str>) -> Identity {
         let guard = self.store();
@@ -765,6 +782,35 @@ mod tests {
             .unwrap();
         assert_eq!(u.identify(Some(&alex)), Identity::Nobody, "sessions end");
         assert!(matches!(u.identify(Some(&admin)), Identity::User { .. }));
+    }
+
+    #[test]
+    fn staged_cut_admission_rechecks_stable_account_and_open_mode() {
+        let (u, _dir) = users();
+        assert_eq!(u.admit_principal("household", || true), Some(true));
+        u.create_first("Admin", "admin password").unwrap();
+        assert_eq!(u.admit_principal("household", || true), None);
+        u.create("Maker", "initial password", Role::User).unwrap();
+        u.set_password("Maker", "chosen password", false, None)
+            .unwrap();
+        let session = u.login("Maker", "chosen password", "local").unwrap();
+        let Identity::User { id, .. } = u.identify(Some(&session)) else {
+            panic!("no account")
+        };
+        assert_eq!(u.admit_principal(&id, || true), Some(true));
+        u.set_password("Maker", "reset password", true, None)
+            .unwrap();
+        assert_eq!(u.admit_principal(&id, || true), None);
+        u.remove("Maker").unwrap();
+        u.create("Maker", "another password", Role::User).unwrap();
+        u.set_password("Maker", "another chosen password", false, None)
+            .unwrap();
+        assert_eq!(
+            u.admit_principal(&id, || true),
+            None,
+            "a reused name is a different account"
+        );
+        assert_eq!(u.admit_principal("", || true), None);
     }
 
     #[test]

@@ -481,6 +481,7 @@ mod tests {
             key: "key-1".into(),
             fingerprint: "fp".into(),
             actor: Actor {
+                principal: "household".into(),
                 user: Some("sam".into()),
                 client: "phone".into(),
             },

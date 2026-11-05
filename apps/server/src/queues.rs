@@ -100,6 +100,7 @@ mod tests {
         let store = Store::open(dir.path().join("queues")).unwrap();
         let mut cutter = Cutter::new("test", "Test cutter", "boot");
         let actor = Actor {
+            principal: "household".into(),
             user: None,
             client: "test".into(),
         };
