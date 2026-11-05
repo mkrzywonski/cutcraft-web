@@ -395,9 +395,18 @@ impl Desktop {
             if cutter["simulated"]==true{ui.separator();ui.label("Simulated Cameo — no physical motion");ui.horizontal(|ui|{for (load,label) in [(true,"Load virtual mat"),(false,"Unload virtual mat")]{if self.button(ui,label,!busy && if load {v["mat"]["state"]=="none"}else{v["mat_loaded"]==true}){self.send("cutter",json!({"id":self.cutter,"action":"practice","body":{"load":load}}));}}});}
         });
         let saved = self.remote.geometry.clone();
-        if let Ok(geometry) = serde_json::from_value(self.remote.cut_preview["geometry"].clone()) {
-            self.remote.geometry = geometry;
-        }
+        // Never substitute the editable draft when the owned cut preview is unavailable.
+        let active = list(&self.remote.state["cutters"])
+            .into_iter()
+            .find(|c| c["id"] == self.cutter)
+            .unwrap_or_default();
+        self.remote.geometry = if self.cut_busy()
+            && active["view"]["cutting"]["job_id"] != self.remote.cut_preview["copy"]["id"]
+        {
+            Default::default()
+        } else {
+            serde_json::from_value(self.remote.cut_preview["geometry"].clone()).unwrap_or_default()
+        };
         self.canvas(ui);
         self.remote.geometry = saved;
     }

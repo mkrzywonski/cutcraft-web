@@ -15,8 +15,44 @@ pub struct CanvasDrag {
     revision: u64,
 }
 impl Desktop {
+    fn canvas_sheet(&self) -> &serde_json::Value {
+        if matches!(self.screen(), "cut" | "test-cut") {
+            &self.remote.cut_preview["sheet"]
+        } else {
+            &self.remote.snapshot.ui.sheet
+        }
+    }
+    fn occupied_test_bounds(&self) -> Vec<[f64; 4]> {
+        if !self.show_test {
+            return Vec::new();
+        }
+        let Some(mat) = &self.remote.geometry.mat else {
+            return Vec::new();
+        };
+        let Ok(preview_mat) = serde_json::from_value::<cutcraft_web_protocol::MatGeometry>(
+            self.remote.cut_preview["geometry"]["mat"].clone(),
+        ) else {
+            return Vec::new();
+        };
+        if *mat != preview_mat {
+            return Vec::new();
+        }
+        let areas: Vec<[f64; 4]> =
+            serde_json::from_value(self.remote.cut_preview["occupied"].clone()).unwrap_or_default();
+        areas
+            .into_iter()
+            .map(|[x0, y0, x1, y1]| {
+                [
+                    x0 + mat.origin_mm[0],
+                    y0 + mat.origin_mm[1],
+                    x1 + mat.origin_mm[0],
+                    y1 + mat.origin_mm[1],
+                ]
+            })
+            .collect()
+    }
     fn media_bounds(&self) -> Option<[f64; 4]> {
-        let s = &self.remote.snapshot.ui.sheet;
+        let s = self.canvas_sheet();
         let w = s["piece_mm"][0].as_f64()?;
         let h = s["piece_mm"][1].as_f64()?;
         let origin = self.remote.geometry.mat.as_ref()?.origin_mm;
@@ -25,7 +61,17 @@ impl Desktop {
         Some([x, y, x + w, y + h])
     }
     pub fn canvas(&mut self, ui: &mut Ui) {
-        if !self.has_design() {
+        if matches!(self.screen(), "cut" | "test-cut") && self.remote.geometry.mat.is_none() {
+            ui.centered_and_justified(|ui| {
+                ui.label(if self.cut_busy() {
+                    "Recovering the cutter's preview…"
+                } else {
+                    "Prepare a cut to see its preview."
+                });
+            });
+            return;
+        }
+        if !self.has_design() && !matches!(self.screen(), "cut" | "test-cut") {
             ui.vertical_centered(|ui| {
                 ui.add_space(100.);
                 ui.heading("Open a design to begin");
@@ -231,7 +277,7 @@ impl Desktop {
                             Stroke::new(0.6, Color32::from_gray(160)),
                         );
                     }
-                    let s = &self.remote.snapshot.ui.sheet;
+                    let s = self.canvas_sheet();
                     if let (Some(w), Some(h)) =
                         (s["piece_mm"][0].as_f64(), s["piece_mm"][1].as_f64())
                     {
@@ -268,6 +314,26 @@ impl Desktop {
                         "Rendering artwork…",
                         egui::FontId::proportional(14.),
                         Color32::GRAY,
+                    );
+                }
+            }
+            if mat {
+                for (index, [x0, y0, x1, y1]) in self.occupied_test_bounds().into_iter().enumerate()
+                {
+                    let area = Rect::from_min_max(point(x0, y0), point(x1, y1));
+                    painter.rect_filled(area, 0, Color32::from_rgba_unmultiplied(128, 110, 90, 35));
+                    painter.rect_stroke(
+                        area,
+                        0,
+                        Stroke::new(1.5, Color32::from_rgb(100, 80, 65)),
+                        StrokeKind::Inside,
+                    );
+                    painter.text(
+                        area.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("Test {}", index + 1),
+                        egui::FontId::proportional(11.),
+                        Color32::from_rgb(85, 65, 50),
                     );
                 }
             }
@@ -598,6 +664,59 @@ mod tests {
                 assert!((pan + source * zoom - anchor).length() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn cut_canvas_uses_frozen_material_instead_of_the_editable_draft() {
+        let mut desktop = Desktop::default();
+        desktop.remote.geometry.mat = Some(cutcraft_web_protocol::MatGeometry {
+            origin_mm: [10., 20.],
+            ..Default::default()
+        });
+        desktop.remote.snapshot.ui.sheet = json!({"piece_mm":[300,300],"piece_at_mm":[90,90]});
+        desktop.remote.cut_preview = json!({"sheet":{"piece_mm":[25,50],"piece_at_mm":[2,3]}});
+        for screen in ["cut", "test-cut"] {
+            desktop.remote.snapshot.ui.screen = screen.into();
+            assert_eq!(desktop.media_bounds(), Some([12., 23., 37., 73.]));
+        }
+        desktop.remote.cut_preview = json!({});
+        assert_eq!(
+            desktop.media_bounds(),
+            None,
+            "missing preview must not borrow draft material"
+        );
+        desktop.remote.snapshot.ui.screen = "mat".into();
+        assert_eq!(desktop.media_bounds(), Some([100., 110., 400., 410.]));
+    }
+
+    #[test]
+    fn occupied_tests_follow_the_mat_origin_and_hiding_does_not_free_them() {
+        let mut desktop = Desktop {
+            show_test: true,
+            ..Default::default()
+        };
+        let mat = cutcraft_web_protocol::MatGeometry {
+            origin_mm: [12., 18.],
+            ..Default::default()
+        };
+        desktop.remote.geometry.mat = Some(mat.clone());
+        desktop.remote.cut_preview = json!({"geometry":{"mat":mat},"occupied":[[1,2,26.4,27.4]]});
+        assert_eq!(desktop.occupied_test_bounds(), vec![[13., 20., 38.4, 45.4]]);
+        desktop.show_test = false;
+        assert!(desktop.occupied_test_bounds().is_empty());
+        assert_eq!(
+            desktop.remote.cut_preview["occupied"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        desktop.show_test = true;
+        desktop.remote.geometry.mat.as_mut().unwrap().origin_mm = [0., 0.];
+        assert!(
+            desktop.occupied_test_bounds().is_empty(),
+            "another mat setup must not inherit the overlay"
+        );
     }
 
     #[test]

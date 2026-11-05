@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const source=(await readFile(new URL('../apps/server/web/desktop/desktop.js',import.meta.url),'utf8'))
  .replace(/^import .*;$/m,'').split('try{await refresh();await init();')[0];
 const calls=[];
-let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null, queue=[{job:{job_id:'my-copy'}}];
+let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null, queue=[{job:{job_id:'my-copy'}}], activity='idle', cutting=null;
 const context=vm.createContext({
  console,URLSearchParams,FormData,TypeError,Uint8Array,
  crypto:{randomUUID:()=> 'test-key'},
@@ -18,7 +18,7 @@ const context=vm.createContext({
   let value={};let ok=true;
   if(path.endsWith('/me'))value={mode:'open'};
   else if(path.endsWith('/snapshot'))value={protocol:7,incarnation,revision:1,ui:{screen:'test-cut'}};
-  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity:'idle',turn:turn?{job:{job_id:turn}}:null,queue}}]};
+  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity,cutting,turn:turn?{job:{job_id:turn}}:null,queue}}]};
   else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},geometry:{id:'frozen'}};ok=!refusePreview;}
   else throw Error('Unexpected request '+path);
   return {ok,status:ok?200:404,json:async()=>value};
@@ -72,3 +72,10 @@ vm.runInContext("model.cut_preview={copy:{id:'replacement'},geometry:{id:'new-pr
 releasePreview();await oldPreview;
 assert.equal(vm.runInContext('model.cut_preview.geometry.id',context),'new-preview','A refused old preview must not erase a newer prepared copy');
 console.log('PASS: late preview refusal preserves replacement geometry');
+
+previewGate=null;refusePreview=false;activity='testing';cutting={job_id:'my-copy'};
+turn='my-copy';
+await vm.runInContext('model.cut_preview={};refresh()',context);
+assert.equal(vm.runInContext('model.cut_preview.geometry.id',context),'frozen','Reload during motion must recover the owned frozen preview');
+assert.equal(calls.some(p=>p.endsWith('/queue') || p.endsWith('/start')),false,'Recovery must stay read-only');
+console.log('PASS: active-cut reload recovers frozen geometry without motion');

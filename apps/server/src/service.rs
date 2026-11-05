@@ -413,6 +413,21 @@ impl Service {
         job_id: &str,
         revision: u32,
     ) -> Result<(CutPlan, ProjectFile)> {
+        let taken = lock(&entry.shared)
+            .view()
+            .turn
+            .map(|t| t.taken)
+            .unwrap_or_default();
+        self.plan_in_areas(kind, job_id, revision, &taken)
+    }
+
+    fn plan_in_areas(
+        &self,
+        kind: Kind,
+        job_id: &str,
+        revision: u32,
+        taken: &[[f64; 4]],
+    ) -> Result<(CutPlan, ProjectFile)> {
         let (project, plan, digest) = if crate::copies::is_copy(job_id) {
             let stored = self.copies.get(job_id, revision)?;
             if stored.view.test_only {
@@ -467,11 +482,6 @@ impl Service {
                 ));
             }
         }
-        let taken = lock(&entry.shared)
-            .view()
-            .turn
-            .map(|t| t.taken)
-            .unwrap_or_default();
         let plan = match kind {
             Kind::Main => {
                 if taken.iter().any(|area| plan.overlaps_art(*area)) {
@@ -484,7 +494,7 @@ impl Service {
                 plan
             }
             Kind::Test => {
-                let at=cutcraft_control::next_test_spot(&plan,&taken).ok_or_else(||ApiError::new(409,"no-room","There is no room left for a test cut on this material. Load fresh material."))?;
+                let at=cutcraft_control::next_test_spot(&plan,taken).ok_or_else(||ApiError::new(409,"no-room","There is no room left for a test cut on this material. Load fresh material."))?;
                 cutcraft_path::test_cut_plan(&project.project, &plan.sheet, at)
                     .map_err(ApiError::bad_request)?
             }
@@ -506,16 +516,18 @@ impl Service {
         Ok(run)
     }
 
-    /// Preview exactly the current turn and its next pattern, using the same planning path as
-    /// Start. This is read-only and cannot claim a cutter or load material.
+    /// Preview the active immutable execution, or the idle turn's next reviewed pattern.
+    /// This is read-only and cannot claim a cutter or load material.
     pub fn cut_preview(&self, cutter: &str, kind: Kind, owner: &str) -> Result<Value> {
         let entry = self.cutter(cutter)?;
         let view = lock(&entry.shared).view();
         let turn = view
             .turn
             .ok_or_else(|| ApiError::bad_request("Nothing is prepared for this cutter."))?;
-        let copy = if crate::copies::is_copy(&turn.job.job_id) {
-            let stored = self.copies.get(&turn.job.job_id, turn.job.revision)?;
+        let kind = view.kind.unwrap_or(kind);
+        let job = view.cutting.as_ref().unwrap_or(&turn.job);
+        let copy = if crate::copies::is_copy(&job.job_id) {
+            let stored = self.copies.get(&job.job_id, job.revision)?;
             if !stored.owned_by(owner) {
                 return Err(ApiError::not_found());
             }
@@ -523,8 +535,16 @@ impl Service {
         } else {
             None
         };
-        let (plan, project) =
-            self.plan_for_cut(entry, kind, &turn.job.job_id, turn.job.revision)?;
+        // During execution the current test area has not yet joined `taken`. Planning
+        // against this snapshot therefore reproduces the active pattern, not the next one.
+        let (plan, project) = self.plan_in_areas(kind, &job.job_id, job.revision, &turn.taken)?;
+        if lock(&entry.shared).action_epoch() != view.action_epoch {
+            return Err(ApiError::new(
+                409,
+                "preview-changed",
+                "The cutter changed while preparing its preview. Refreshing…",
+            ));
+        }
         let sheet = project
             .project
             .sheets
@@ -534,7 +554,7 @@ impl Service {
         let origin = profile.cut_origin_mm;
         let strokes:Vec<_>=plan.operations.iter().map(|o|json!({"colour":o.colour.as_deref().unwrap_or("#235f5a"),"aid":o.kind.is_aid(),"points":o.points.iter().map(|p|[p[0]+origin[0],p[1]+origin[1]]).collect::<Vec<_>>()})).collect();
         Ok(
-            json!({"copy":copy,"job":turn.job,"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
+            json!({"copy":copy,"job":job,"execution":view.execution,"kind":kind,"sheet":{"piece_mm":sheet.piece_mm,"piece_at_mm":sheet.piece_at_mm},"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
             "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin},"sheet":strokes,"lines":[]},
             "estimate_s":plan.estimate_s}),
         )

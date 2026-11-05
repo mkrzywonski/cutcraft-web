@@ -186,3 +186,18 @@ All 463 Rust tests, native/wasm Clippy, formatting, workspace build and dependen
 The desktop browser checks confirm the durable stopped outcome and used mat; all 40 compact
 browser checks passed. This closes the retained-load Stop gap noted above, not the remaining M4
 completion gates. No real cutter was used.
+
+## Active preview and occupied test areas (0.16.0)
+
+A reload during motion now recovers the owned execution's frozen geometry without queueing or
+starting anything. The service uses the active job/kind, snapshots its occupied areas and rejects
+an intervening cutter-state change. The material outline comes from that immutable copy, never
+from edits in the preparation draft. A missing preview does not substitute draft cut lines.
+Earlier test areas are solid, numbered overlays on the matching mat; hiding them does not free
+space. The authored-fixture screenshot was inspected.
+
+All 465 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The desktop workflow reloads during an active test, verifies the execution/copy identity, then
+stops through Troubleshooting and checks the durable outcome and fresh-load requirement.
+The compact browser suite also passed. This is simulator/workstation evidence; full reference
+parity, unknown outcomes, platform/hardware acceptance and the other M4 gates remain outstanding.

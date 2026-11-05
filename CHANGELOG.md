@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.16.0 — 2026-11-05
+
+- Recover the owned active-cut preview after a browser reload without starting motion. Use the execution's immutable job, cut kind and material bounds, and refuse previews made across a cutter-state change.
+- Show numbered occupied test areas on the matching mat. Hiding the overlay preserves reservations.
+
+
 ## 0.15.2 — 2026-11-05
 
 - Require fresh loading after stopping a test cut, including when completion races Stop. Preserve occupied areas and refuse another Start until a new load is observed.

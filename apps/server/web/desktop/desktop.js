@@ -40,12 +40,13 @@ async function refresh(){
   // A completed or removed turn no longer owns a prepared preview. Keep queued copies,
   // and never discard a copy published while these read requests were in flight.
   if(initialCopy && model.cut_preview?.copy?.id===initialCopy && !model.pending && cutter &&
-     cutter.view.turn?.job.job_id!==initialCopy && !cutter.view.queue?.some(q=>q.job.job_id===initialCopy))model.cut_preview={};
-  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || cutter.view.turn.job.job_id===model.cut_preview.copy.id) && cutter.view.activity==='idle'){
+     cutter.view.turn?.job.job_id!==initialCopy && cutter.view.cutting?.job_id!==initialCopy && !cutter.view.queue?.some(q=>q.job.job_id===initialCopy))model.cut_preview={};
+  const previewJob=cutter?.view?.cutting || cutter?.view?.turn?.job;
+  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || previewJob?.job_id===model.cut_preview.copy.id)){
     try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
-    if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===cutter.view.turn.job.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
-    } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && (!model.cut_preview?.copy || model.cut_preview.copy.id===cutter.view.turn.job.job_id)){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
+    if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===previewJob.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
+    } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && (!model.cut_preview?.copy || model.cut_preview.copy.id===previewJob.job_id)){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
   }
   if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
   const art=snapshot.design?.art;

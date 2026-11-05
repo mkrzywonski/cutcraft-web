@@ -3430,6 +3430,17 @@ async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
     };
     let (status,answer)=send(&h.app,page("POST","/api/v1/cutters/practice/start",json!({"boot":"t","kind":"test","turn":queued["turn"],"job_id":first["id"],"revision":1,"generation":generation,"action_epoch":view.action_epoch,"key":"first-test"}))).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
+    // A reloaded page may still request its former screen. The active execution decides
+    // which immutable geometry is shown, never the page or current preparation draft.
+    let active = h
+        .app
+        .service
+        .cut_preview("practice", cameo_pi_core::cutter::Kind::Main, "household")
+        .unwrap();
+    assert_eq!(active["kind"], "test");
+    assert_eq!(active["execution"], answer["execution"]);
+    assert_eq!(active["copy"], first);
+    assert!(active["sheet"].is_object());
     h.worker.step();
     let before = lock(&h.app.service.cutters[0].shared).view();
     assert_eq!(before.turn.as_ref().unwrap().tests, 1);
@@ -3497,6 +3508,15 @@ async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
     let s = now(&h.app, None).await;
     let changed=post_design(&h.app,"/api/v1/design/command",json!({"id":"sheet.piece","params":{"width_mm":200,"height_mm":200},"key":"piece","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
     assert_eq!(changed["answer"], "applied", "{changed}");
+    let still_frozen = h
+        .app
+        .service
+        .cut_preview("practice", cameo_pi_core::cutter::Kind::Test, "household")
+        .unwrap();
+    assert_eq!(
+        still_frozen["sheet"], preview["sheet"],
+        "draft material changes cannot alter the reviewed copy's bounds"
+    );
     let incompatible = copy(&h.app, "different-piece").await;
     let (status,error)=send(&h.app,page("POST","/api/v1/cutters/practice/replace",json!({"key":"incompatible","kind":"test","boot":"t","turn":queued["turn"],"previous":{"job_id":next["id"],"revision":1},"next":{"job_id":incompatible["id"],"revision":1},"generation":generation,"action_epoch":after.action_epoch}))).await;
     assert_eq!(status, StatusCode::CONFLICT, "{error}");
