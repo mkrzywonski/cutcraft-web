@@ -20,9 +20,10 @@ still needs its browser assertion before it counts. Nothing was run on hardware.
 
 ## Observations across the whole contract
 
-1. **None of the 21 authored issue examples (`examples/issues/`) is used by any test or
-   script.** The desktop browser check opens one fixture, `crates/import/tests/fixtures/one-inch.svg`.
-   Every OPEN-/PREP- row and acceptance §2's F01–F21 therefore has no browser evidence.
+1. **Before this branch, none of the 21 authored issue examples (`examples/issues/`) was used by
+   any test or script.** `scripts/desktop-fixture-check.sh` now runs them all; see
+   [Fixture run](#fixture-run-2026-11-05). It covers the report and the answer chain, not yet
+   geometry, Show me, save-reopen or protocol parity.
 2. **The desktop client is a new egui implementation, not the reference modules reused.**
    About 3,400 lines of `crates/ui` against about 8,400 in reference `apps/desktop/src`
    (excluding the control port/bridge). UI-01 says "reuse the reference egui UI modules". Either
@@ -90,7 +91,7 @@ still needs its browser assertion before it counts. Nothing was run on hardware.
 
 | ID | Status | Desktop control / evidence | Gaps to close |
 |---|---|---|---|
-| VIEW-01 | Partial | Side by side and Overlay share one transform; pane clipping and pointer zoom (unit + browser). | **Region-at-zoom re-rendering missing**: the whole artwork is one texture. |
+| VIEW-01 | Partial | Side by side and Overlay share one transform; pane clipping and pointer zoom (unit + browser). | **Region-at-zoom re-rendering missing**: the whole artwork is one texture. **The old image is not kept while a new render loads**: `desktop.js` clears `model.picture` as soon as the art id changes, so the Artwork pane shows "Rendering artwork…" after an answer (fixture run, 11 of 22 files). |
 | VIEW-02 | Partial | Excluded rows kept and peeked on hover; Show me toggles an orange highlight. | Show me does not zoom both panes to the affected geometry; keyboard/touch inspect action. |
 | VIEW-03 | Partial | Stationary mat; sticky grid with 1-inch lines; material piece; Make design bigger/smaller in 10% steps; Fit design to mat. | **No rulers, outer edge, start corner or feed arrow drawn.** Automatic "Fit to the mat" on entering Cut Preview not found. |
 | VIEW-04 | Partial | Design drag + corner resize (proportional, unit test); material corner resize (unit test); test-spot drag (unit test); drag-resize + Undo (browser). | Design box has one handle (se) only; **no material edge handles**; no dimensions drawn outside the design box or double-click-to-type on them; **no settling hold** after drop. |
@@ -155,6 +156,41 @@ still needs its browser assertion before it counts. Nothing was run on hardware.
 |---|---|---|
 | ACCEPT-01 | Missing | Browser assertions per requirement; this table is the index they should fill. |
 | ACCEPT-02 | Missing | Paired screenshots against 1.0.5, all F/W cases, independent review. |
+
+## Fixture run (2026-11-05)
+
+`scripts/desktop-fixture-check.sh` (this branch) opens each file in `examples/issues/` and the
+manual's mountain badge in the desktop, using real mouse input, against a practice service. For each
+file it:
+
+1. compares the initial report (cut-ready, questions, diagnostics, changes) with the 1.0.5
+   observation in [fixtures.json](fixtures.json);
+2. answers each question by clicking its visible Issues button, until none remain;
+3. undoes every answer and expects the opened report back, then redoes and expects the answered one;
+4. saves to the library through Save → Save As;
+5. checks that the source artwork renders, and is not blanked while a newer render loads.
+
+Result at `5765fe9`:
+
+- **All 21 issue examples match the reference's initial report**, including the font cases
+  02 and 20 with the bundled fonts.
+- **Every question can be answered from its visible button.** 17 files end cut-ready. 12, 13,
+  14 and 20 stay blocked by the expected blocking diagnostics, as in the reference.
+- **Undo and Redo restore the exact report for every file. Save works for every file**,
+  including the blocked ones.
+- **One failure:** on 11 of 22 files the Artwork pane goes blank after an answer, while the new
+  render loads (VIEW-01, above). Every render does arrive.
+
+Seen in the screenshots, for review against the reference:
+
+- The size question's button reads "Confirm 141.111 × 105.833 mm" (raw mm, three decimals) while
+  the display unit is inches; the card text says 5.56 × 4.17 in, and Artwork size shows 4.17 × 3.47 in
+  (the art, not the page). Check this against 1.0.5 (UI-05, BASE-05).
+- The selected Colour/Layer toggle draws dark text on a dark fill and is nearly unreadable (UI-06 contrast).
+- "1 pieces, 0 lines": singular/plural (BASE-05).
+
+Not covered yet: the resulting geometry, Show me, save-reopen, other allowed answers (only the
+preferred answer is clicked), the protocol/MCP route, and the acceptance-catalogue W cases.
 
 ## Tally
 
