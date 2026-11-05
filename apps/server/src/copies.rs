@@ -195,6 +195,8 @@ impl Store {
         };
         let id = id_for(owner, &request.key);
         let view = CutCopy {
+            source_sha256: project.source.sha256.clone(),
+            incarnation: request.incarnation.clone(),
             test_only,
             id: id.clone(),
             name,

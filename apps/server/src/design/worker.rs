@@ -935,6 +935,7 @@ impl Worker {
                 let sheet = project.sheets.first();
                 let plan = sheet.and_then(|sh| cutcraft_path::plan_sheet(project, &sh.id).ok());
                 Some(DesignView {
+                    source_sha256: project.prepared.source_sha256.clone(),
                     name: self.name.clone().unwrap_or_else(|| "Design".into()),
                     project_revision: project.revision,
                     cut_ready: report["cut_ready"].as_bool().unwrap_or(false),

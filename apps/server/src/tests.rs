@@ -3394,3 +3394,115 @@ async fn queued_private_cut_preview_remains_owned_by_its_creator() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(body.get("geometry").is_none());
 }
+
+#[tokio::test]
+async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
+    async fn copy(app: &App, key: &str) -> Value {
+        let s = now(app, None).await;
+        let answer=post_design(app,"/api/v1/design/command",json!({"id":"cut.copy","params":{"test":true},"key":key,"incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+        assert_eq!(answer["answer"], "applied", "{answer}");
+        answer["value"]["copy"].clone()
+    }
+    let mut h = harness();
+    open_star(&h.app, None).await;
+    let first = copy(&h.app, "before").await;
+    let queued = post_design(
+        &h.app,
+        "/api/v1/cutters/practice/queue",
+        json!({"job_id":first["id"],"revision":1,"key":"queue"}),
+        None,
+    )
+    .await;
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.unload();
+    for _ in 0..3 {
+        h.worker.step();
+    }
+    h.sim.load(Media::Mat12x12);
+    for _ in 0..9 {
+        h.worker.step();
+    }
+    let view = lock(&h.app.service.cutters[0].shared).view();
+    let cameo_pi_core::mat::Mat::Fresh(generation) = view.mat else {
+        panic!("not loaded")
+    };
+    let (status,answer)=send(&h.app,page("POST","/api/v1/cutters/practice/start",json!({"boot":"t","kind":"test","turn":queued["turn"],"job_id":first["id"],"revision":1,"generation":generation,"action_epoch":view.action_epoch,"key":"first-test"}))).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    h.worker.step();
+    let before = lock(&h.app.service.cutters[0].shared).view();
+    assert_eq!(before.turn.as_ref().unwrap().tests, 1);
+    let s = now(&h.app, None).await;
+    let edit=post_design(&h.app,"/api/v1/design/command",json!({"id":"sheet.adjust","params":{"force":22},"key":"force","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(edit["answer"], "applied", "{edit}");
+    let next = copy(&h.app, "after").await;
+    let request = json!({"kind":"test","boot":"t","turn":queued["turn"],"previous":{"job_id":first["id"],"revision":1},"next":{"job_id":next["id"],"revision":1},"generation":generation,"action_epoch":before.action_epoch});
+    let mut body = request.clone();
+    body["key"] = json!("replacement");
+    let (status, answer) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/replace", body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let after = lock(&h.app.service.cutters[0].shared).view();
+    assert_eq!(
+        after.turn.as_ref().unwrap().id,
+        before.turn.as_ref().unwrap().id
+    );
+    assert_eq!(
+        after.turn.as_ref().unwrap().taken,
+        before.turn.as_ref().unwrap().taken
+    );
+    assert_eq!(after.turn.as_ref().unwrap().job.job_id, next["id"]);
+    assert_eq!(after.activity, "idle");
+    assert!(after.queue.is_empty());
+    assert_eq!(
+        send(
+            &h.app,
+            page("POST", "/api/v1/cutters/practice/replace", body)
+        )
+        .await
+        .1,
+        answer
+    );
+    let caller = crate::http::Caller {
+        actor: cameo_pi_core::cutter::Actor {
+            principal: "household".into(),
+            user: None,
+            client: "another program".into(),
+        },
+        identity: crate::users::Identity::Open,
+        session: None,
+        key: None,
+    };
+    assert_eq!(
+        crate::mcp::Tools::new(h.app.clone())
+            .invoke(
+                "cut_replace",
+                json!({"cutter":"practice","request":request,"key":"replacement"}),
+                caller
+            )
+            .await
+            .unwrap(),
+        answer
+    );
+    let preview = h
+        .app
+        .service
+        .cut_preview("practice", cameo_pi_core::cutter::Kind::Test, "household")
+        .unwrap();
+    assert_eq!(preview["material"]["force"], 22);
+    let s = now(&h.app, None).await;
+    let changed=post_design(&h.app,"/api/v1/design/command",json!({"id":"sheet.piece","params":{"width_mm":200,"height_mm":200},"key":"piece","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(changed["answer"], "applied", "{changed}");
+    let incompatible = copy(&h.app, "different-piece").await;
+    let (status,error)=send(&h.app,page("POST","/api/v1/cutters/practice/replace",json!({"key":"incompatible","kind":"test","boot":"t","turn":queued["turn"],"previous":{"job_id":next["id"],"revision":1},"next":{"job_id":incompatible["id"],"revision":1},"generation":generation,"action_epoch":after.action_epoch}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{error}");
+    assert_eq!(error["error"], "fresh-load-required");
+    assert_eq!(
+        lock(&h.app.service.cutters[0].shared).view().turn,
+        after.turn
+    );
+}

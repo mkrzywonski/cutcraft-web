@@ -75,6 +75,13 @@ await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Completed test reload ready');
 await until(async()=>(await state()).cut_preview?.geometry,'Recover next pattern after reload');
 if((await state()).state.cutters[0].view.turn.taken.length!==1)throw Error('Reload lost the completed test reservation');
+const firstCopy=(await state()).cut_preview.copy.id;
+await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='mat','Exit test to adjust settings');
+await type('Force','17');await until(async()=>(await state()).snapshot.ui.sheet.material.force===17,'Adjust force after test');
+await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Return to test');
+await click('Prepare updated cut');
+await until(async()=>(await state()).cut_preview?.copy?.id!==firstCopy && (await state()).cut_preview?.material?.force===17,'Replace prepared settings');
+if((await state()).state.cutters[0].view.turn.id!==preparedTurn || (await state()).state.cutters[0].view.turn.taken.length!==1 || (await state()).state.cutters[0].view.queue.length)throw Error('Settings replacement lost the turn or test reservation');
 await click('Try another pattern');await click('Start');
 await until(async()=>(await state()).state.cutters[0].view.turn?.tests===2,'Second test completed');
 if((await state()).state.cutters[0].view.turn.taken.length!==2)throw Error('Test reservations lost');
@@ -84,7 +91,7 @@ await click('Start');await until(async()=>(await state()).state.cutters[0].view.
 console.log('PASS: toolbar navigation only, explicit prepare/Start, two tests and design on one loaded mat');
 await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Reload ready');
-await until(async()=>(await state()).snapshot.ui.sheet?.material?.force===12,'Material setting survives reload');
+await until(async()=>(await state()).snapshot.ui.sheet?.material?.force===17,'Material setting survives reload');
 if((await state()).state.cutters[0].view.activity!=='idle')throw Error('Reload started a cut');
 for(const [width,height] of [[1280,800],[1920,1080]]){
  await cdp('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await sleep(300);

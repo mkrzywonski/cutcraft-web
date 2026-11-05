@@ -39,6 +39,28 @@ pub struct JobRef {
     pub revision: u32,
 }
 
+/// A reviewed replacement of an idle turn, fenced against the displayed cutter state.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceTurn {
+    pub kind: Kind,
+    pub boot: String,
+    pub turn: String,
+    pub previous: JobRef,
+    pub next: JobRef,
+    pub action_epoch: u64,
+    pub generation: Option<u64>,
+}
+
+impl ReplaceTurn {
+    fn fingerprint(&self, actor: &Actor) -> String {
+        format!(
+            "queue-replace-v1|{}",
+            serde_json::to_string(&(self, &actor.principal)).expect("replacement serializes")
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
@@ -1070,7 +1092,10 @@ impl Cutter {
                 .keys
                 .iter()
                 .filter_map(|(key, (fingerprint, answer))| match answer {
-                    Ok(answer @ Answer::Queued { .. }) if fingerprint.starts_with("queue-v1|") => {
+                    Ok(answer @ Answer::Queued { .. })
+                        if fingerprint.starts_with("queue-v1|")
+                            || fingerprint.starts_with("queue-replace-v1|") =>
+                    {
                         Some(QueueReceipt {
                             key: key.clone(),
                             fingerprint: fingerprint.clone(),
@@ -1103,7 +1128,8 @@ impl Cutter {
         }
         for receipt in state.receipts {
             if !matches!(receipt.answer, Answer::Queued { .. })
-                || !receipt.fingerprint.starts_with("queue-v1|")
+                || !(receipt.fingerprint.starts_with("queue-v1|")
+                    || receipt.fingerprint.starts_with("queue-replace-v1|"))
             {
                 return Err("invalid queue receipt".into());
             }
@@ -1136,6 +1162,72 @@ impl Cutter {
         }
         self.advance();
         Ok(())
+    }
+
+    pub fn replay_replacement(
+        &self,
+        request: &ReplaceTurn,
+        actor: &Actor,
+        key: &str,
+    ) -> Option<Result<Answer, Refusal>> {
+        let fingerprint = request.fingerprint(actor);
+        self.keys.get(key).map(|(seen, answer)| {
+            if *seen == fingerprint {
+                answer.clone()
+            } else {
+                Err(Refusal::KeyReused)
+            }
+        })
+    }
+
+    /// Replace only an idle, owned turn. Keep its tested areas and waiting neighbours.
+    /// The service validates both copies and their physical setup before this atomic change.
+    pub fn replace_turn(
+        &mut self,
+        request: &ReplaceTurn,
+        actor: &Actor,
+        key: &str,
+    ) -> Result<Answer, Refusal> {
+        self.once(key, request.fingerprint(actor), |cutter| {
+            if request.boot != cutter.boot {
+                return Err(Refusal::StaleBoot);
+            }
+            if !cutter.online {
+                return Err(Refusal::Offline);
+            }
+            if !matches!(cutter.activity, Activity::Idle) {
+                return Err(Refusal::StopFirst);
+            }
+            if request.action_epoch != cutter.action_epoch {
+                return Err(Refusal::StaleEpoch {
+                    current: cutter.action_epoch,
+                });
+            }
+            let generation = match cutter.observer.mat() {
+                Mat::Fresh(g) | Mat::Used(g) => Some(g),
+                _ => None,
+            };
+            if request.generation != generation {
+                return Err(Refusal::StaleMat);
+            }
+            let turn = cutter.turn.as_mut().ok_or(Refusal::StaleTurn)?;
+            if turn.id != request.turn {
+                return Err(Refusal::StaleTurn);
+            }
+            if turn.job != request.previous {
+                return Err(Refusal::StaleRevision);
+            }
+            if !turn.actor.same_person(actor) {
+                return Err(Refusal::StaleMat);
+            }
+            turn.job = request.next.clone();
+            let answer = Answer::Queued {
+                turn: turn.id.clone(),
+                position: 0,
+            };
+            cutter.advance();
+            Ok(answer)
+        })
     }
 
     /// Queue a job (spec §8.4). On a free cutter it becomes the current turn at once.
@@ -1595,6 +1687,116 @@ mod tests {
         next.actor.principal = "another-account".into();
         assert_eq!(c.start(next), Err(Refusal::StaleMat));
         assert!(c.take_pending().is_none());
+    }
+
+    #[test]
+    fn replacing_a_tested_copy_keeps_its_turn_areas_and_waiters_and_replays_after_restart() {
+        let mut c = ready_cutter();
+        let (exec, turn) = started(c.start(request(&c, Kind::Test, None, "test")));
+        c.take_pending();
+        c.finished(&exec, Outcome::Completed { duration_s: 1. });
+        c.queue(
+            JobRef {
+                job_id: "waiting".into(),
+                revision: 1,
+            },
+            actor(),
+            "wait",
+        )
+        .unwrap();
+        let before = c.view();
+        let old_start = request(&c, Kind::Main, Some(&turn), "old-start");
+        let replacement = ReplaceTurn {
+            kind: Kind::Main,
+            boot: "b1".into(),
+            turn: turn.clone(),
+            previous: job(1),
+            next: JobRef {
+                job_id: "new-copy".into(),
+                revision: 1,
+            },
+            action_epoch: c.action_epoch(),
+            generation: Some(1),
+        };
+        let answer = c.replace_turn(&replacement, &actor(), "replace").unwrap();
+        let after = c.view();
+        assert_eq!(
+            after.turn.as_ref().unwrap().taken,
+            before.turn.as_ref().unwrap().taken
+        );
+        assert_eq!(after.turn.as_ref().unwrap().tests, 1);
+        assert_eq!(after.turn.as_ref().unwrap().id, turn);
+        assert_eq!(after.queue, before.queue);
+        assert!(
+            c.take_pending().is_none(),
+            "replacement cannot move the cutter"
+        );
+        assert!(matches!(
+            c.start(old_start),
+            Err(Refusal::StaleEpoch { .. })
+        ));
+        assert_eq!(
+            c.replace_turn(&replacement, &actor(), "replace"),
+            Ok(answer.clone())
+        );
+        let mut changed = replacement.clone();
+        changed.next.job_id = "different".into();
+        assert_eq!(
+            c.replace_turn(&changed, &actor(), "replace"),
+            Err(Refusal::KeyReused)
+        );
+        let state = c.queue_state();
+        let mut restored = Cutter::new("workshop", "Workshop Cameo", "new-boot");
+        restored.restore_queue(state, &Default::default()).unwrap();
+        assert_eq!(
+            restored.replay_replacement(&replacement, &actor(), "replace"),
+            Some(Ok(answer))
+        );
+        assert!(
+            restored.view().turn.unwrap().taken.is_empty(),
+            "restart does not restore physical load authority"
+        );
+    }
+
+    #[test]
+    fn replacement_refuses_another_account_stale_load_or_active_cut() {
+        for fault in ["account", "load", "epoch", "busy"] {
+            let mut c = ready_cutter();
+            let answer = c.queue(job(1), actor(), "queue").unwrap();
+            let Answer::Queued { turn, .. } = answer else {
+                panic!("queued")
+            };
+            let replacement = ReplaceTurn {
+                kind: Kind::Test,
+                boot: "b1".into(),
+                turn: turn.clone(),
+                previous: job(1),
+                next: job(2),
+                action_epoch: c.action_epoch(),
+                generation: Some(1),
+            };
+            let mut who = actor();
+            match fault {
+                "account" => who.principal = "another".into(),
+                "load" => {
+                    c.observe(20., Reading::NoMedia);
+                    c.observe(20.5, Reading::NoMedia);
+                }
+                "epoch" => {
+                    c.advance();
+                }
+                "busy" => {
+                    c.start(request(&c, Kind::Test, Some(&turn), "start"))
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                c.replace_turn(&replacement, &who, "replace").is_err(),
+                "{fault}"
+            );
+            assert_eq!(c.view().turn.unwrap().job, job(1));
+        }
     }
 
     #[test]

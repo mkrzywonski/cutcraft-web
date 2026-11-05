@@ -136,3 +136,22 @@ Formatting, native/wasm Clippy, all 456 Rust tests, workspace build, dependency 
 transport regressions, the desktop simulated workflow and 40 compact-browser assertions passed.
 This addresses the account-identity portion of retained-load reuse; compatible prepared-copy
 replacement and its failure tests remain required. No physical cutter was used.
+
+## Reviewed replacement after test adjustments (0.15.0)
+
+An owned idle turn can now replace its immutable copy through one service operation, used by
+the desktop and MCP `cut_replace`. It preserves the turn, waiting neighbours and occupied test
+areas. Boot, epoch, mat generation, previous copy and principal are checked atomically before
+publication. Changed physical material/mat setup requires fresh loading. Successful receipts
+are persisted and replay after restart without restoring physical load authority. Start still
+validates the reviewed kind and occupied-area clearance independently.
+
+The desktop detects outdated copies by source hash, incarnation and project revision; Start
+waits for explicit Prepare updated cut. Protocol 7 prevents older clients silently interpreting
+the new identity contract. The browser workflow now changes force after a successful test,
+prepares again without unloading or duplicating its queue turn, and runs the next test and
+main cut. HTTP and MCP share a replay test; incompatible physical setup changes nothing.
+
+All 459 Rust tests, formatting, native/wasm Clippy, build, dependency policy, desktop/compact
+browser checks and the real-process design-session script passed. Further M4 work remains,
+including active-motion reload, uncertain outcomes, modal Stop, full UI parity and acceptance.

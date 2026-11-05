@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cameo_pi_core::cutter::{
-    Actor, Answer, Finished, JobRef, Kind, Refusal, StartAction, StartRequest,
+    Actor, Answer, Finished, JobRef, Kind, Refusal, ReplaceTurn, StartAction, StartRequest,
 };
 use cameo_pi_core::library::{
     HistoryEntry, JobDetails, Library, LibraryError, Listing, REVISION_SCHEMA, RevisionFiles,
@@ -332,6 +332,75 @@ impl Service {
         }
         let job = job_ref(job_id, current);
         let answer = lock(&entry.shared).queue_requested(job, actor, key, seen)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
+    }
+
+    /// Update an owned idle cut copy without forgetting occupied material. Never starts motion.
+    pub fn replace_cut(
+        &self,
+        cutter: &str,
+        request: ReplaceTurn,
+        actor: Actor,
+        key: &str,
+    ) -> Result<Answer> {
+        let entry = self.cutter(cutter)?;
+        let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let replay = lock(&entry.shared).replay_replacement(&request, &actor, key);
+        if let Some(answer) = replay {
+            let answer = answer?;
+            self.persist_queue(cutter)?;
+            return Ok(answer);
+        }
+        let old = self
+            .copies
+            .get(&request.previous.job_id, request.previous.revision)?;
+        let new = self
+            .copies
+            .get(&request.next.job_id, request.next.revision)?;
+        if !old.owned_by(&actor.principal) || !new.owned_by(&actor.principal) {
+            return Err(ApiError::not_found());
+        }
+        let view = lock(&entry.shared).view();
+        if view.turn.as_ref().is_some_and(|turn| turn.mat.is_some()) {
+            let previous = old
+                .project
+                .project
+                .sheets
+                .first()
+                .ok_or_else(ApiError::not_found)?;
+            let next = new
+                .project
+                .project
+                .sheets
+                .first()
+                .ok_or_else(ApiError::not_found)?;
+            let a = previous.mat_profile();
+            let b = next.mat_profile();
+            if previous.mat != next.mat
+                || previous.piece_mm != next.piece_mm
+                || previous.piece_at_mm != next.piece_at_mm
+                || a.outer_mm != b.outer_mm
+                || a.sticky_mm != b.sticky_mm
+                || a.cut_origin_mm != b.cut_origin_mm
+                || a.class != b.class
+            {
+                return Err(ApiError::new(
+                    409,
+                    "fresh-load-required",
+                    "The material or mat setup changed. Unload and load fresh material before preparing this cut.",
+                ));
+            }
+        }
+        // Validate the immutable plan and its digest before publishing the replacement.
+        // Start will still validate the selected kind and its occupied-area clearance.
+        self.plan_for_cut(
+            entry,
+            request.kind,
+            &request.next.job_id,
+            request.next.revision,
+        )?;
+        let answer = lock(&entry.shared).replace_turn(&request, &actor, key)?;
         self.persist_queue(cutter)?;
         Ok(answer)
     }

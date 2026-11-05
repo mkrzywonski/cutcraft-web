@@ -298,6 +298,22 @@ const TOOLS: &[ToolSpec] = &[
         required: &["cutter", "job_id", "revision"],
     },
     ToolSpec {
+        name: "cut_replace",
+        title: "Update a prepared cut",
+        description: "Replace your current idle cut copy after changing settings. Preserves test-cut areas only on the same loaded material and mat. Does not start motion. Uses the same validated replacement as the desktop.",
+        read_only: false,
+        destructive: false,
+        properties: || {
+            json!({"cutter":s("Cutter id"),"key":s("Idempotency key"),"request":{
+            "type":"object","properties":{"boot":s("Current server boot"),"turn":s("Current turn id"),
+            "previous":{"type":"object","properties":{"job_id":s("Current copy id"),"revision":i("Current revision")},"required":["job_id","revision"]},
+            "next":{"type":"object","properties":{"job_id":s("New validated copy id"),"revision":i("New revision")},"required":["job_id","revision"]},
+            "kind":{"type":"string","enum":["main","test"]},"action_epoch":i("Current cutter action epoch"),"generation":{"type":["integer","null"]}},
+            "required":["boot","turn","previous","next","kind","action_epoch","generation"]}})
+        },
+        required: &["cutter", "request", "key"],
+    },
+    ToolSpec {
         name: "cut_start",
         title: "Start a test cut or the cut",
         description: "Start the turn's test cut or main cut. It moves the cutter: someone must have loaded the material, and the mat must be fresh. Name what you saw in cutters: boot, the turn, the revision, the mat's generation and the action epoch; anything changed since is refused.",
@@ -617,6 +633,15 @@ impl Tools {
                 caller.actor.clone(),
                 &key(args),
             )?),
+            "cut_replace" => json!(
+                service.replace_cut(
+                    text(args, "cutter")?,
+                    serde_json::from_value(args["request"].clone())
+                        .map_err(|e: serde_json::Error| ApiError::bad_request(e.to_string()))?,
+                    caller.actor.clone(),
+                    text(args, "key")?
+                )?
+            ),
             "cut_start" => {
                 let kind = match text(args, "kind")? {
                     "test" => Kind::Test,

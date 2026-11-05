@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.15.0 — 2026-11-04
+
+- Prepare updated cut settings on the same loaded mat while retaining earlier test areas and the current queue turn. Changes to the physical material/mat require fresh loading. Stale or busy replacements change nothing.
+- Disable Start for an outdated prepared copy until the current settings have been reviewed. Match source identity as well as revision; protocol 7 requires older browser clients to reload.
+- Expose the same validated operation to AI tools as cut_replace.
+
 ## 0.14.4 — 2026-11-04
 
 - Bind loaded-mat reuse and fresh-mat confirmations to the same account, across its browsers. A different or recreated account must load fresh material. Recheck account authority before releasing a recorded Start to the cutter.

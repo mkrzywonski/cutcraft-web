@@ -1,7 +1,7 @@
 // Browser transport only. Geometry and all desktop widgets are drawn by the Rust UI.
 // Mutations retain the exact request through a lost reply; no optimistic project state.
 import init, {start} from '/desktop/pkg/cutcraft_ui.js';
-const PROTOCOL=6;
+const PROTOCOL=7;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
 let controls={},refreshing=false,live=null,uploadMode={},pictureFlight='';
@@ -39,7 +39,7 @@ async function refresh(){
   if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || cutter.view.turn.job.job_id===model.cut_preview.copy.id) && cutter.view.activity==='idle'){
     try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
-    if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen)model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
+    if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===cutter.view.turn.job.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
     } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
   }
   if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
@@ -83,7 +83,23 @@ async function dispatch({action,params:p}){
    case 'password':await api('/api/v1/me/password','POST',p);break;
    case 'logout':await api('/api/v1/logout','POST',{});model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.picture='';model.picture_id='';model.geometry={id:''};model.cut_preview={};break;
    case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
-   case 'prepare-cut':{model.selectedCutter=p.cutter;const current=model.state.cutters?.find(c=>c.id===p.cutter)?.view?.turn;const prior=model.cut_preview?.copy;let copy;if(prior && prior.project_revision===model.snapshot.design?.project_revision && current?.job.job_id===prior.id){copy=prior;}else{const r=await command('cut.copy',p.test?{test:true}:{});copy=r.value.copy;}if(current?.job.job_id!==copy.id){await api(`/api/v1/cutters/${encodeURIComponent(p.cutter)}/queue`,'POST',{job_id:copy.id,revision:copy.revision,key:key()});}model.cut_preview={copy};model.result={copy};break;}
+   case 'prepare-cut':{
+     model.selectedCutter=p.cutter;
+     const view=model.state.cutters?.find(c=>c.id===p.cutter)?.view;
+     const current=view?.turn;
+     const prior=model.cut_preview?.copy;
+     const result=await command('cut.copy',p.test?{test:true}:{});
+     const copy=result.value.copy;
+     const path=`/api/v1/cutters/${encodeURIComponent(p.cutter)}`;
+     if(prior && current?.job.job_id===prior.id){
+       await api(`${path}/replace`,'POST',{key:key(),boot:model.state.boot,turn:current.id,
+         previous:current.job,next:{job_id:copy.id,revision:copy.revision},
+         kind:p.test?'test':'main',action_epoch:view.action_epoch,generation:view.mat.generation??null});
+     }else{
+       await api(`${path}/queue`,'POST',{job_id:copy.id,revision:copy.revision,key:key()});
+     }
+     model.cut_preview={copy};model.result={copy};break;
+   }
    case 'start':{const body={...p.start,key:key()};const path=`/api/v1/cutters/${encodeURIComponent(p.cutter)}`;try{await api(`${path}/start`,'POST',body);}catch(e){if(e instanceof TypeError){const result=await api(`${path}/starts/${body.key}`);if(result.answer!=='started')throw new Error('Start is not confirmed. Check the cutter before trying again.');}else throw e;}break;}
    case 'cutter':await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/${p.action}`,'POST',p.body||{});break;
   }

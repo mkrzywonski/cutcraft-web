@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -123,6 +123,8 @@ pub struct Presentation {
 /// The open project, as the screens need it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DesignView {
+    /// Source identity, independent of names and project revision counters.
+    pub source_sha256: String,
     /// The design's file name, as uploaded.
     pub name: String,
     /// The project's revision: it changes whenever the project changes.
@@ -283,6 +285,10 @@ pub struct CopyRequest {
 /// The immutable copy named by queue, loading preview and Start. Its stored revision is 1.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CutCopy {
+    #[serde(default)]
+    pub source_sha256: String,
+    #[serde(default)]
+    pub incarnation: String,
     #[serde(default)]
     pub test_only: bool,
     pub id: String,

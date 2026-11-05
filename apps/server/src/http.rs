@@ -334,6 +334,7 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/events", get(events))
         .route("/api/v1/cutters/{id}/queue", post(queue))
         .route("/api/v1/cutters/{id}/preview", get(cut_preview))
+        .route("/api/v1/cutters/{id}/replace", post(replace_cut))
         .route("/api/v1/cutters/{id}/start", post(start))
         .route("/api/v1/cutters/{id}/starts/{key}", get(start_result))
         .route("/api/v1/cutters/{id}/stop", post(stop))
@@ -610,6 +611,29 @@ async fn queue(
             app.service
                 .queue(&id, &body.job_id, body.revision, caller.actor, &body.key)?;
         Ok(Json(json!(answer)))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ReplaceCutBody {
+    #[serde(flatten)]
+    request: cameo_pi_core::cutter::ReplaceTurn,
+    key: String,
+}
+async fn replace_cut(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    axum::extract::Extension(caller): axum::extract::Extension<Caller>,
+    Json(body): Json<ReplaceCutBody>,
+) -> Result<Json<Value>> {
+    blocking(move || {
+        Ok(Json(json!(app.service.replace_cut(
+            &id,
+            body.request,
+            caller.actor,
+            &body.key
+        )?)))
     })
     .await
 }
