@@ -12,6 +12,9 @@ impl Desktop {
             .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(20)).show(ctx,|ui|{
                 ui.set_width(620_f32.min(ctx.content_rect().width()-60.));
                 ui.horizontal(|ui| {ui.heading(&d.title);if self.button(ui,"Close dialog",true){open=false;}});
+                if self.cut_busy(){
+                    ui.horizontal(|ui|{ui.strong("Cutter active");if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}});
+                }
                 ui.separator();
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height()-150.).max(200.)).show(ui,|ui|{
                     match d.kind.as_str(){

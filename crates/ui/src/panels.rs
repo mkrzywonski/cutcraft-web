@@ -22,22 +22,28 @@ impl Desktop {
                 "Review the design"
             });
         });
-        egui::ComboBox::from_id_salt("selected-cutter")
-            .width(ui.available_width() - 15.)
-            .selected_text(if self.cutter.is_empty() {
-                "Choose cutter"
-            } else {
-                &self.cutter
-            })
-            .show_ui(ui, |ui| {
-                for c in list(&self.remote.state["cutters"]) {
-                    ui.selectable_value(
-                        &mut self.cutter,
-                        text(&c["id"]).into(),
-                        text(&c["view"]["name"]),
-                    );
-                }
-            });
+        let before = self.cutter.clone();
+        ui.add_enabled_ui(!self.cut_busy(), |ui| {
+            egui::ComboBox::from_id_salt("selected-cutter")
+                .width(ui.available_width() - 15.)
+                .selected_text(if self.cutter.is_empty() {
+                    "Choose cutter"
+                } else {
+                    &self.cutter
+                })
+                .show_ui(ui, |ui| {
+                    for c in list(&self.remote.state["cutters"]) {
+                        ui.selectable_value(
+                            &mut self.cutter,
+                            text(&c["id"]).into(),
+                            text(&c["view"]["name"]),
+                        );
+                    }
+                });
+        });
+        if self.cutter != before {
+            self.send("select-cutter", json!({"cutter":self.cutter}));
+        }
         ui.separator();
         let mut groups: Vec<String> = list(&self.remote.snapshot.ui.panel["order"])
             .iter()
@@ -588,18 +594,6 @@ impl Desktop {
                 } else {
                     ui.weak("Open a design to see an estimate.");
                 }
-                egui::ComboBox::from_id_salt("panel-cutter")
-                    .selected_text(if self.cutter.is_empty() {
-                        "Choose cutter"
-                    } else {
-                        &self.cutter
-                    })
-                    .show_ui(ui, |ui| {
-                        for c in list(&self.remote.state["cutters"]) {
-                            let id = text(&c["id"]);
-                            ui.selectable_value(&mut self.cutter, id.into(), text(&c["name"]));
-                        }
-                    });
             }
             _ => {}
         }

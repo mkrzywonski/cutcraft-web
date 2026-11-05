@@ -22,6 +22,7 @@ async function command(id,params={},fence={}){
 }
 async function refresh(){
  if(refreshing)return;refreshing=true;
+ const initialCopy=model.cut_preview?.copy?.id;
  try{
   const me=await api('/api/v1/me');model.me={...me,login_required:me.mode==='users'&&!me.user};
   if(model.me.login_required || me.must_change || me.mode==='locked'){model.connected=true;live?.close();live=null;return;}
@@ -36,11 +37,15 @@ async function refresh(){
   }
   model.selectedCutter ||= model.preferences.cutter || model.state.cutters?.[0]?.id;
   const cutter=model.state.cutters?.find(c=>c.id===model.selectedCutter);
+  // A completed or removed turn no longer owns a prepared preview. Keep queued copies,
+  // and never discard a copy published while these read requests were in flight.
+  if(initialCopy && model.cut_preview?.copy?.id===initialCopy && !model.pending && cutter &&
+     cutter.view.turn?.job.job_id!==initialCopy && !cutter.view.queue?.some(q=>q.job.job_id===initialCopy))model.cut_preview={};
   if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || cutter.view.turn.job.job_id===model.cut_preview.copy.id) && cutter.view.activity==='idle'){
     try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
     if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===cutter.view.turn.job.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
-    } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
+    } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && (!model.cut_preview?.copy || model.cut_preview.copy.id===cutter.view.turn.job.job_id)){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
   }
   if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
   const art=snapshot.design?.art;

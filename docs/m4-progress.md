@@ -155,3 +155,20 @@ main cut. HTTP and MCP share a replay test; incompatible physical setup changes 
 All 459 Rust tests, formatting, native/wasm Clippy, build, dependency policy, desktop/compact
 browser checks and the real-process design-session script passed. Further M4 work remains,
 including active-motion reload, uncertain outcomes, modal Stop, full UI parity and acceptance.
+
+## Desktop interaction recovery (0.15.1)
+
+Escape and a visible Stop remain available through modal dialogs and pending requests. Text
+editing keeps its own Undo; Save As, Redo and view shortcuts use the same availability as menus.
+Cutter selection is synchronized and cannot change during motion. Completed/removed turns release
+the old prepared preview; queued copies and replacement previews survive late responses. The
+simulator's Load button waits for confirmed unloading rather than the first no-media reading.
+
+All 462 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The desktop browser workflow prepares another test after the design cut and stops it through
+Troubleshooting with Escape; its durable execution receipt confirms `stopped`. Transport tests
+cover completion cleanup and a late refused preview after replacement. No physical motion occurred.
+
+That exercise exposed a separate inherited gap: a stopped test can leave the mat eligible for
+reuse. The spec requires fresh loading after Stop; this remains open until the cutter-state fix
+and its tests land. Active-cut preview recovery and the other completion gates above remain open.

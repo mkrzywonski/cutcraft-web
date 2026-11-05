@@ -31,10 +31,10 @@ impl Desktop {
                     let selected=self.screen()==screen;
                     if ui.add_enabled(!self.cut_busy(),egui::Button::selectable(selected,label)).clicked(){self.command("view.show",json!({"screen":screen}));ui.close();}
                 }
-                ui.separator();let zoom=self.has_design() && !matches!(self.screen(),"mat"|"cut"|"test-cut");
-                if self.button(ui,"Zoom in",zoom){self.zoom*=1.25;}
-                if self.button(ui,"Zoom out",zoom){self.zoom/=1.25;}
-                if self.button(ui,"Fit in window",zoom){self.zoom=1.;self.pan=egui::Vec2::ZERO;}
+                ui.separator();let zoom=self.view_controls_enabled();let mat=self.screen()=="mat";
+                if self.button(ui,if mat{"Make design bigger"}else{"Zoom in"},zoom){self.zoom_view(true);}
+                if self.button(ui,if mat{"Make design smaller"}else{"Zoom out"},zoom){self.zoom_view(false);}
+                if self.button(ui,if mat{"Fit design to mat"}else{"Fit in window"},zoom){self.fit_view();}
                 ui.checkbox(&mut self.tool_motion,"Show moves between cuts");
                 ui.checkbox(&mut self.show_test,"Show test-cut spot");
                 ui.separator();
@@ -134,7 +134,7 @@ impl Desktop {
                 }
             }
             crate::chrome::divider(ui);
-            let zoom = self.has_design() && !matches!(self.screen(), "cut" | "test-cut");
+            let zoom = self.view_controls_enabled();
             if self.tool(
                 ui,
                 Icon::Minus,
@@ -147,11 +147,7 @@ impl Desktop {
                 false,
                 zoom,
             ) {
-                if self.screen() == "mat" {
-                    self.resize_step(1. / 1.1);
-                } else {
-                    self.zoom /= 1.25;
-                }
+                self.zoom_view(false);
             }
             if self.tool(
                 ui,
@@ -165,11 +161,7 @@ impl Desktop {
                 false,
                 zoom,
             ) {
-                if self.screen() == "mat" {
-                    self.resize_step(1.1);
-                } else {
-                    self.zoom *= 1.25;
-                }
+                self.zoom_view(true);
             }
             if self.tool(
                 ui,
@@ -183,12 +175,7 @@ impl Desktop {
                 false,
                 zoom,
             ) {
-                if self.screen() == "mat" {
-                    self.command("design.size", json!({"fit":true}));
-                } else {
-                    self.zoom = 1.;
-                    self.pan = egui::Vec2::ZERO;
-                }
+                self.fit_view();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let cut = self.screen() == "cut";
@@ -270,33 +257,80 @@ impl Desktop {
         })
     }
     pub fn keyboard(&mut self, ctx: &egui::Context) {
-        let shortcuts = [
-            (Key::O, "open"),
-            (Key::S, "save"),
-            (Key::Z, "undo"),
-            (Key::Y, "redo"),
-        ];
-        for (key, action) in shortcuts {
-            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, key)) {
-                match action {
-                    "open" => self.send("upload", json!({})),
-                    "save" => self.save(false),
-                    "undo" if self.enabled("history.undo") => {
-                        self.command("history.undo", json!({}))
-                    }
-                    "redo" if self.enabled("history.redo") => {
-                        self.command("history.redo", json!({}))
-                    }
-                    _ => {}
+        let pressed = |modifiers, key| {
+            ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(modifiers, key)))
+        };
+        // Stop remains available through modal dialogs, text editing and pending network work.
+        if self.cut_busy() && pressed(Modifiers::NONE, Key::Escape) {
+            self.send("cutter", json!({"id":self.cutter,"action":"stop"}));
+            return;
+        }
+        if self.dialog.is_some() || ctx.text_edit_focused() {
+            return;
+        }
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        if pressed(Modifiers::COMMAND, Key::O) {
+            self.send("upload", json!({}));
+        }
+        if pressed(shift, Key::S) && self.has_design() {
+            self.save(true);
+        } else if pressed(Modifiers::COMMAND, Key::S) && self.has_design() {
+            self.save(false);
+        }
+        if (pressed(shift, Key::Z) || pressed(Modifiers::COMMAND, Key::Y))
+            && self.enabled("history.redo")
+        {
+            self.command("history.redo", json!({}));
+        } else if pressed(Modifiers::COMMAND, Key::Z) && self.enabled("history.undo") {
+            self.command("history.undo", json!({}));
+        }
+        if self.has_design() && !self.cut_busy() {
+            for (key, screen) in [
+                (Key::Num1, "side-by-side"),
+                (Key::Num2, "overlay"),
+                (Key::Num3, "mat"),
+            ] {
+                if pressed(Modifiers::COMMAND, key) {
+                    self.command("view.show", json!({"screen":screen}));
                 }
             }
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            if self.dialog.is_some() {
-                self.dialog = None;
-            } else if matches!(self.screen(), "cut" | "test-cut") {
-                self.send("cutter", json!({"id":self.cutter,"action":"stop"}));
+        if self.view_controls_enabled() {
+            if pressed(Modifiers::COMMAND, Key::Num0) {
+                self.fit_view();
             }
+            if pressed(Modifiers::COMMAND, Key::Equals) || pressed(Modifiers::COMMAND, Key::Plus) {
+                self.zoom_view(true);
+            }
+            if pressed(Modifiers::COMMAND, Key::Minus) {
+                self.zoom_view(false);
+            }
+        }
+    }
+    fn view_controls_enabled(&self) -> bool {
+        self.has_design()
+            && !matches!(self.screen(), "cut" | "test-cut")
+            && (self.screen() != "mat" || self.enabled("design.size"))
+    }
+    fn zoom_view(&mut self, bigger: bool) {
+        if !self.view_controls_enabled() {
+            return;
+        }
+        if self.screen() == "mat" {
+            self.resize_step(if bigger { 1.1 } else { 1. / 1.1 });
+        } else {
+            self.zoom = (self.zoom * if bigger { 1.25 } else { 1. / 1.25 }).clamp(0.1, 50.);
+        }
+    }
+    fn fit_view(&mut self) {
+        if !self.view_controls_enabled() {
+            return;
+        }
+        if self.screen() == "mat" {
+            self.command("design.size", json!({"fit":true}));
+        } else {
+            self.zoom = 1.;
+            self.pan = egui::Vec2::ZERO;
         }
     }
     fn resize_step(&mut self, factor: f64) {
@@ -311,7 +345,7 @@ impl Desktop {
             let cutters=list(&self.remote.state["cutters"]);
             if self.cutter.is_empty(){self.cutter=text(&self.remote.preferences["cutter"]).into();if self.cutter.is_empty()&& let Some(c)=cutters.first(){self.cutter=text(&c["id"]).into();}}
             let before=self.cutter.clone();
-            egui::ComboBox::from_label("Cutter").selected_text(&self.cutter).show_ui(ui,|ui|{for c in &cutters{let id=text(&c["id"]);ui.selectable_value(&mut self.cutter,id.into(),text(&c["view"]["name"]));}});
+            ui.add_enabled_ui(!self.cut_busy(),|ui|{egui::ComboBox::from_label("Cutter").selected_text(&self.cutter).show_ui(ui,|ui|{for c in &cutters{let id=text(&c["id"]);ui.selectable_value(&mut self.cutter,id.into(),text(&c["view"]["name"]));}});});
             if self.cutter!=before{self.send("select-cutter",json!({"cutter":self.cutter}));}
             let cutter=cutters.iter().find(|c|c["id"]==self.cutter).cloned().unwrap_or_default();let v=cutter["view"].clone();
             ui.separator();
@@ -358,7 +392,7 @@ impl Desktop {
                 if tests>0{ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));}
                 if self.button(ui,"Troubleshooting",true){self.open_dialog("troubleshooting","Troubleshooting");}
             }
-            if cutter["simulated"]==true{ui.separator();ui.label("Simulated Cameo — no physical motion");ui.horizontal(|ui|{for (load,label) in [(true,"Load virtual mat"),(false,"Unload virtual mat")]{if self.button(ui,label,!busy && v["mat_loaded"]!=load){self.send("cutter",json!({"id":self.cutter,"action":"practice","body":{"load":load}}));}}});}
+            if cutter["simulated"]==true{ui.separator();ui.label("Simulated Cameo — no physical motion");ui.horizontal(|ui|{for (load,label) in [(true,"Load virtual mat"),(false,"Unload virtual mat")]{if self.button(ui,label,!busy && if load {v["mat"]["state"]=="none"}else{v["mat_loaded"]==true}){self.send("cutter",json!({"id":self.cutter,"action":"practice","body":{"load":load}}));}}});}
         });
         let saved = self.remote.geometry.clone();
         if let Ok(geometry) = serde_json::from_value(self.remote.cut_preview["geometry"].clone()) {
@@ -366,5 +400,106 @@ impl Desktop {
         }
         self.canvas(ui);
         self.remote.geometry = saved;
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+
+    fn key_input(key: Key, modifiers: Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280., 900.),
+            )),
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn escape_stops_through_a_modal_and_pending_request() {
+        let mut desktop = Desktop {
+            cutter: "practice".into(),
+            ..Default::default()
+        };
+        desktop.remote.pending = true;
+        desktop.remote.snapshot.ui.screen = "cut".into();
+        desktop.remote.state = json!({"cutters":[{"id":"practice","view":{"activity":"cutting"}}]});
+        desktop.open_dialog("troubleshooting", "Troubleshooting");
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(key_input(Key::Escape, Modifiers::NONE), |ui| {
+            desktop.frame(ui)
+        });
+        output.textures_delta.clear();
+        assert!(
+            desktop
+                .intents
+                .iter()
+                .any(|i| i.action == "cutter"
+                    && i.params == json!({"id":"practice","action":"stop"}))
+        );
+        assert!(
+            desktop.controls.contains_key("Stop now"),
+            "a visible Stop is also available in the modal"
+        );
+    }
+
+    #[test]
+    fn undo_in_a_text_field_does_not_undo_the_project() {
+        let mut desktop = Desktop::default();
+        desktop.remote.connected = true;
+        desktop.remote.snapshot.ui.history = json!({"undo":[{"label":"project edit"}]});
+        desktop.remote.snapshot.ui.commands = vec![json!({"id":"history.undo","enabled":true})];
+        let ctx = egui::Context::default();
+        let mut draft = "A material name".to_owned();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut draft).id(egui::Id::new("draft")))
+                .request_focus();
+        });
+        output.textures_delta.clear();
+        assert!(ctx.text_edit_focused());
+        let mut output = ctx.run_ui(key_input(Key::Z, Modifiers::COMMAND), |ui| {
+            desktop.keyboard(ui.ctx());
+            ui.add(egui::TextEdit::singleline(&mut draft).id(egui::Id::new("draft")));
+        });
+        output.textures_delta.clear();
+        assert!(desktop.intents.is_empty());
+    }
+
+    #[test]
+    fn save_as_and_view_shortcuts_work_but_cut_screens_cannot_resize() {
+        let mut desktop = Desktop::default();
+        desktop.remote.snapshot.design = Some(Default::default());
+        desktop.remote.snapshot.ui.screen = "side-by-side".into();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(
+            key_input(Key::S, Modifiers::COMMAND | Modifiers::SHIFT),
+            |ui| desktop.keyboard(ui.ctx()),
+        );
+        output.textures_delta.clear();
+        assert_eq!(desktop.dialog.as_ref().unwrap().kind, "save");
+        desktop.dialog = None;
+        let mut output = ctx.run_ui(key_input(Key::Num2, Modifiers::COMMAND), |ui| {
+            desktop.keyboard(ui.ctx())
+        });
+        output.textures_delta.clear();
+        assert!(desktop.intents.iter().any(|i|i.params["id"]=="view.show" && i.params["params"]["screen"]=="overlay"));
+        desktop.intents.clear();
+        for screen in ["cut", "test-cut"] {
+            desktop.remote.snapshot.ui.screen = screen.into();
+            let before = desktop.zoom;
+            desktop.zoom_view(true);
+            desktop.fit_view();
+            assert_eq!(desktop.zoom, before);
+            assert!(desktop.intents.is_empty());
+        }
     }
 }

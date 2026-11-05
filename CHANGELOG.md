@@ -4,6 +4,13 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.15.1 — 2026-11-05
+
+- Keep Stop available through dialogs and text editing; add desktop Save As, Redo and view shortcuts without intercepting text-field Undo.
+- Wait for confirmed unloading before allowing another simulated mat load.
+- Keep cutter selection consistent and fixed during motion. Release completed prepared previews so another cut can be prepared, preserving queued copies and newer preview responses.
+
+
 ## 0.15.0 — 2026-11-04
 
 - Prepare updated cut settings on the same loaded mat while retaining earlier test areas and the current queue turn. Changes to the physical material/mat require fresh loading. Stale or busy replacements change nothing.

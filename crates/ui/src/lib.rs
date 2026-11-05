@@ -205,9 +205,7 @@ impl Desktop {
             egui::CentralPanel::default().show(root, |ui| self.login(ui));
             return;
         }
-        if self.dialog.is_none() {
-            self.keyboard(&ctx);
-        }
+        self.keyboard(&ctx);
         egui::Panel::top("chrome").show(root, |ui| {
             self.menus(ui);
             ui.separator();

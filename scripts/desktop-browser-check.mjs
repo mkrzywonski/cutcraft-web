@@ -12,7 +12,7 @@ function cdp(method,params={}){return new Promise((resolve,reject)=>{let id=++ne
 async function page(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
 async function state(){return await page('JSON.parse(CutCraft.state())');}
 async function until(fn,why,timeout=15000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await sleep(100);}throw Error(why+': '+JSON.stringify((await state()).message));}
-async function click(label){let r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);if(!r)throw Error('No control '+label);const x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;if(y<80&&label==='Width')throw Error('Bad field');await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});await sleep(100);}
+async function click(label){await until(async()=>!!await page(`CutCraft.controls()[${JSON.stringify(label)}]`),'Control rendered: '+label);let r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);if(!r)throw Error('No control '+label);const x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;if(y<80&&label==='Width')throw Error('Bad field');await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});await sleep(100);}
 async function type(label,value){await click(label);await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.insertText',{text:value});await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});}
 await cdp('Runtime.enable');
 await cdp('Page.enable');
@@ -89,6 +89,25 @@ await click('Cut');await until(async()=>(await state()).snapshot.ui.screen==='cu
 await until(async()=>(await state()).state.cutters[0].view.mat_loaded,'Same loaded mat ready for design');
 await click('Start');await until(async()=>(await state()).state.cutters[0].view.mat.state==='used','Main cut completed',45000);
 console.log('PASS: toolbar navigation only, explicit prepare/Start, two tests and design on one loaded mat');
+await until(async()=>!(await state()).cut_preview?.copy,'Finished turn clears prepared preview');
+await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','New test after completed design');
+await click('Cut pattern');await until(async()=>(await state()).cut_preview?.geometry,'Prepare another turn');
+await until(async()=>(await state()).state.cutters[0].view.mat_loaded,'Used mat settled before unloading');
+await sleep(200);
+await click('Unload virtual mat');await until(async()=>(await state()).state.cutters[0].view.mat.state==='none','Unload used mat');
+await sleep(200);
+await click('Load virtual mat');await until(async()=>(await state()).state.cutters[0].view.mat.state==='fresh' && (await state()).state.cutters[0].view.mat_loaded,'Load fresh mat');
+await click('Start');await until(async()=>(await state()).state.cutters[0].view.activity==='testing','Test running for modal Stop');
+const stoppedExecution=(await state()).state.cutters[0].view.execution;
+await click('Menu Help');await click('Troubleshooting');
+await until(async()=>!!(await page('CutCraft.controls()["Close dialog"]')),'Troubleshooting modal is open');
+await until(async()=>!!(await page('CutCraft.controls()["Stop now"]')),'Stop remains visible through dialog');
+await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+await until(async()=>['stopping','confirming-stop','idle'].includes((await state()).state.cutters[0].view.activity),'Modal Escape stops cut');
+await until(async()=>(await state()).state.cutters[0].view.activity==='idle','Stop confirmed',45000);
+await until(async()=>{const record=JSON.parse(await fs.readFile(`${artifacts}/data/private/executions/${stoppedExecution}.json`,'utf8'));return record.outcome?.ended==='stopped';},'Durable record confirms Stop, not completion');
+console.log('PASS: prepare after finished cut and Escape Stop through a help dialog');
 await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Reload ready');
 await until(async()=>(await state()).snapshot.ui.sheet?.material?.force===17,'Material setting survives reload');

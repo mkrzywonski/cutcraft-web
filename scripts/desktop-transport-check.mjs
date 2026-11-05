@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const source=(await readFile(new URL('../apps/server/web/desktop/desktop.js',import.meta.url),'utf8'))
  .replace(/^import .*;$/m,'').split('try{await refresh();await init();')[0];
 const calls=[];
-let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null;
+let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null, queue=[{job:{job_id:'my-copy'}}];
 const context=vm.createContext({
  console,URLSearchParams,FormData,TypeError,Uint8Array,
  crypto:{randomUUID:()=> 'test-key'},
@@ -18,7 +18,7 @@ const context=vm.createContext({
   let value={};let ok=true;
   if(path.endsWith('/me'))value={mode:'open'};
   else if(path.endsWith('/snapshot'))value={protocol:7,incarnation,revision:1,ui:{screen:'test-cut'}};
-  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity:'idle',turn:{job:{job_id:turn}}}}]};
+  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity:'idle',turn:turn?{job:{job_id:turn}}:null,queue}}]};
   else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},geometry:{id:'frozen'}};ok=!refusePreview;}
   else throw Error('Unexpected request '+path);
   return {ok,status:ok?200:404,json:async()=>value};
@@ -58,3 +58,17 @@ vm.runInContext("model.selectedCutter='another-cutter';model.cut_preview={}",con
 releasePreview();await refreshing;
 assert.equal(vm.runInContext('model.cut_preview.geometry',context),undefined,'A late response must not replace the newly selected cutter preview');
 console.log('PASS: switching cutters discards an in-flight preview');
+
+previewGate=null; turn=null; queue=[];
+await vm.runInContext("model.selectedCutter='practice';model.cut_preview={copy:{id:'my-copy'},geometry:{id:'finished'}};refresh()",context);
+assert.equal(vm.runInContext('model.cut_preview.copy',context),undefined,'A finished turn must release the prepared copy so another cut can be prepared');
+console.log('PASS: completed cuts release the desktop preparation state');
+
+turn='my-copy';refusePreview=true;
+previewGate=new Promise(resolve=>{releasePreview=resolve;});
+const oldPreview=vm.runInContext("model.cut_preview={copy:{id:'my-copy'}};refresh()",context);
+await new Promise(resolve=>setImmediate(resolve));
+vm.runInContext("model.cut_preview={copy:{id:'replacement'},geometry:{id:'new-preview'}}",context);
+releasePreview();await oldPreview;
+assert.equal(vm.runInContext('model.cut_preview.geometry.id',context),'new-preview','A refused old preview must not erase a newer prepared copy');
+console.log('PASS: late preview refusal preserves replacement geometry');
