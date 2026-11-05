@@ -172,3 +172,17 @@ cover completion cleanup and a late refused preview after replacement. No physic
 That exercise exposed a separate inherited gap: a stopped test can leave the mat eligible for
 reuse. The spec requires fresh loading after Stop; this remains open until the cutter-state fix
 and its tests land. Active-cut preview recovery and the other completion gates above remain open.
+
+## Stop ends retained-load reuse (0.15.2)
+
+The cutter now retires the observed mat generation after Stop, including a driver completion
+that races the request. A fresh request with the current epoch is refused until an observed
+unload/load creates a new generation. Occupied test areas remain recorded. A core regression
+first failed on the old implementation, then passed for both stopped and racing-completion
+outcomes and verified fresh loading restores Start. The desktop no longer calls a used mat a
+successful completed cut or offers another test based on its occupied-area count.
+
+All 463 Rust tests, native/wasm Clippy, formatting, workspace build and dependency policy passed.
+The desktop browser checks confirm the durable stopped outcome and used mat; all 40 compact
+browser checks passed. This closes the retained-load Stop gap noted above, not the remaining M4
+completion gates. No real cutter was used.

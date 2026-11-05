@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.15.2 — 2026-11-05
+
+- Require fresh loading after stopping a test cut, including when completion races Stop. Preserve occupied areas and refuse another Start until a new load is observed.
+
+
 ## 0.15.1 — 2026-11-05
 
 - Keep Stop available through dialogs and text editing; add desktop Save As, Redo and view shortcuts without intercepting text-field Undo.

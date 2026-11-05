@@ -107,7 +107,8 @@ await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',wind
 await until(async()=>['stopping','confirming-stop','idle'].includes((await state()).state.cutters[0].view.activity),'Modal Escape stops cut');
 await until(async()=>(await state()).state.cutters[0].view.activity==='idle','Stop confirmed',45000);
 await until(async()=>{const record=JSON.parse(await fs.readFile(`${artifacts}/data/private/executions/${stoppedExecution}.json`,'utf8'));return record.outcome?.ended==='stopped';},'Durable record confirms Stop, not completion');
-console.log('PASS: prepare after finished cut and Escape Stop through a help dialog');
+if((await state()).state.cutters[0].view.mat.state!=='used')throw Error('Stopped test must require fresh loading');
+console.log('PASS: prepare after finished cut and Escape Stop through a help dialog; fresh loading required');
 await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Reload ready');
 await until(async()=>(await state()).snapshot.ui.sheet?.material?.force===17,'Material setting survives reload');

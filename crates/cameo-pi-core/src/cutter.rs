@@ -739,6 +739,16 @@ impl Cutter {
             return;
         }
         let (kind, job, area) = (*kind, job.clone(), *area);
+        // Stop revokes retained-load reuse, including a completion that races the request.
+        // Keep the occupied area, but require a newly observed unload/load before another Start.
+        if self
+            .stop_intent
+            .as_ref()
+            .is_some_and(|stop| stop.execution == execution)
+            || matches!(outcome, Outcome::Stopped { .. })
+        {
+            self.observer.retire();
+        }
         self.progress = None;
         if matches!(
             &outcome,
@@ -1918,8 +1928,56 @@ mod tests {
             c.observe(100.0 + f64::from(i) * 0.5, Reading::Ready);
         }
         assert_eq!(c.view().activity, "idle", "the orderly stop was confirmed");
-        assert_eq!(c.mat(), Mat::Fresh(1));
+        assert_eq!(c.mat(), Mat::Used(1));
         assert!(matches!(c.start(delayed), Err(Refusal::StaleEpoch { .. })));
+    }
+
+    #[test]
+    fn stopped_tests_require_a_new_load_even_when_the_driver_finishes_first() {
+        for completed in [false, true] {
+            let mut c = ready_cutter();
+            let (exec, turn) = started(c.start(request(&c, Kind::Test, None, "test")));
+            c.take_pending();
+            c.stop().unwrap();
+            c.finished(
+                &exec,
+                if completed {
+                    Outcome::Completed { duration_s: 1.0 }
+                } else {
+                    Outcome::Stopped {
+                        idle: true,
+                        passes_sent: 1,
+                    }
+                },
+            );
+            c.resume_polling(100.0);
+            for i in 1..9 {
+                c.observe(100.0 + f64::from(i) * 0.5, Reading::Ready);
+            }
+            assert_eq!(c.view().activity, "idle");
+            assert_eq!(
+                c.mat(),
+                Mat::Used(1),
+                "Stop revokes reuse even if completion races it"
+            );
+            assert_eq!(c.view().turn.as_ref().unwrap().taken.len(), 1);
+            let fresh_request = request(&c, Kind::Main, Some(&turn), "after-stop");
+            assert!(matches!(
+                c.start(fresh_request),
+                Err(Refusal::MatNotFresh { .. })
+            ));
+            assert!(c.take_pending().is_none());
+            for i in 0..2 {
+                c.observe(105.0 + f64::from(i) * 0.5, Reading::NoMedia);
+            }
+            for i in 0..9 {
+                c.observe(106.0 + f64::from(i) * 0.5, Reading::Ready);
+            }
+            assert_eq!(c.mat(), Mat::Fresh(2));
+            let mut next = request(&c, Kind::Main, Some(&turn), "fresh-load");
+            next.generation = 2;
+            started(c.start(next));
+        }
     }
 
     #[test]

@@ -380,7 +380,7 @@ impl Desktop {
                     if self.button(ui,"This mat has fresh material",!self.remote.pending){self.send("cutter",json!({"id":self.cutter,"action":"mat-fresh"}));}
                 }
                 let tests=v["turn"]["tests"].as_u64().unwrap_or(0);
-                if test && tests>self.reviewed_tests {
+                if test && tests>self.reviewed_tests && v["mat"]["state"]=="fresh" {
                     ui.strong("Test cut finished");
                     ui.label("Check how the pattern weeds. Adjust material settings if needed, or try another pattern.");
                     if self.button(ui,"Try another pattern",!self.remote.pending){self.reviewed_tests=tests;}
@@ -388,7 +388,7 @@ impl Desktop {
                 let own_copy=preview.get("copy").filter(|c|!c.is_null());
                 let ready=!changed && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
                 if self.button(ui,"Start",ready){let start=json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});self.send("start",json!({"cutter":self.cutter,"start":start}));}
-                if v["mat"]["state"]=="used" {ui.strong("Cut finished");ui.label("Unload and load fresh material for another cut.");}
+                if v["mat"]["state"]=="used" {ui.strong("Fresh material needed");ui.label("Unload and load fresh material for another cut.");}
                 if tests>0{ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));}
                 if self.button(ui,"Troubleshooting",true){self.open_dialog("troubleshooting","Troubleshooting");}
             }
