@@ -936,6 +936,10 @@ impl Worker {
                 let plan = sheet.and_then(|sh| cutcraft_path::plan_sheet(project, &sh.id).ok());
                 Some(DesignView {
                     source_sha256: project.prepared.source_sha256.clone(),
+                    opened_source_sha256: open.inspection["source_sha256"]
+                        .as_str()
+                        .unwrap_or(&project.prepared.source_sha256)
+                        .to_owned(),
                     name: self.name.clone().unwrap_or_else(|| "Design".into()),
                     project_revision: project.revision,
                     cut_ready: report["cut_ready"].as_bool().unwrap_or(false),
@@ -1269,6 +1273,82 @@ fn art_view(open: &cutcraft_control::OpenDesign, incarnation: &str) -> Option<Ar
 mod tests {
     use super::*;
     use cutcraft_web_protocol::KeyLookup;
+
+    #[test]
+    fn pdf_page_answers_keep_the_opened_source_identity_but_change_the_render_identity() {
+        let dir = area();
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../examples/issues/16-two-pages.pdf"
+            ),
+            dir.path().join("designs/pages.pdf"),
+        )
+        .unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        w.replace(&OpenSource::Upload {
+            file: "pages.pdf".into(),
+            name: "pages.pdf".into(),
+        })
+        .unwrap();
+        let before = snapshot(&mut w);
+        let choice = before.ui.report["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|q| q["choices"].as_array().unwrap())
+            .rfind(|c| c["decision"] == "page")
+            .unwrap()
+            .clone();
+        let result = w.answer(WorkerRequest::Command(CommandRequest {
+            id: "prepare.decide".into(),
+            params: json!({"decision":choice}),
+            key: "page-choice".into(),
+            incarnation: before.incarnation,
+            revision: Some(before.revision),
+        }));
+        assert!(
+            matches!(result, WorkerReply::Command(CommandReply::Applied { .. })),
+            "{result:?}"
+        );
+        let alternate = before.ui.report["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|q| q["choices"].as_array().unwrap())
+            .find(|c| c["decision"] == "page")
+            .unwrap()
+            .clone();
+        let before = before.design.unwrap();
+        let after = snapshot(&mut w).design.unwrap();
+        assert!(!before.opened_source_sha256.is_empty());
+        assert_eq!(after.opened_source_sha256, before.opened_source_sha256);
+        assert!(before.art.is_none(), "no page was selected initially");
+        let first_art = after.art.unwrap().id;
+        let current = snapshot(&mut w);
+        let result = w.answer(WorkerRequest::Command(CommandRequest {
+            id: "prepare.decide".into(),
+            params: json!({"decision":alternate}),
+            key: "other-page".into(),
+            incarnation: current.incarnation,
+            revision: Some(current.revision),
+        }));
+        assert!(
+            matches!(result, WorkerReply::Command(CommandReply::Applied { .. })),
+            "{result:?}"
+        );
+        let second = snapshot(&mut w).design.unwrap();
+        assert_eq!(second.opened_source_sha256, before.opened_source_sha256);
+        assert_ne!(second.art.unwrap().id, first_art);
+        assert!(matches!(
+            open_as(&mut w, "different-source", true),
+            CommandReply::Applied { .. }
+        ));
+        assert_ne!(
+            snapshot(&mut w).design.unwrap().opened_source_sha256,
+            before.opened_source_sha256
+        );
+    }
 
     #[test]
     fn cancellation_is_fenced_to_the_active_call_and_never_rewrites_an_applied_edit() {

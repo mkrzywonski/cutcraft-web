@@ -1479,13 +1479,17 @@ fn session_cookie(app: &App, value: &str, max_age: u64) -> HeaderValue {
 
 async fn me(axum::Extension(caller): axum::Extension<Caller>) -> Json<Value> {
     Json(match &caller.identity {
-        Identity::Open => json!({ "mode": "open", "role": "admin" }),
+        Identity::Open => {
+            json!({ "mode": "open", "role": "admin", "principal": crate::people::HOUSEHOLD })
+        }
         Identity::User {
+            id,
             name,
             role,
             must_change,
-            ..
-        } => json!({ "mode": "users", "user": name, "role": role, "must_change": must_change }),
+        } => {
+            json!({ "mode": "users", "user": name, "principal": id, "role": role, "must_change": must_change })
+        }
         Identity::Nobody => json!({ "mode": "users", "user": null }),
         Identity::Locked => json!({ "mode": "locked" }),
     })

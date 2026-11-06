@@ -214,3 +214,18 @@ All 467 Rust tests, formatting, native/wasm Clippy, build, dependency policy and
 simulated workflow passed. Compact browser checks last passed at 0.16.0; its rendering is unchanged.
 This does not close the complete mat/view contract: feed/start annotations, gestures, settling,
 progress drawing and paired reference acceptance remain to be completed.
+
+## Artwork retention and identity boundaries (0.17.1)
+
+Same-source artwork remains visible in its original region while a replacement render loads.
+Original-source identity is distinct from the preparation fingerprint. Source, session and
+account changes clear private artwork, lists and interaction drafts; queued actions cannot cross
+those boundaries. Size choices use the selected units, selected controls have readable text and
+single pieces/lines use singular labels.
+
+All 471 Rust tests, formatting, native/wasm Clippy, build and dependency policy passed. All 22
+authored fixtures pass open/answer/Undo/Redo/Save, and both desktop and compact browser suites
+passed. The PDF fixture assertion was corrected: before its first page choice there is no image
+to retain. A separate worker regression verifies page changes retain original-source identity.
+Transport regressions cover delayed renders, account changes, authentication loss and queued
+private actions. This closes these findings, not the remaining M4 gates or platform acceptance.

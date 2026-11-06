@@ -3372,6 +3372,15 @@ async fn queued_private_cut_preview_remains_owned_by_its_creator() {
             .principal,
         id
     );
+    let (_, me) = send(
+        &h.app,
+        design("GET", "/api/v1/me", Body::empty(), Some(&first)),
+    )
+    .await;
+    assert_eq!(
+        me["principal"], id,
+        "private display caches fence against the stable account identity"
+    );
     let request = |session: &str| {
         let mut request = page(
             "GET",

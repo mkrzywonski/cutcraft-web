@@ -20,16 +20,23 @@ async function command(id,params={},fence={}){
  try{return await api('/api/v1/design/command','POST',body);}
  catch(e){if(e instanceof TypeError){model.message='Connection lost. Checking whether your change was applied…';const answer=await api(`/api/v1/design/lookup/${body.key}`);if(answer.answer==='applied')return answer;if(answer.answer==='refused')throw new Error(answer.message);throw new Error('The change was not applied. Review the current project and try again.');}throw e;}
 }
+function clearPicture(){model.picture='';model.picture_id='';model.picture_source='';model.picture_region=null;}
+function clearPrivate(){
+ model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.state={};model.library={};model.uploads={};model.result={};
+ clearPicture();document.title='CutCraft';live?.close();live=null;
+}
 async function refresh(){
  if(refreshing)return;refreshing=true;
  const initialCopy=model.cut_preview?.copy?.id;
  try{
-  const me=await api('/api/v1/me');model.me={...me,login_required:me.mode==='users'&&!me.user};
-  if(model.me.login_required || me.must_change || me.mode==='locked'){model.connected=true;live?.close();live=null;return;}
+  const me=await api('/api/v1/me');
+  if(model.me.mode!==me.mode || model.me.principal!==me.principal)clearPrivate();
+  model.me={...me,login_required:me.mode==='users'&&!me.user};
+  if(model.me.login_required || me.must_change || me.mode==='locked'){clearPrivate();model.connected=true;return;}
   const [snapshot,state]=await Promise.all([api('/api/v1/design/snapshot'),api('/api/v1/state')]);
   if(snapshot.protocol!==PROTOCOL)throw new Error('The server was updated. Reload this page.');
   const old=model.snapshot;
-  if(old.incarnation && old.incarnation!==snapshot.incarnation){model.cut_preview={};model.result={};model.geometry={id:""};model.picture="";model.picture_id="";}
+  if(old.incarnation && old.incarnation!==snapshot.incarnation)clearPrivate();
   model.snapshot=snapshot;model.state=state;model.connected=true;
   document.title=(snapshot.design?.name?`${snapshot.design.name} — `:'')+'CutCraft';
   if(snapshot.design?.geometry?.id && (snapshot.design.geometry.id!==old.design?.geometry?.id || !model.geometry.id)){
@@ -48,19 +55,19 @@ async function refresh(){
     if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===previewJob.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
     } catch(e) {if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && (!model.cut_preview?.copy || model.cut_preview.copy.id===previewJob.job_id)){model.cut_preview={copy:model.cut_preview?.copy};if(e.status!==404)model.message=e.message;}}
   }
-  if(!snapshot.design){model.geometry={id:""};model.picture='';model.picture_id='';}
+  if(!snapshot.design){model.geometry={id:""};clearPicture();}
   const art=snapshot.design?.art;
-  if(art?.id!==model.picture_id){model.picture='';}
-  if(art && art.id!==model.picture_id && pictureFlight!==art.id){pictureFlight=art.id;void picture(art).finally(()=>{if(pictureFlight===art.id)pictureFlight='';});}
+  if((old.design?.opened_source_sha256 || old.design?.source_sha256)!==(snapshot.design?.opened_source_sha256 || snapshot.design?.source_sha256))clearPicture();
+  if(art && art.id!==model.picture_id && pictureFlight!==art.id){pictureFlight=art.id;void picture(art,`${snapshot.incarnation}|${snapshot.design.opened_source_sha256 || snapshot.design.source_sha256}`).finally(()=>{if(pictureFlight===art.id)pictureFlight='';});}
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
- }catch(e){model.connected=false;model.message=e.message;}finally{refreshing=false;}
+ }catch(e){if(e.status===401 || e.status===403){clearPrivate();model.me.login_required=true;}model.connected=false;model.message=e.message;}finally{refreshing=false;}
 }
-async function picture(art){
+async function picture(art,source){
  try{const [x0,y0,x1,y1]=art.bounds.map(n=>n/art.scale);const width=1200,height=Math.max(1,Math.min(1600,Math.round(width*(y1-y0)/(x1-x0))));
   const q=new URLSearchParams({art:art.id,x0,y0,x1,y1,zoom_step:0,width,height});
   const r=await fetch(`/api/v1/design/picture?${q}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok)return;
   const bytes=new Uint8Array(await r.arrayBuffer());let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));
-  if(model.snapshot.design?.art?.id===art.id){model.picture=btoa(s);model.picture_id=art.id;}
+  if(model.snapshot.design?.art?.id===art.id){model.picture=btoa(s);model.picture_id=art.id;model.picture_source=source;model.picture_region=art.bounds.map(n=>n/art.scale);}
  }catch{/* Preview failures do not replace the last complete picture. */}
 }
 function savedBody(params){return {...params,key:key(),incarnation:model.snapshot.incarnation,revision:model.snapshot.revision};}
@@ -87,7 +94,7 @@ async function dispatch({action,params:p}){
    case 'uploads':model.uploads=await api('/api/v1/design/designs');break;
    case 'login':await api('/api/v1/login','POST',{name:p.username,password:p.password});break;
    case 'password':await api('/api/v1/me/password','POST',p);break;
-   case 'logout':await api('/api/v1/logout','POST',{});model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.picture='';model.picture_id='';model.geometry={id:''};model.cut_preview={};break;
+   case 'logout':await api('/api/v1/logout','POST',{});clearPrivate();break;
    case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
    case 'prepare-cut':{
      model.selectedCutter=p.cutter;
@@ -111,8 +118,9 @@ async function dispatch({action,params:p}){
   }
  });
 }
+const presentationScope=()=>JSON.stringify([model.me.principal,model.snapshot.incarnation,model.snapshot.design?.opened_source_sha256 || model.snapshot.design?.source_sha256]);
 let dispatchQueue=Promise.resolve();
-window.CutCraft={state:()=>JSON.stringify(model),dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='cutter'&&intent.params.action==='stop'){void dispatch(intent);}else{dispatchQueue=dispatchQueue.then(()=>dispatch(intent));}},inspect:s=>{controls=JSON.parse(s);},controls:()=>controls};
+window.CutCraft={state:()=>JSON.stringify(model),dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='cutter'&&intent.params.action==='stop'){void dispatch(intent);}else{const scope=presentationScope();dispatchQueue=dispatchQueue.then(()=>{if(scope===presentationScope())return dispatch(intent);});}},inspect:s=>{controls=JSON.parse(s);},controls:()=>controls};
 document.querySelector('#file').addEventListener('change',e=>{void upload(e.target.files[0]);e.target.value='';});
 window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>{e.preventDefault();uploadMode={};void upload(e.dataTransfer.files[0]);});
 try{await refresh();await init();await start(document.querySelector('#cutcraft'));document.querySelector('#loading').hidden=true;setInterval(refresh,1000);}catch(e){document.querySelector('#loading').textContent=`CutCraft could not start: ${e.message}. Reload to try again.`;}

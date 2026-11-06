@@ -123,8 +123,11 @@ pub struct Presentation {
 /// The open project, as the screens need it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DesignView {
-    /// Source identity, independent of names and project revision counters.
+    /// Source fingerprint carried by the current preparation result.
     pub source_sha256: String,
+    /// Original uploaded/embedded bytes, available independently of preparation and page choices.
+    #[serde(default)]
+    pub opened_source_sha256: String,
     /// The design's file name, as uploaded.
     pub name: String,
     /// The project's revision: it changes whenever the project changes.

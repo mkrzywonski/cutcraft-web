@@ -83,15 +83,11 @@ impl Desktop {
             });
             return;
         }
-        let current_art = self
-            .remote
-            .snapshot
-            .design
-            .as_ref()
-            .and_then(|d| d.art.as_ref())
-            .map(|a| a.id.as_str());
-        if current_art != Some(self.texture_id.as_str()) {
+        if self.remote.picture.is_empty() || self.texture_source != self.remote.picture_source {
             self.texture = None;
+            self.texture_id.clear();
+            self.texture_source.clear();
+            self.texture_region = None;
         }
         if self.texture_id != self.remote.picture_id
             && !self.remote.picture.is_empty()
@@ -107,6 +103,8 @@ impl Desktop {
                 Default::default(),
             ));
             self.texture_id = self.remote.picture_id.clone();
+            self.texture_source = self.remote.picture_source.clone();
+            self.texture_region = self.remote.picture_region;
         }
         let mat = matches!(self.screen(), "mat" | "cut" | "test-cut");
         if self.screen() == "mat" {
@@ -284,6 +282,18 @@ impl Desktop {
                         .and_then(|d| d.art.as_ref())
                         .map(|a| a.bounds)
                         .unwrap_or(bounds);
+                    let factor = self
+                        .remote
+                        .snapshot
+                        .design
+                        .as_ref()
+                        .and_then(|d| d.art.as_ref())
+                        .map(|a| a.scale)
+                        .unwrap_or(1.);
+                    let art = self
+                        .texture_region
+                        .map(|region| region.map(|v| v * factor))
+                        .unwrap_or(art);
                     let artwork = Rect::from_min_max(point(art[0], art[1]), point(art[2], art[3]));
                     painter.image(
                         texture.id(),
@@ -648,6 +658,59 @@ mod tests {
                 assert!((pan + source * zoom - anchor).length() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn source_texture_survives_a_new_render_but_never_a_new_source() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([10, 20, 30, 255]),
+        ))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+        let mut desktop = Desktop::default();
+        desktop.remote.snapshot.design = Some(cutcraft_web_protocol::DesignView {
+            art: Some(cutcraft_web_protocol::ArtView {
+                id: "old-render".into(),
+                design_revision: 1,
+                bounds: [0., 0., 2., 2.],
+                scale: 1.,
+            }),
+            ..Default::default()
+        });
+        desktop.remote.snapshot.ui.screen = "side-by-side".into();
+        desktop.remote.picture = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+        desktop.remote.picture_id = "old-render".into();
+        desktop.remote.picture_source = "session|source".into();
+        desktop.remote.picture_region = Some([0., 0., 2., 2.]);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));
+        output.textures_delta.clear();
+        let texture = desktop.texture.as_ref().unwrap().id();
+        desktop
+            .remote
+            .snapshot
+            .design
+            .as_mut()
+            .unwrap()
+            .art
+            .as_mut()
+            .unwrap()
+            .id = "new-render".into();
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));
+        output.textures_delta.clear();
+        assert_eq!(desktop.texture.as_ref().unwrap().id(), texture);
+        assert_eq!(desktop.texture_region, Some([0., 0., 2., 2.]));
+        desktop.remote.picture_source = "different-session|source".into();
+        desktop.remote.picture = "invalid image".into();
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));
+        output.textures_delta.clear();
+        assert!(
+            desktop.texture.is_none(),
+            "a bad new image cannot leave another source's texture visible"
+        );
     }
 
     #[test]

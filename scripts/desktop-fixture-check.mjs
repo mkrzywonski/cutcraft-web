@@ -59,7 +59,10 @@ async function shot(name) {
 
 // The visible label for an answer, as crates/ui/src/panels.rs `choice_label` draws it.
 // Kept in step by hand: a mismatch shows up as "no visible button", which is itself a finding.
-function choiceLabel(c) {
+function choiceLabel(c, displayUnits) {
+  const inches=displayUnits==='inches';
+  const length=v=>(Number(v)/(inches?25.4:1)).toFixed(inches?2:1);
+  const unit=inches?'in':'mm';
   const d = c.decision;
   const units = {in: 'Inches', mm: 'Millimetres', cm: 'Centimetres', ft: 'Feet', m: 'Metres'};
   const n = v => JSON.stringify(v);
@@ -74,7 +77,7 @@ function choiceLabel(c) {
     case 'keep_page': return 'Trim the art to the page';
     case 'accept_text_overflow': return "Leave out the text that doesn't fit";
     case 'cut_solid': return c.colour ? `Cut in ${c.colour}` : 'Cut as solid';
-    case 'picture_size': return `Use ${n(c.width_mm)} mm`;
+    case 'picture_size': return `Use ${length(c.width_mm)} ${unit}`;
     case 'picture_frame': return `Frame ${(c.frame || 0) + 1}`;
     case 'trace': return c.colours === 'several' ? 'Trace in several colours' : 'Trace in one colour';
     case 'trace_photo': return 'Trace it anyway';
@@ -82,7 +85,7 @@ function choiceLabel(c) {
     case 'import_route': return c.route === 'pdf_appearance' ? 'Use the page appearance' : 'Use the editable layers';
     case 'stroke_colour_role': return c.role === 'cut_line' ? 'Cut these along their centre' : c.role === 'part_of_shape' ? 'Make them part of their shapes' : 'Cut around these as shapes';
     case 'stroke_role': return c.role === 'cut_line' ? 'Cut along line' : c.role === 'part_of_shape' ? 'Part of the shape' : 'Cut around shape';
-    case 'confirm_size': return `Confirm ${n(c.width_mm)} × ${n(c.height_mm)} mm`;
+    case 'confirm_size': return `Confirm ${length(c.width_mm)} × ${length(c.height_mm)} ${unit}`;
     default: return 'Use this choice';
   }
 }
@@ -109,16 +112,17 @@ function summary(report) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // After an edit, the source artwork must stay visible while a newer render is fetched (VIEW-01).
 // A newly opened design has no earlier image to keep. Either way the render must arrive.
-async function artwork(step, finding) {
+async function artwork(step, finding, hadPicture = false) {
   const s = await state();
   const art = s.snapshot.design?.art;
-  if (!art) return;
-  if (step !== 'open' && !s.picture) finding(step, 'artwork pane blank while the new render is fetched (VIEW-01: keep the old image)');
+  if (!art) return false;
+  if (step !== 'open' && hadPicture && !s.picture) finding(step, 'artwork pane blank while the new render is fetched (VIEW-01: keep the old image)');
   const start = Date.now();
   try { await until(async () => { const t = await state(); return t.picture && t.picture_id === t.snapshot.design?.art?.id; }, 'artwork rendered', 20000); }
   catch { finding(step, `source artwork not rendered within 20 s`); return; }
   const ms = Date.now() - start;
   if (ms > 3000) finding(step, `source artwork took ${(ms / 1000).toFixed(1)} s to render`);
+  return true;
 }
 
 await cdp('Runtime.enable');
@@ -154,7 +158,7 @@ for (const fixture of manifest.fixtures) {
         if (!same(initial[key], expected[key])) finding('initial', `${key} is ${JSON.stringify(initial[key])}, reference ${JSON.stringify(expected[key])}`);
     } else result.note = 'no reference observation; initial report not compared';
     if (initial.cut_ready !== opened.snapshot.design.cut_ready) finding('initial', 'report and design disagree on cut_ready');
-    await artwork('open', finding);
+    const hadPicture = await artwork('open', finding);
     await shot(`${stem}-1-opened.png`);
 
     // 2. Answer each question through its visible button, until none remain.
@@ -165,7 +169,7 @@ for (const fixture of manifest.fixtures) {
       if (!question) break;
       const choice = preferred(question);
       if (!choice) { finding('answer', `question ${question.decision} offers no choices`); break; }
-      const label = choiceLabel(choice);
+      const label = choiceLabel(choice, s.ui.units);
       const revision = s.revision;
       try { await click(label); }
       catch (e) { finding('answer', `${question.decision}: no usable "${label}" button (${e.message.split(':')[0]})`); break; }
@@ -180,7 +184,7 @@ for (const fixture of manifest.fixtures) {
     const answered = await state();
     result.answers = answers;
     result.after = summary(answered.snapshot.ui.report);
-    if (answers) { await artwork('answer', finding); await shot(`${stem}-2-answered.png`); }
+    if (answers) { await artwork('answer', finding, hadPicture); await shot(`${stem}-2-answered.png`); }
     const blockers = result.after.diagnostics.filter(d => d.endsWith(':blocking'));
     if (!result.after.cut_ready && !result.after.pending.length)
       result.blocked_by = blockers.length ? blockers : ['(not ready, nothing pending, no blocking diagnostic shown)'];

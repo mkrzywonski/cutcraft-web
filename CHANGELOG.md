@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.17.1 — 2026-11-05
+
+- Keep same-source artwork visible while a replacement render loads, retaining its correct region. Clear private images and lists across source, session and account changes.
+- Format size choices in the selected units, improve selected-toggle contrast, and use singular piece/line counts where appropriate.
+
+
 ## 0.17.0 — 2026-11-05
 
 - Restore the reference physical mat drawing, with rulers on each edge, inch/centimetre markings, custom printed grid origins and approximate-measurement guidance. Both design and frozen cut previews use the saved mat profile.

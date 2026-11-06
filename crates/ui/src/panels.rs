@@ -219,7 +219,7 @@ impl Desktop {
                                         for choice in list(&item["choices"]) {
                                             if self.button(
                                                 ui,
-                                                &choice_label(&choice),
+                                                &choice_label(&choice, self.remote.snapshot.ui.units=="inches"),
                                                 !self.remote.pending,
                                             ) {
                                                 self.command(
@@ -325,8 +325,19 @@ impl Desktop {
                         }
                         ui.label(text(&row["label"]));
                         ui.weak(format!(
-                            "{} pieces, {} lines",
-                            row["pieces"], row["cut_lines"]
+                            "{} {}, {} {}",
+                            row["pieces"],
+                            if row["pieces"] == 1 {
+                                "piece"
+                            } else {
+                                "pieces"
+                            },
+                            row["cut_lines"],
+                            if row["cut_lines"] == 1 {
+                                "line"
+                            } else {
+                                "lines"
+                            }
                         ));
                     });
                     if r.response.hovered() {
@@ -692,7 +703,10 @@ pub fn parse_length(input: &str, inches: bool) -> Option<f64> {
     result.is_finite().then_some(result)
 }
 
-pub fn choice_label(choice: &serde_json::Value) -> String {
+pub fn choice_label(choice: &serde_json::Value, inches: bool) -> String {
+    let factor = if inches { 25.4 } else { 1. };
+    let precision = if inches { 2 } else { 1 };
+    let unit = if inches { "in" } else { "mm" };
     match choice["decision"].as_str() {
         Some("dxf_units") => match choice["unit"].as_str() {
             Some("in") => "Inches",
@@ -722,7 +736,11 @@ pub fn choice_label(choice: &serde_json::Value) -> String {
             Some(hex) => format!("Cut in {hex}"),
             None => "Cut as solid".into(),
         },
-        Some("picture_size") => format!("Use {} mm", choice["width_mm"]),
+        Some("picture_size") => format!(
+            "Use {:.*} {unit}",
+            precision,
+            number(&choice["width_mm"]) / factor
+        ),
         Some("picture_frame") => format!("Frame {}", choice["frame"].as_u64().unwrap_or(0) + 1),
         Some("trace") if choice["colours"] == "several" => "Trace in several colours".into(),
         Some("trace") => "Trace in one colour".into(),
@@ -744,8 +762,11 @@ pub fn choice_label(choice: &serde_json::Value) -> String {
         Some("stroke_role") if choice["role"] == "part_of_shape" => "Part of the shape".into(),
         Some("stroke_role") => "Cut around shape".into(),
         Some("confirm_size") => format!(
-            "Confirm {} × {} mm",
-            choice["width_mm"], choice["height_mm"]
+            "Confirm {:.*} × {:.*} {unit}",
+            precision,
+            number(&choice["width_mm"]) / factor,
+            precision,
+            number(&choice["height_mm"]) / factor
         ),
         _ => "Use this choice".into(),
     }
@@ -913,6 +934,17 @@ fn message_start(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn size_choices_follow_the_display_units() {
+        let choice = json!({"decision":"confirm_size","width_mm":141.111,"height_mm":105.833});
+        assert_eq!(choice_label(&choice, true), "Confirm 5.56 × 4.17 in");
+        assert_eq!(choice_label(&choice, false), "Confirm 141.1 × 105.8 mm");
+        assert_eq!(
+            choice_label(&json!({"decision":"picture_size","width_mm":25.4}), true),
+            "Use 1.00 in"
+        );
+    }
+
     #[test]
     fn explicit_units_and_fractional_lengths() {
         assert_eq!(parse_length("1 1/2 in", false), Some(38.099999999999994));

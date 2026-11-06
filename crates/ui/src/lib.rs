@@ -33,6 +33,8 @@ pub struct Remote {
     pub result_id: u64,
     pub picture: String,
     pub picture_id: String,
+    pub picture_source: String,
+    pub picture_region: Option<[f64; 4]>,
 }
 #[derive(Clone, Serialize)]
 pub struct Intent {
@@ -49,6 +51,7 @@ pub struct Dialog {
     pub selected: Option<String>,
 }
 pub struct Desktop {
+    presentation_identity: Option<(String, String, String, String)>,
     pub remote: Remote,
     pub intents: Vec<Intent>,
     pub dialog: Option<Dialog>,
@@ -57,6 +60,8 @@ pub struct Desktop {
     pub controls: BTreeMap<String, [f32; 4]>,
     pub texture: Option<egui::TextureHandle>,
     pub texture_id: String,
+    pub texture_source: String,
+    pub texture_region: Option<[f64; 4]>,
     pub highlight: Vec<String>,
     pub peek: Vec<String>,
     pub zoom: f32,
@@ -77,6 +82,7 @@ pub struct Desktop {
 impl Default for Desktop {
     fn default() -> Self {
         Self {
+            presentation_identity: None,
             remote: Remote::default(),
             intents: vec![],
             dialog: None,
@@ -85,6 +91,8 @@ impl Default for Desktop {
             controls: BTreeMap::new(),
             texture: None,
             texture_id: String::new(),
+            texture_source: String::new(),
+            texture_region: None,
             highlight: vec![],
             peek: vec![],
             zoom: 1.,
@@ -105,6 +113,54 @@ impl Default for Desktop {
     }
 }
 impl Desktop {
+    fn sync_presentation_identity(&mut self) {
+        let source = self
+            .remote
+            .snapshot
+            .design
+            .as_ref()
+            .map(|d| {
+                if d.opened_source_sha256.is_empty() {
+                    d.source_sha256.clone()
+                } else {
+                    d.opened_source_sha256.clone()
+                }
+            })
+            .unwrap_or_default();
+        let identity = (
+            text(&self.remote.me["mode"]).to_owned(),
+            text(&self.remote.me["principal"]).to_owned(),
+            self.remote.snapshot.incarnation.clone(),
+            source,
+        );
+        if self
+            .presentation_identity
+            .as_ref()
+            .is_some_and(|old| old != &identity)
+        {
+            self.dialog = None;
+            self.fields.clear();
+            self.edit_fences.clear();
+            self.intents.clear();
+            self.highlight.clear();
+            self.peek.clear();
+            self.texture = None;
+            self.texture_id.clear();
+            self.texture_source.clear();
+            self.texture_region = None;
+            self.drag_start = None;
+            self.drag_delta = egui::Vec2::ZERO;
+            self.pan = egui::Vec2::ZERO;
+            self.zoom = 1.;
+            self.playing = false;
+            self.order = 1.;
+            self.close_after_save = false;
+            self.reviewed_tests = 0;
+            self.last_result = self.remote.result_id;
+        }
+        self.presentation_identity = Some(identity);
+    }
+
     pub fn send(&mut self, action: &str, params: Value) {
         self.intents.push(Intent {
             action: action.into(),
@@ -169,6 +225,7 @@ impl Desktop {
     }
     pub fn frame(&mut self, root: &mut Ui) {
         let ctx = root.ctx().clone();
+        self.sync_presentation_identity();
         self.controls.clear();
         self.dark = self.remote.preferences["dark"].as_bool().unwrap_or(false);
         if self.remote.result_id != self.last_result {
@@ -197,6 +254,7 @@ impl Desktop {
         style.spacing.item_spacing = egui::vec2(8., 7.);
         style.spacing.button_padding = egui::vec2(10., 6.);
         style.visuals.selection.bg_fill = Color32::from_rgb(24, 112, 96);
+        style.visuals.selection.stroke.color = Color32::WHITE;
         ctx.set_global_style(style.clone());
         root.set_style(style);
         if self.remote.me["login_required"] == true
@@ -287,4 +345,44 @@ pub fn number(v: &Value) -> f64 {
 }
 pub fn list(v: &Value) -> Vec<Value> {
     v.as_array().cloned().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn another_account_cannot_inherit_dialog_drafts_or_pending_actions() {
+        let mut desktop = Desktop::default();
+        desktop.remote.me = json!({"mode":"users","principal":"first-account"});
+        desktop.remote.snapshot.incarnation = "session".into();
+        desktop.remote.snapshot.design = Some(cutcraft_web_protocol::DesignView {
+            opened_source_sha256: "original-file".into(),
+            ..Default::default()
+        });
+        desktop.sync_presentation_identity();
+        desktop.open_dialog("save", "Save private project");
+        desktop.fields.insert("name".into(), "Private name".into());
+        desktop.reviewed_tests = 3;
+        desktop.send("save", json!({}));
+        desktop.remote.snapshot.revision += 1;
+        desktop
+            .remote
+            .snapshot
+            .design
+            .as_mut()
+            .unwrap()
+            .source_sha256 = "another-page".into();
+        desktop.sync_presentation_identity();
+        assert!(
+            desktop.dialog.is_some(),
+            "an answer in the same source retains interaction drafts"
+        );
+        desktop.remote.me["principal"] = json!("second-account");
+        desktop.sync_presentation_identity();
+        assert!(desktop.dialog.is_none());
+        assert!(desktop.fields.is_empty());
+        assert!(desktop.intents.is_empty());
+        assert_eq!(desktop.reviewed_tests, 0);
+    }
 }
