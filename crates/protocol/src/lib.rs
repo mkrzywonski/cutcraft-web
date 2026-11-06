@@ -211,6 +211,15 @@ pub struct Geometry {
     pub lines: Vec<Stroke>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulerUnit {
+    Inches,
+    Centimetres,
+    #[default]
+    None,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MatGeometry {
     /// The mat's outer edge: [width, height] in mm.
@@ -219,6 +228,14 @@ pub struct MatGeometry {
     pub sticky_mm: [f64; 4],
     /// The cutter's start corner on the mat, in mm. Placement (`sheet.place`) counts from here.
     pub origin_mm: [f64; 2],
+    /// Printed grid zero, independent of the cutter's start corner.
+    #[serde(default)]
+    pub grid_origin_mm: [f64; 2],
+    /// Top, right, bottom and left edges of the sticky area.
+    #[serde(default)]
+    pub rulers: [RulerUnit; 4],
+    #[serde(default)]
+    pub approximate: bool,
 }
 
 /// One polyline, drawn in its colour.

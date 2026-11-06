@@ -3526,3 +3526,57 @@ async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
         after.turn
     );
 }
+
+#[tokio::test]
+async fn custom_mat_rulers_reach_both_draft_and_frozen_cut_geometry() {
+    let h = harness();
+    open_star(&h.app, None).await;
+    let mut mat =
+        cutcraft_control::job::MatProfile::for_class(cutcraft_control::job::Mat::Mat12x12);
+    mat.name = "Authored mixed ruler mat".into();
+    mat.grid_origin_mm = [19., 24.];
+    mat.rulers = [
+        cutcraft_control::job::RulerUnit::Centimetres,
+        cutcraft_control::job::RulerUnit::None,
+        cutcraft_control::job::RulerUnit::Inches,
+        cutcraft_control::job::RulerUnit::None,
+    ];
+    mat.approximate = false;
+    for (id, params, key) in [
+        ("mats.save", json!({"mat":mat}), "save-mat"),
+        ("sheet.set", json!({"mat_profile":mat.name}), "choose-mat"),
+    ] {
+        let s = now(&h.app, None).await;
+        let answer=post_design(&h.app,"/api/v1/design/command",json!({"id":id,"params":params,"key":key,"incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+        assert_eq!(answer["answer"], "applied", "{answer}");
+    }
+    let (status, geometry) = send(
+        &h.app,
+        design("GET", "/api/v1/design/geometry", Body::empty(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{geometry}");
+    assert_eq!(geometry["mat"]["grid_origin_mm"], json!([19., 24.]));
+    assert_eq!(
+        geometry["mat"]["rulers"],
+        json!(["centimetres", "none", "inches", "none"])
+    );
+    assert_eq!(geometry["mat"]["approximate"], false);
+    let s = now(&h.app, None).await;
+    let copy=post_design(&h.app,"/api/v1/design/command",json!({"id":"cut.copy","params":{"test":true},"key":"ruler-copy","incarnation":s["incarnation"],"revision":s["revision"]}),None).await;
+    assert_eq!(copy["answer"], "applied", "{copy}");
+    let queued = post_design(
+        &h.app,
+        "/api/v1/cutters/practice/queue",
+        json!({"job_id":copy["value"]["copy"]["id"],"revision":1,"key":"ruler-queue"}),
+        None,
+    )
+    .await;
+    assert_eq!(queued["answer"], "queued", "{queued}");
+    let preview = h
+        .app
+        .service
+        .cut_preview("practice", cameo_pi_core::cutter::Kind::Test, "household")
+        .unwrap();
+    assert_eq!(preview["geometry"]["mat"], geometry["mat"]);
+}

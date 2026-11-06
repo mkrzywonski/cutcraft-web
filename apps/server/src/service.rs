@@ -555,7 +555,7 @@ impl Service {
         let strokes:Vec<_>=plan.operations.iter().map(|o|json!({"colour":o.colour.as_deref().unwrap_or("#235f5a"),"aid":o.kind.is_aid(),"points":o.points.iter().map(|p|[p[0]+origin[0],p[1]+origin[1]]).collect::<Vec<_>>()})).collect();
         Ok(
             json!({"copy":copy,"job":job,"execution":view.execution,"kind":kind,"sheet":{"piece_mm":sheet.piece_mm,"piece_at_mm":sheet.piece_at_mm},"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
-            "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin},"sheet":strokes,"lines":[]},
+            "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin,"grid_origin_mm":profile.grid_origin_mm,"rulers":profile.rulers,"approximate":profile.approximate},"sheet":strokes,"lines":[]},
             "estimate_s":plan.estimate_s}),
         )
     }

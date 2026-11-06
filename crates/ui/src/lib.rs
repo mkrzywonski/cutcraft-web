@@ -3,6 +3,7 @@
 mod canvas;
 pub mod chrome;
 mod dialogs;
+mod mat;
 mod panels;
 mod toolbar;
 #[cfg(target_arch = "wasm32")]

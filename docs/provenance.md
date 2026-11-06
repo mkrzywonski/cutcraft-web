@@ -74,3 +74,6 @@ transport and desktop adapter are implemented here; no runtime dependency on tha
 
 The choice labels and issue/info titles in `crates/ui/src/panels.rs` also derive from
 the same reference app’s `choose.rs` and `prepare.rs`, with browser-safe inputs.
+
+`crates/ui/src/mat.rs` adapts the physical mat/ruler drawing from that same reference's
+`workspace.rs::draw_mat`, using shared browser geometry instead of the native viewport.

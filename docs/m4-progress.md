@@ -201,3 +201,16 @@ The desktop workflow reloads during an active test, verifies the execution/copy 
 stops through Troubleshooting and checks the durable outcome and fresh-load requirement.
 The compact browser suite also passed. This is simulator/workstation evidence; full reference
 parity, unknown outcomes, platform/hardware acceptance and the other M4 gates remain outstanding.
+
+## Reference mat rulers (0.17.0)
+
+The physical mat drawing now reuses the 1.0.5 ruler/grid renderer, adapted to shared geometry.
+It includes the outer edge, per-edge inch/centimetre/none rulers, the printed grid zero and the
+approximate-measurement note. Both preparation geometry and frozen cut geometry carry the saved
+profile. The printed zero remains separate from the cutter's start corner. Custom mixed-ruler
+HTTP and paint-level regressions pass; the browser mat screenshot was inspected visually.
+
+All 467 Rust tests, formatting, native/wasm Clippy, build, dependency policy and the desktop
+simulated workflow passed. Compact browser checks last passed at 0.16.0; its rendering is unchanged.
+This does not close the complete mat/view contract: feed/start annotations, gestures, settling,
+progress drawing and paired reference acceptance remain to be completed.

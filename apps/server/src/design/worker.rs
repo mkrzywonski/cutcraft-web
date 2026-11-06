@@ -1143,6 +1143,27 @@ impl Worker {
                     profile.sticky_mm
                 },
                 origin_mm: origin,
+                grid_origin_mm: if roll {
+                    [0., 0.]
+                } else {
+                    profile.grid_origin_mm
+                },
+                rulers: if roll {
+                    [cutcraft_web_protocol::RulerUnit::None; 4]
+                } else {
+                    profile.rulers.map(|unit| match unit {
+                        cutcraft_control::job::RulerUnit::Inches => {
+                            cutcraft_web_protocol::RulerUnit::Inches
+                        }
+                        cutcraft_control::job::RulerUnit::Centimetres => {
+                            cutcraft_web_protocol::RulerUnit::Centimetres
+                        }
+                        cutcraft_control::job::RulerUnit::None => {
+                            cutcraft_web_protocol::RulerUnit::None
+                        }
+                    })
+                },
+                approximate: !roll && profile.approximate,
             }),
             sheet: plan.operations.iter().map(|o| stroke(o, origin)).collect(),
             art_box_mm: art.map(shift),

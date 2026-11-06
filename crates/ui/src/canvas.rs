@@ -260,23 +260,7 @@ impl Desktop {
 
             if mat {
                 if let Some(m) = &self.remote.geometry.mat {
-                    let [x0, y0, x1, y1] = m.sticky_mm;
-                    let grid = Rect::from_min_max(point(x0, y0), point(x1, y1));
-                    painter.rect_filled(grid, 0, Color32::from_rgb(223, 237, 226));
-                    for x in 0..=((x1 - x0) / 25.4) as usize {
-                        let x = x0 + x as f64 * 25.4;
-                        painter.line_segment(
-                            [point(x, y0), point(x, y1)],
-                            Stroke::new(0.6, Color32::from_gray(160)),
-                        );
-                    }
-                    for y in 0..=((y1 - y0) / 25.4) as usize {
-                        let y = y0 + y as f64 * 25.4;
-                        painter.line_segment(
-                            [point(x0, y), point(x1, y)],
-                            Stroke::new(0.6, Color32::from_gray(160)),
-                        );
-                    }
+                    crate::mat::draw_mat(&painter, m, f64::from(scale), |[x, y]| point(x, y));
                     let s = self.canvas_sheet();
                     if let (Some(w), Some(h)) =
                         (s["piece_mm"][0].as_f64(), s["piece_mm"][1].as_f64())

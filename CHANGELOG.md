@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.17.0 — 2026-11-05
+
+- Restore the reference physical mat drawing, with rulers on each edge, inch/centimetre markings, custom printed grid origins and approximate-measurement guidance. Both design and frozen cut previews use the saved mat profile.
+
+
 ## 0.16.0 — 2026-11-05
 
 - Recover the owned active-cut preview after a browser reload without starting motion. Use the execution's immutable job, cut kind and material bounds, and refuse previews made across a cutter-state change.
