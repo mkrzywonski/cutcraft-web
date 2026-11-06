@@ -80,3 +80,7 @@ the same reference app’s `choose.rs` and `prepare.rs`, with browser-safe input
 
 The responsive toolbar in `crates/ui/src/toolbar.rs` and text scaling in `lib.rs` adapt
 that reference's `main.rs` layout, with browser actions routed through the shared service.
+
+`crates/ui/src/artwork.rs` adapts the same reference viewport’s region margin, grid snapping,
+pixel-density calculation, 4096-pixel cap and 120 ms settling delay. Rendering remains on the
+authenticated server worker; browser transport coalesces requests and fences late responses.

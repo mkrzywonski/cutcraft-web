@@ -242,3 +242,17 @@ The full desktop simulated workflow passed, including actual clicks on the compa
 Fit and Save at 600 pixels/24 points. Its authored screenshot was inspected. Compact browser and
 22-fixture suites last passed at 0.17.1; this change is desktop presentation only. Narrow desktop
 controls do not replace the separate M5 phone layout or establish full M4 acceptance.
+
+## Visible-region artwork rendering (0.18.0)
+
+Comparison views request the visible source region at display pixel density, with the reference
+quarter-view margin/grid, 120 ms settling delay and 4096-pixel cap. One render runs at a time;
+intervening viewport requests coalesce. Cached images retain their original region until the
+latest valid render arrives. Late viewport/account/session results cannot replace them.
+
+All 474 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+All 22 authored fixture workflows and the full desktop browser workflow passed, including real
+Zoom/Fit input producing a sharper region without clearing artwork. Unit/transport tests cover
+resize scale, pixel density, pan, settling, bounded dimensions, texture replacement and late
+cross-account replies. Compact layout was unchanged (last browser pass 0.17.1). Full Show me,
+paired reference captures and the other M4 gates remain open.

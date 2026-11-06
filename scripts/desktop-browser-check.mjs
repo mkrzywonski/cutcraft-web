@@ -24,6 +24,14 @@ const input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#fil
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[fixture]});
 await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open authored design');
 await sleep(300);
+await until(async()=>!!(await state()).picture_key,'Initial source region');
+await sleep(500);
+const imageBeforeZoom=(await state()).picture_key;
+await click('Zoom in');
+await until(async()=>{const s=await state();return s.picture_key!==imageBeforeZoom && JSON.parse(s.picture_key)[1].zoom_step>JSON.parse(imageBeforeZoom)[1].zoom_step;},'Zoom produces a sharper region render');
+if(!(await state()).picture)throw Error('Zoom cleared source artwork');
+await click('Fit in window');
+console.log('PASS: actual zoom requests and displays a new source region without clearing the artwork');
 if(!process.env.CUTCRAFT_PRESENTATION_ONLY){
 await type('Width','1 in');
 await until(async()=>Math.abs((await state()).snapshot.ui.size_mm[0]-25.4)<.001,'Resize width');

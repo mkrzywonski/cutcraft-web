@@ -1,5 +1,6 @@
 //! CutCraft's desktop presentation. The browser owns only interaction drafts and cached drawing;
 //! all project changes are revision-checked commands sent to the existing controller.
+mod artwork;
 mod canvas;
 pub mod chrome;
 mod dialogs;
@@ -33,6 +34,7 @@ pub struct Remote {
     pub result_id: u64,
     pub picture: String,
     pub picture_id: String,
+    pub picture_key: String,
     pub picture_source: String,
     pub picture_region: Option<[f64; 4]>,
 }
@@ -51,6 +53,8 @@ pub struct Dialog {
     pub selected: Option<String>,
 }
 pub struct Desktop {
+    art_requested: Option<(cutcraft_web_protocol::PictureRequest, f64)>,
+    art_sent: Option<cutcraft_web_protocol::PictureRequest>,
     presentation_identity: Option<(String, String, String, String)>,
     pub remote: Remote,
     pub intents: Vec<Intent>,
@@ -83,6 +87,8 @@ impl Default for Desktop {
     fn default() -> Self {
         Self {
             presentation_identity: None,
+            art_requested: None,
+            art_sent: None,
             remote: Remote::default(),
             intents: vec![],
             dialog: None,
@@ -148,6 +154,8 @@ impl Desktop {
             self.texture_id.clear();
             self.texture_source.clear();
             self.texture_region = None;
+            self.art_requested = None;
+            self.art_sent = None;
             self.drag_start = None;
             self.drag_delta = egui::Vec2::ZERO;
             self.pan = egui::Vec2::ZERO;

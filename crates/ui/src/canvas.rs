@@ -89,7 +89,12 @@ impl Desktop {
             self.texture_source.clear();
             self.texture_region = None;
         }
-        if self.texture_id != self.remote.picture_id
+        let picture_key = if self.remote.picture_key.is_empty() {
+            &self.remote.picture_id
+        } else {
+            &self.remote.picture_key
+        };
+        if self.texture_id != *picture_key
             && !self.remote.picture.is_empty()
             && let Ok(bytes) =
                 base64::engine::general_purpose::STANDARD.decode(&self.remote.picture)
@@ -102,7 +107,7 @@ impl Desktop {
                 egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
                 Default::default(),
             ));
-            self.texture_id = self.remote.picture_id.clone();
+            self.texture_id = picture_key.clone();
             self.texture_source = self.remote.picture_source.clone();
             self.texture_region = self.remote.picture_region;
         }
@@ -235,6 +240,9 @@ impl Desktop {
                     origin.y + (y - bounds[1]) as f32 * scale,
                 )
             };
+            if !mat && pane == 0 {
+                self.request_artwork(ui, painter.clip_rect(), origin, bounds, scale);
+            }
             let page = Rect::from_min_max(point(bounds[0], bounds[1]), point(bounds[2], bounds[3]));
             painter.rect_filled(page, 2, Color32::WHITE);
             if !mat {
@@ -703,6 +711,12 @@ mod tests {
         output.textures_delta.clear();
         assert_eq!(desktop.texture.as_ref().unwrap().id(), texture);
         assert_eq!(desktop.texture_region, Some([0., 0., 2., 2.]));
+        desktop.remote.picture_key = "same-art-different-region".into();
+        desktop.remote.picture_region = Some([1., 1., 2., 2.]);
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));
+        output.textures_delta.clear();
+        assert_ne!(desktop.texture.as_ref().unwrap().id(), texture);
+        assert_eq!(desktop.texture_region, Some([1., 1., 2., 2.]));
         desktop.remote.picture_source = "different-session|source".into();
         desktop.remote.picture = "invalid image".into();
         let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));

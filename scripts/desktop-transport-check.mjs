@@ -105,3 +105,28 @@ vm.runInContext("model.me={principal:'old-account'};model.snapshot.incarnation='
 releaseQueue();await vm.runInContext('dispatchQueue',context);
 assert.equal(calls.some(p=>p.endsWith('/design/save')),false,'A queued Save from another account must not run in the new account');
 console.log('PASS: queued private actions do not cross account boundaries');
+
+// One render at a time; only the latest requested region may replace the cached image.
+context.btoa=s=>Buffer.from(s,'binary').toString('base64');
+let releaseImage1,releaseImage2;
+const imageGate1=new Promise(resolve=>{releaseImage1=resolve;});
+const imageGate2=new Promise(resolve=>{releaseImage2=resolve;});
+const imageRequests=[];
+context.fetch=async path=>{imageRequests.push(path);await (imageRequests.length===1?imageGate1:imageGate2);return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};};
+vm.runInContext("clearPrivate();model.me={principal:'owner'};model.snapshot={incarnation:'region-session',design:{source_sha256:'source',art:{id:'region-art',scale:1,bounds:[0,0,100,100]}}};model.picture='retained';requestPicture(model.snapshot.design.art,{art:'region-art',region:[0,0,100,100],width:100,height:100,zoom_step:0})",context);
+vm.runInContext("requestPicture(model.snapshot.design.art,{art:'region-art',region:[25,25,75,75],width:200,height:200,zoom_step:4})",context);
+assert.equal(imageRequests.length,1,'Viewport changes must coalesce behind the current render');
+releaseImage1();await new Promise(resolve=>setImmediate(resolve));
+assert.equal(imageRequests.length,2);
+assert.equal(vm.runInContext('model.picture',context),'retained','An obsolete region must not replace the displayed image');
+releaseImage2();await new Promise(resolve=>setImmediate(resolve));
+assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(model.picture_region)',context)),[25,25,75,75]);
+assert.equal(vm.runInContext('model.picture',context),'AQID');
+assert.match(imageRequests[1],/width=200/);
+let releasePrivateImage;
+const privateGate=new Promise(resolve=>{releasePrivateImage=resolve;});
+context.fetch=async()=>{await privateGate;return {ok:true,arrayBuffer:async()=>new Uint8Array([4,5,6]).buffer};};
+vm.runInContext("requestPicture(model.snapshot.design.art,{art:'region-art',region:[50,50,100,100],width:200,height:200,zoom_step:4});clearPrivate();model.me={principal:'other-owner'}",context);
+releasePrivateImage();await new Promise(resolve=>setImmediate(resolve));
+assert.equal(vm.runInContext('model.picture',context),'','A late render must not repopulate private caches after an identity change');
+console.log('PASS: coalesced region renders retain the image and reject obsolete or cross-account replies');
