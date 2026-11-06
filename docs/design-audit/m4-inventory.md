@@ -7,6 +7,22 @@ asks for. It comes from reading the desktop client (`crates/ui`, `apps/server/we
 the browser scripts. It does not come from running each control, so every "Present" below
 still needs its browser assertion before it counts. Nothing was run on hardware.
 
+## Follow-up evidence
+
+The tables below retain the first-pass baseline rather than claiming current acceptance.
+Subsequent work is recorded in [M4 progress](../m4-progress.md):
+
+- CUT-05/CUT-07: Stop retires retained loading; active-execution preview reload and occupied
+  test-area overlays are implemented and simulator/browser tested (0.15.2–0.16.0).
+- VIEW-03/MAT-06: reference outer mat, mixed per-edge rulers and printed grid zero are rendered
+  and tested (0.17.0). Start/feed annotations and the rest of the view contract remain open.
+- VIEW-01/UI-05: same-source images survive preparation changes while a new render loads;
+  source/session/account changes discard private presentation state (0.17.1). All 22 authored
+  fixture workflows pass. Region-at-zoom rendering remains open.
+- Two baseline observations need qualification: the panel already caps locked groups at half
+  its available height (`panels.rs::panel`); comparison primary-drag pans even with Space held.
+  Neither observation alone establishes full panel or gesture acceptance.
+
 ## How to read the status
 
 | Status | Meaning |

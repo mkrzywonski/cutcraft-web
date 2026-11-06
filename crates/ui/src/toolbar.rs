@@ -61,7 +61,7 @@ impl Desktop {
             self.record("Menu Help",&menu.response);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui| {
                 if self.button(ui,"Account",true){self.send("settings",json!({"section":"settings"}));}
-                ui.weak(self.remote.snapshot.design.as_ref().map(|d|format!("{}{}",d.name,if d.unsaved {" •"}else{""})).unwrap_or_else(||"CutCraft".into()));
+                ui.add(egui::Label::new(egui::RichText::new(self.remote.snapshot.design.as_ref().map(|d|format!("{}{}",d.name,if d.unsaved {" •"}else{""})).unwrap_or_else(||"CutCraft".into())).weak()).truncate());
             });
         });
     }
@@ -80,103 +80,100 @@ impl Desktop {
     }
     pub fn toolbar(&mut self, ui: &mut Ui) {
         use crate::chrome::Icon;
-        let compact = ui.available_width() < 1150.;
+        let layout = crate::chrome::ToolbarLayout::new(
+            ui.available_width(),
+            egui::TextStyle::Button.resolve(ui.style()).size,
+        );
+        ui.spacing_mut().item_spacing.x = 5.;
         ui.horizontal(|ui| {
-            if self.tool(
-                ui,
-                Icon::Open,
-                if compact { "" } else { "Open" },
-                "Open",
-                false,
-                true,
-            ) {
+            if self.tool(ui, Icon::Open, "", "Open", false, true) {
                 self.send("upload", json!({}));
             }
-            if self.tool(ui, Icon::Save, "", "Save", false, self.has_design()) {
+            if !layout.compact && self.tool(ui, Icon::Save, "", "Save", false, self.has_design()) {
                 self.save(false);
             }
             crate::chrome::divider(ui);
-            if self.tool(
-                ui,
-                Icon::Undo,
-                "",
-                "Undo",
-                false,
-                self.enabled("history.undo"),
-            ) {
-                self.command("history.undo", json!({}));
-            }
-            if self.tool(
-                ui,
-                Icon::Redo,
-                "",
-                "Redo",
-                false,
-                self.enabled("history.redo"),
-            ) {
-                self.command("history.redo", json!({}));
+            if layout.history {
+                self.history_tools(ui);
             }
             crate::chrome::divider(ui);
-            for (screen, icon, label) in [
-                ("side-by-side", Icon::SideBySide, "Side by side"),
-                ("overlay", Icon::Overlay, "Overlay"),
-                ("mat", Icon::Mat, "Cut Preview"),
-            ] {
-                if self.tool(
-                    ui,
-                    icon,
-                    if compact { "" } else { label },
-                    label,
-                    self.screen() == screen,
-                    !self.cut_busy(),
-                ) {
-                    self.command("view.show", json!({"screen":screen}));
+            if layout.compact {
+                let icon = match self.screen() {
+                    "overlay" => Icon::Overlay,
+                    "mat" => Icon::Mat,
+                    _ => Icon::SideBySide,
+                };
+                let view = crate::chrome::tool(ui, icon, "", "Choose view", true, !self.cut_busy());
+                self.record("Choose view", &view);
+                egui::Popup::menu(&view).show(|ui| {
+                    for (screen, label) in [
+                        ("side-by-side", "Side by side"),
+                        ("overlay", "Overlay"),
+                        ("mat", "Cut Preview"),
+                    ] {
+                        if self.button(ui, label, !self.cut_busy()) {
+                            self.command("view.show", json!({"screen":screen}));
+                            ui.close();
+                        }
+                    }
+                });
+            } else {
+                for (screen, icon, label) in [
+                    ("side-by-side", Icon::SideBySide, "Side by side"),
+                    ("overlay", Icon::Overlay, "Overlay"),
+                    ("mat", Icon::Mat, "Cut Preview"),
+                ] {
+                    if self.tool(
+                        ui,
+                        icon,
+                        if layout.labels { label } else { "" },
+                        label,
+                        self.screen() == screen,
+                        !self.cut_busy(),
+                    ) {
+                        self.command("view.show", json!({"screen":screen}));
+                    }
                 }
             }
             crate::chrome::divider(ui);
-            let zoom = self.view_controls_enabled();
-            if self.tool(
-                ui,
-                Icon::Minus,
-                "",
-                if self.screen() == "mat" {
-                    "Make design smaller"
-                } else {
-                    "Zoom out"
-                },
-                false,
-                zoom,
-            ) {
-                self.zoom_view(false);
+            if layout.zoom {
+                self.zoom_tools(ui);
             }
-            if self.tool(
-                ui,
-                Icon::Plus,
-                "",
-                if self.screen() == "mat" {
-                    "Make design bigger"
+            let more = crate::chrome::tool(ui, Icon::More, "", "More tools", false, true);
+            self.record("More tools", &more);
+            egui::Popup::menu(&more).show(|ui| {
+                if layout.compact && self.button(ui, "Save", self.has_design()) {
+                    self.save(false);
+                    ui.close();
+                }
+                if self.button(ui, "Recent designs…", true) {
+                    self.send("uploads", json!({}));
+                    self.open_dialog("uploads", "Recent designs");
+                    ui.close();
+                }
+                if !layout.history {
+                    ui.horizontal(|ui| self.history_tools(ui));
+                }
+                if !layout.zoom {
+                    ui.horizontal(|ui| self.zoom_tools(ui));
+                }
+                ui.separator();
+                let units = if self.remote.snapshot.ui.units == "inches" {
+                    "millimetres"
                 } else {
-                    "Zoom in"
-                },
-                false,
-                zoom,
-            ) {
-                self.zoom_view(true);
-            }
-            if self.tool(
-                ui,
-                Icon::Fit,
-                "",
-                if self.screen() == "mat" {
-                    "Fit design to mat"
-                } else {
-                    "Fit in window"
-                },
-                false,
-                zoom,
-            ) {
-                self.fit_view();
-            }
+                    "inches"
+                };
+                if self.button(ui, &format!("Use {units}"), true) {
+                    self.command("settings.units", json!({"units":units}));
+                    ui.close();
+                }
+                for (kind, label) in [("materials", "Materials…"), ("mats", "Mats…")] {
+                    if self.button(ui, label, true) {
+                        self.open_dialog(kind, label);
+                        ui.close();
+                    }
+                }
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let cut = self.screen() == "cut";
                 let test = self.screen() == "test-cut";
@@ -216,6 +213,75 @@ impl Desktop {
                 }
             });
         });
+    }
+    fn history_tools(&mut self, ui: &mut Ui) {
+        use crate::chrome::Icon;
+        if self.tool(
+            ui,
+            Icon::Undo,
+            "",
+            "Undo",
+            false,
+            self.enabled("history.undo"),
+        ) {
+            self.command("history.undo", json!({}));
+        }
+        if self.tool(
+            ui,
+            Icon::Redo,
+            "",
+            "Redo",
+            false,
+            self.enabled("history.redo"),
+        ) {
+            self.command("history.redo", json!({}));
+        }
+    }
+    fn zoom_tools(&mut self, ui: &mut Ui) {
+        use crate::chrome::Icon;
+        let zoom = self.view_controls_enabled();
+        if self.tool(
+            ui,
+            Icon::Minus,
+            "",
+            if self.screen() == "mat" {
+                "Make design smaller"
+            } else {
+                "Zoom out"
+            },
+            false,
+            zoom,
+        ) {
+            self.zoom_view(false);
+        }
+        if self.tool(
+            ui,
+            Icon::Plus,
+            "",
+            if self.screen() == "mat" {
+                "Make design bigger"
+            } else {
+                "Zoom in"
+            },
+            false,
+            zoom,
+        ) {
+            self.zoom_view(true);
+        }
+        if self.tool(
+            ui,
+            Icon::Fit,
+            "",
+            if self.screen() == "mat" {
+                "Fit design to mat"
+            } else {
+                "Fit in window"
+            },
+            false,
+            zoom,
+        ) {
+            self.fit_view();
+        }
     }
     pub fn save(&mut self, as_new: bool) {
         if as_new
@@ -430,6 +496,56 @@ mod interaction_tests {
                 modifiers,
             }],
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn toolbar_stays_on_one_line_at_supported_widths_and_font_sizes() {
+        for width in [600., 640., 800., 1024., 1280.] {
+            for size in [10., 14., 24.] {
+                let mut desktop = Desktop::default();
+                desktop.remote.snapshot.ui.font_size = size;
+                desktop.remote.snapshot.design = Some(cutcraft_web_protocol::DesignView { name: "A very long authored project name that should truncate instead of widening the menu".into(), ..Default::default() });
+                let ctx = egui::Context::default();
+                for _ in 0..2 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 900.),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| desktop.frame(ui),
+                    );
+                    output.textures_delta.clear();
+                }
+                let open = desktop.controls["Open"];
+                let more = desktop.controls["More tools"];
+                let cut = desktop.controls["Cut"];
+                let test = desktop.controls["Test Cut"];
+                for rect in [more, cut, test] {
+                    assert!(
+                        (rect[1] - open[1]).abs() < 2.,
+                        "wrapped at {width}/{size}: {rect:?} vs {open:?}"
+                    );
+                    assert!(
+                        rect[0] >= 0. && rect[2] <= width,
+                        "offscreen at {width}/{size}: {rect:?}"
+                    );
+                }
+                assert!(
+                    more[2] < test[0],
+                    "toolbar overlaps cut actions at {width}/{size}"
+                );
+                let expected = egui::Style::default();
+                for (kind, font) in &ctx.global_style().text_styles {
+                    assert!(
+                        (font.size - expected.text_styles[kind].size * size / 14.).abs() < 0.01,
+                        "all text styles scale once, including dialogs and headings"
+                    );
+                }
+            }
         }
     }
 

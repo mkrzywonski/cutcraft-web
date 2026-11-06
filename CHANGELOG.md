@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.17.2 — 2026-11-06
+
+- Keep the desktop toolbar on one line at narrow widths and large text sizes, with overflow controls in More and a compact view selector. Scale headings, small text and dialog text along with menu text.
+
 ## 0.17.1 — 2026-11-05
 
 - Keep same-source artwork visible while a replacement render loads, retaining its correct region. Clear private images and lists across source, session and account changes.

@@ -77,3 +77,6 @@ the same reference app’s `choose.rs` and `prepare.rs`, with browser-safe input
 
 `crates/ui/src/mat.rs` adapts the physical mat/ruler drawing from that same reference's
 `workspace.rs::draw_mat`, using shared browser geometry instead of the native viewport.
+
+The responsive toolbar in `crates/ui/src/toolbar.rs` and text scaling in `lib.rs` adapt
+that reference's `main.rs` layout, with browser actions routed through the shared service.

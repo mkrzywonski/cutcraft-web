@@ -24,6 +24,7 @@ const input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#fil
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[fixture]});
 await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open authored design');
 await sleep(300);
+if(!process.env.CUTCRAFT_PRESENTATION_ONLY){
 await type('Width','1 in');
 await until(async()=>Math.abs((await state()).snapshot.ui.size_mm[0]-25.4)<.001,'Resize width');
 await type('Force','12');
@@ -127,4 +128,33 @@ for(const [width,height] of [[1280,800],[1920,1080]]){
  await fs.writeFile(`${artifacts}/desktop-${width}x${height}.png`,Buffer.from(shot.data,'base64'));
 }
 console.log('PASS: reload preserves settings without restarting motion; desktop screenshots captured');
+}
+// Exercise the overflow controls with the largest supported interface text.
+await click((await state()).snapshot.ui.screen==='test-cut'?'Test Cut':'Cut Preview');
+await until(async()=>(await state()).snapshot.ui.screen==='mat','Exit test screen');
+await click('Menu Edit'); await click('Preferences…');
+await type('Text size (10–24 points)','24');
+await until(async()=>(await state()).snapshot.ui.font_size===24,'Largest text size');
+await click('Close dialog');
+await cdp('Emulation.setDeviceMetricsOverride',{width:600,height:900,deviceScaleFactor:1,mobile:false});
+await sleep(500);
+await fs.writeFile(`${artifacts}/narrow-controls.json`,JSON.stringify(await page('({controls:CutCraft.controls(),canvas:document.querySelector("canvas").getBoundingClientRect().toJSON(),innerWidth})')));
+const diagnostic=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/narrow-before.png`,Buffer.from(diagnostic.data,'base64'));
+await until(async()=>!!await page('CutCraft.controls()["Choose view"]'),'Compact desktop view selector');
+await click('Choose view'); await click('Overlay');
+await until(async()=>(await state()).snapshot.ui.screen==='overlay','Overflow view navigation');
+await click('More tools'); await click('Fit in window');
+await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+await sleep(200);
+const toolbar=await page('CutCraft.controls()');
+for(const label of ['Open','Choose view','More tools','Test Cut','Cut']){
+ const r=toolbar[label];
+ if(!r || r[0]<0 || r[2]>600 || Math.abs(r[1]-toolbar.Open[1])>2)throw Error('Toolbar overflow: '+label+JSON.stringify(r));
+}
+const narrow=await cdp('Page.captureScreenshot',{format:'png'});
+await fs.writeFile(`${artifacts}/desktop-600-font24.png`,Buffer.from(narrow.data,'base64'));
+await click('More tools'); await click('Save');
+await until(async()=>!(await state()).pending,'Overflow Save finishes');
+console.log('PASS: 600px desktop with 24pt text keeps primary controls visible and overflow views/zoom/Save usable');
 ws.close();

@@ -245,12 +245,10 @@ impl Desktop {
         let mut style = (**root.style()).clone();
         let size = self.remote.snapshot.ui.font_size;
         let size = if size >= 10. { size } else { 14. };
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(size));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(size));
+        style.text_styles = egui::Style::default().text_styles;
+        for font in style.text_styles.values_mut() {
+            font.size *= size / 14.;
+        }
         style.spacing.item_spacing = egui::vec2(8., 7.);
         style.spacing.button_padding = egui::vec2(10., 6.);
         style.visuals.selection.bg_fill = Color32::from_rgb(24, 112, 96);

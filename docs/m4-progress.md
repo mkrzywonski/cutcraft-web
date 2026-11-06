@@ -229,3 +229,16 @@ passed. The PDF fixture assertion was corrected: before its first page choice th
 to retain. A separate worker regression verifies page changes retain original-source identity.
 Transport regressions cover delayed renders, account changes, authentication loss and queued
 private actions. This closes these findings, not the remaining M4 gates or platform acceptance.
+
+## Responsive reference toolbar and text scaling (0.17.2)
+
+The toolbar uses the reference width/font layout rules, with a compact view selector and More
+for hidden Save/history/zoom controls. Cut and Test Cut remain on the row. All text styles scale
+from the default each frame; long project titles truncate rather than widening the menu.
+Paint tests cover 600/640/800/1024/1280 pixels at 10/14/24 points, including a long title.
+
+All 472 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The full desktop simulated workflow passed, including actual clicks on the compact view selector,
+Fit and Save at 600 pixels/24 points. Its authored screenshot was inspected. Compact browser and
+22-fixture suites last passed at 0.17.1; this change is desktop presentation only. Narrow desktop
+controls do not replace the separate M5 phone layout or establish full M4 acceptance.
