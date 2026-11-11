@@ -513,6 +513,24 @@ impl Cutter {
         self.action_epoch
     }
 
+    /// The area reserved by the execution already sent to the driver. A preview must use
+    /// this area rather than choose another spot from the current planning state.
+    pub fn active_test_area(&self) -> Option<[f64; 4]> {
+        match &self.activity {
+            Activity::Running {
+                kind: Kind::Test,
+                area,
+                ..
+            }
+            | Activity::Confirming {
+                kind: Kind::Test,
+                area,
+                ..
+            } => *area,
+            _ => None,
+        }
+    }
+
     pub fn view(&self) -> CutterView {
         let cutting = match &self.activity {
             Activity::Running { job, .. } | Activity::Confirming { job, .. } => Some(job.clone()),

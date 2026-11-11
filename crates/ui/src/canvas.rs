@@ -16,7 +16,7 @@ pub struct CanvasDrag {
 }
 impl Desktop {
     fn canvas_sheet(&self) -> &serde_json::Value {
-        if matches!(self.screen(), "cut" | "test-cut") {
+        if matches!(self.screen(), "cut" | "test-cut") && !self.unprepared_cut_preview {
             &self.remote.cut_preview["sheet"]
         } else {
             &self.remote.snapshot.ui.sheet

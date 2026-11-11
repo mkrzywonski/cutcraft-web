@@ -270,3 +270,17 @@ The focused desktop presentation workflow passes (mat editor, source-region zoom
 at 600 pixels/24 points). Full cut workflow and 22-fixture suite last passed at 0.18.0. No hardware
 was used. Review findings #141–142 remain open: fresh-checkout assets, unprepared cut presentation,
 active-test area identity and repeated active preview work. These precede further gesture polish.
+
+## Active/unprepared preview review fixes (0.18.2)
+
+Addresses review #142: idle unprepared cut screens show the draft mat/material with an explicit
+Not prepared label. Active or already reviewed cuts never fall back to editable material/geometry.
+The active test location is read from the running execution, rather than chosen again; a regression
+compares every preview extent with that recorded area. Repeated active updates reuse geometry
+for the same execution/copy, and a new execution fetches a fresh preview.
+
+The dependency audit newly flagged rmcp 3.5.1 (RUSTSEC-2026-0457, -0461 and -0462). The exact pin is
+now 3.9.0; no advisory exceptions were added. All 477 Rust tests, formatting, native/wasm Clippy,
+workspace build and dependency policy pass. Full desktop simulation and compact browser checks
+pass; the latter was rerun after an interrupted process. The unprepared-cut screenshot was
+inspected. Review #141's clean-checkout asset issue and the other M4 gates remain open.

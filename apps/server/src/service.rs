@@ -418,7 +418,7 @@ impl Service {
             .turn
             .map(|t| t.taken)
             .unwrap_or_default();
-        self.plan_in_areas(kind, job_id, revision, &taken)
+        self.plan_in_areas(kind, job_id, revision, &taken, None)
     }
 
     fn plan_in_areas(
@@ -427,6 +427,7 @@ impl Service {
         job_id: &str,
         revision: u32,
         taken: &[[f64; 4]],
+        active_area: Option<[f64; 4]>,
     ) -> Result<(CutPlan, ProjectFile)> {
         let (project, plan, digest) = if crate::copies::is_copy(job_id) {
             let stored = self.copies.get(job_id, revision)?;
@@ -494,7 +495,7 @@ impl Service {
                 plan
             }
             Kind::Test => {
-                let at=cutcraft_control::next_test_spot(&plan,taken).ok_or_else(||ApiError::new(409,"no-room","There is no room left for a test cut on this material. Load fresh material."))?;
+                let at=active_area.map(|a| [a[0], a[1]]).or_else(||cutcraft_control::next_test_spot(&plan,taken)).ok_or_else(||ApiError::new(409,"no-room","There is no room left for a test cut on this material. Load fresh material."))?;
                 cutcraft_path::test_cut_plan(&project.project, &plan.sheet, at)
                     .map_err(ApiError::bad_request)?
             }
@@ -520,7 +521,10 @@ impl Service {
     /// This is read-only and cannot claim a cutter or load material.
     pub fn cut_preview(&self, cutter: &str, kind: Kind, owner: &str) -> Result<Value> {
         let entry = self.cutter(cutter)?;
-        let view = lock(&entry.shared).view();
+        let (view, active_area) = {
+            let cutter = lock(&entry.shared);
+            (cutter.view(), cutter.active_test_area())
+        };
         let turn = view
             .turn
             .ok_or_else(|| ApiError::bad_request("Nothing is prepared for this cutter."))?;
@@ -535,9 +539,17 @@ impl Service {
         } else {
             None
         };
-        // During execution the current test area has not yet joined `taken`. Planning
-        // against this snapshot therefore reproduces the active pattern, not the next one.
-        let (plan, project) = self.plan_in_areas(kind, &job.job_id, job.revision, &turn.taken)?;
+        if view.execution.is_some() && kind == Kind::Test && active_area.is_none() {
+            return Err(ApiError::new(
+                409,
+                "preview-unavailable",
+                "The running test area is unavailable. Check the cutter before continuing.",
+            ));
+        }
+        // Read the executing area from the same cutter snapshot. An active preview never
+        // chooses a new location, even if the placement algorithm changes.
+        let (plan, project) =
+            self.plan_in_areas(kind, &job.job_id, job.revision, &turn.taken, active_area)?;
         if lock(&entry.shared).action_epoch() != view.action_epoch {
             return Err(ApiError::new(
                 409,

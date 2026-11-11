@@ -76,6 +76,10 @@ await click('Undo');await until(async()=>Math.abs((await state()).snapshot.ui.si
 console.log('PASS: open, typed units, material edit, Save As, clean view navigation, drag, Undo');
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Test screen');
 if((await state()).state.cutters[0].view.turn)throw Error('Toolbar Test Cut prepared a job before explicit review');
+await until(async()=>!!await page('CutCraft.controls()["Preview canvas"]'),'Unprepared cut retains its mat preview');
+const unprepared=await cdp('Page.captureScreenshot',{format:'png'});
+await fs.writeFile(`${artifacts}/test-before-prepare.png`,Buffer.from(unprepared.data,'base64'));
+
 await click('Cut pattern');await until(async()=>(await state()).cut_preview?.geometry,'Prepare test preview');
 const preparedTurn=(await state()).state.cutters[0].view.turn.id;
 await cdp('Page.reload');

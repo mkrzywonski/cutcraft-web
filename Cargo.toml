@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.18.1"
+version = "0.18.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -65,7 +65,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service
 http-body-util = "0.1"
 # Bonjour discovery (_cameo-pi._tcp), pure Rust.
 mdns-sd = "0.21"
-rmcp = { version = "=3.5.1", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest", "transport-io"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest", "transport-io"] }
 # Backups over SFTP, optionally encrypted with age. Established libraries, no crypto of ours.
 russh = { version = "0.64", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "3"

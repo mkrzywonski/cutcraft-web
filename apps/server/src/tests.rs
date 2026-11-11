@@ -3450,6 +3450,33 @@ async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
     assert_eq!(active["execution"], answer["execution"]);
     assert_eq!(active["copy"], first);
     assert!(active["sheet"].is_object());
+    let area = lock(&h.app.service.cutters[0].shared)
+        .active_test_area()
+        .unwrap();
+    let origin: [f64; 2] =
+        serde_json::from_value(active["geometry"]["mat"]["origin_mm"].clone()).unwrap();
+    let mut bounds = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for line in active["geometry"]["sheet"].as_array().unwrap() {
+        for point in line["points"].as_array().unwrap() {
+            for axis in 0..2 {
+                let value = point[axis].as_f64().unwrap() - origin[axis];
+                bounds[axis] = bounds[axis].min(value);
+                bounds[axis + 2] = bounds[axis + 2].max(value);
+            }
+        }
+    }
+    for axis in 0..4 {
+        assert!(
+            (bounds[axis] - area[axis]).abs() < 0.001,
+            "the preview must outline the running area: {bounds:?} vs {area:?}"
+        );
+    }
+
     h.worker.step();
     let before = lock(&h.app.service.cutters[0].shared).view();
     assert_eq!(before.turn.as_ref().unwrap().tests, 1);

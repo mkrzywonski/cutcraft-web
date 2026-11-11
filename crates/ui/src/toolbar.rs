@@ -426,13 +426,15 @@ impl Desktop {
                 ui.label("Prepare the current settings to review the updated cut. Earlier test areas stay reserved on the same material.");
                 if self.button(ui,"Prepare updated cut",!self.remote.pending){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}
             }
-            let material=&preview["material"];
-            ui.strong(text(&material["name"]));
-            ui.label(format!("Blade {} · force {} · speed {} · {} pass(es)",material["blade"],material["force"],material["speed"],material["passes"]));
+            let material=if preview["material"].is_object() { &preview["material"] } else if !busy && copy.is_null() { &self.remote.snapshot.ui.sheet["material"] } else { &serde_json::Value::Null };
+            if material.is_object() {
+                ui.strong(text(&material["name"]));
+                ui.label(format!("Blade {} · force {} · speed {} · {} pass(es)",material["blade"],material["force"],material["speed"],material["passes"]));
+            } else { ui.label("Recovering the reviewed material settings…"); }
             for (n,step) in list(&preview["steps"]).iter().enumerate(){ui.label(format!("{}. {}",n+1,text(step)));}
             let waiting=preview["copy"]["id"].as_str().is_some_and(|id|list(&v["queue"]).iter().any(|q|q["job"]["job_id"]==id));
             if waiting{ui.strong("Waiting for this cutter");ui.label("Your prepared cut is in the queue. Start will be available when it is your turn and the mat is ready.");}
-            if !waiting && (preview.is_null() || preview["geometry"].is_null()){ui.label("Choose a cutter to prepare the loading instructions.");if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
+            if !waiting && (preview.is_null() || preview["geometry"].is_null()){ui.label(if test {"Choose Cut pattern to review the pattern and loading instructions."} else {"Choose Cut this sheet to review the design and loading instructions."});if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
             ui.separator();
             let state=text(&v["activity"]);ui.strong(match state{"testing"=>"Test cut in progress","cutting"=>"Cutting","paused"=>"Paused","stopping"=>"Stopping — waiting for confirmation","confirming-stop"=>"Checking that the cutter stopped","check-cutter"=>"Check the cutter",_=>if v["mat_loaded"]==true{"Mat loaded"}else{"Load the mat"}});
             if busy {
@@ -466,14 +468,22 @@ impl Desktop {
             .into_iter()
             .find(|c| c["id"] == self.cutter)
             .unwrap_or_default();
-        self.remote.geometry = if self.cut_busy()
+        let unprepared = !self.cut_busy() && self.remote.cut_preview["copy"].is_null();
+        self.remote.geometry = if unprepared {
+            saved.clone()
+        } else if self.cut_busy()
             && active["view"]["cutting"]["job_id"] != self.remote.cut_preview["copy"]["id"]
         {
             Default::default()
         } else {
             serde_json::from_value(self.remote.cut_preview["geometry"].clone()).unwrap_or_default()
         };
+        if unprepared {
+            ui.label("Not prepared — review this layout before starting.");
+        }
+        self.unprepared_cut_preview = unprepared;
         self.canvas(ui);
+        self.unprepared_cut_preview = false;
         self.remote.geometry = saved;
     }
 }
@@ -496,6 +506,65 @@ mod interaction_tests {
                 modifiers,
             }],
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unprepared_cut_shows_the_mat_and_material_but_never_substitutes_for_an_active_cut() {
+        let mut desktop = Desktop {
+            cutter: "practice".into(),
+            ..Default::default()
+        };
+        desktop.remote.snapshot.design = Some(Default::default());
+        desktop.remote.snapshot.ui.screen = "test-cut".into();
+        desktop.remote.snapshot.ui.sheet = json!({"material":{"name":"Authored vinyl","blade":2,"force":10,"speed":3,"passes":1},"piece_mm":[100,100],"piece_at_mm":[0,0]});
+        desktop.remote.geometry.mat = Some(cutcraft_web_protocol::MatGeometry {
+            outer_mm: [330., 350.],
+            sticky_mm: [10., 20., 320., 330.],
+            origin_mm: [10., 20.],
+            ..Default::default()
+        });
+        let ctx = egui::Context::default();
+        for busy in [false, true] {
+            desktop.remote.state = json!({"cutters":[{"id":"practice","view":{"activity":if busy {"testing"} else {"idle"},"cutting":if busy {json!({"job_id":"active-copy"})} else {json!(null)}}}]});
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280., 900.),
+                    )),
+                    ..Default::default()
+                },
+                |ui| desktop.cutting(ui),
+            );
+            output.textures_delta.clear();
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| {
+                    if let egui::Shape::Text(t) = &s.shape {
+                        Some(t.galley.text())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(
+                labels.contains(&"Start corner"),
+                !busy,
+                "only an unprepared idle cut can show the draft mat"
+            );
+            if !busy {
+                assert!(labels.iter().any(|s| s.contains("Blade 2 · force 10")));
+                assert!(labels.iter().any(|s| s.starts_with("Not prepared")));
+            }
+            if busy {
+                assert!(
+                    !labels.iter().any(|s| s.contains("Blade 2")),
+                    "active material must never come from the editable draft"
+                );
+            }
+            assert!(!desktop.unprepared_cut_preview);
         }
     }
 

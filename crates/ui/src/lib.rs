@@ -53,6 +53,7 @@ pub struct Dialog {
     pub selected: Option<String>,
 }
 pub struct Desktop {
+    unprepared_cut_preview: bool,
     art_requested: Option<(cutcraft_web_protocol::PictureRequest, f64)>,
     art_sent: Option<cutcraft_web_protocol::PictureRequest>,
     presentation_identity: Option<(String, String, String, String)>,
@@ -86,6 +87,7 @@ pub struct Desktop {
 impl Default for Desktop {
     fn default() -> Self {
         Self {
+            unprepared_cut_preview: false,
             presentation_identity: None,
             art_requested: None,
             art_sent: None,

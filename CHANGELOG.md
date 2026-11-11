@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.18.2 — 2026-11-11
+
+- Update the MCP SDK to 3.9.0 to address unbounded transport memory use.
+
+- Show the mat and material before preparing a cut, clearly marked as not prepared. Draw active test previews at the recorded execution area and reuse their geometry during progress updates.
+
 ## 0.18.1 — 2026-11-11
 
 - Mark the cutter’s start corner and loading direction on mat previews. Show a live diagram of the outer mat, sticky grid, rulers and start corner while editing a mat. Give material and mat editors more vertical room.

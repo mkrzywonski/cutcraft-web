@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const source=(await readFile(new URL('../apps/server/web/desktop/desktop.js',import.meta.url),'utf8'))
  .replace(/^import .*;$/m,'').split('try{await refresh();await init();')[0];
 const calls=[];
-let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null, queue=[{job:{job_id:'my-copy'}}], activity='idle', cutting=null, designView=null, meIdentity={mode:'open',principal:'household'};
+let turn='another-copy', refusePreview=false, incarnation='session', previewGate=null, queue=[{job:{job_id:'my-copy'}}], activity='idle', cutting=null, execution=null, designView=null, meIdentity={mode:'open',principal:'household'};
 const context=vm.createContext({
  console,URLSearchParams,FormData,TypeError,Uint8Array,
  crypto:{randomUUID:()=> 'test-key'},
@@ -18,8 +18,8 @@ const context=vm.createContext({
   let value={};let ok=true;
   if(path.endsWith('/me'))value=meIdentity;
   else if(path.endsWith('/snapshot'))value={protocol:7,incarnation,revision:1,design:designView,ui:{screen:'test-cut'}};
-  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity,cutting,turn:turn?{job:{job_id:turn}}:null,queue}}]};
-  else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},geometry:{id:'frozen'}};ok=!refusePreview;}
+  else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity,cutting,execution,turn:turn?{job:{job_id:turn}}:null,queue}}]};
+  else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},execution,geometry:{id:'frozen'}};ok=!refusePreview;}
   else throw Error('Unexpected request '+path);
   return {ok,status:ok?200:404,json:async()=>value};
  }
@@ -74,12 +74,21 @@ releasePreview();await oldPreview;
 assert.equal(vm.runInContext('model.cut_preview.geometry.id',context),'new-preview','A refused old preview must not erase a newer prepared copy');
 console.log('PASS: late preview refusal preserves replacement geometry');
 
-previewGate=null;refusePreview=false;activity='testing';cutting={job_id:'my-copy'};
+previewGate=null;refusePreview=false;activity='testing';cutting={job_id:'my-copy'};execution='active-one';
 turn='my-copy';
 await vm.runInContext('model.cut_preview={};refresh()',context);
 assert.equal(vm.runInContext('model.cut_preview.geometry.id',context),'frozen','Reload during motion must recover the owned frozen preview');
 assert.equal(calls.some(p=>p.endsWith('/queue') || p.endsWith('/start')),false,'Recovery must stay read-only');
 console.log('PASS: active-cut reload recovers frozen geometry without motion');
+const fetchedBefore=calls.filter(p=>p.includes('/preview?')).length;
+await vm.runInContext('refresh();',context);
+assert.equal(calls.filter(p=>p.includes('/preview?')).length,fetchedBefore,'The same active execution reuses its frozen geometry');
+execution='active-two';
+await vm.runInContext('refresh();',context);
+assert.equal(calls.filter(p=>p.includes('/preview?')).length,fetchedBefore+1,'A different execution refreshes the preview even for the same copy');
+assert.equal(vm.runInContext('model.cut_preview.execution',context),'active-two');
+console.log('PASS: active previews are cached by execution and immutable copy');
+
 
 designView={source_sha256:'same-source',art:{id:'new-render',bounds:[0,0,20,20],scale:1}};
 await vm.runInContext("model.snapshot.design={source_sha256:'same-source'};model.picture='old-pixels';model.picture_id='old-render';refresh()",context);

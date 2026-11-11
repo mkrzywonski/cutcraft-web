@@ -49,7 +49,8 @@ async function refresh(){
   if(initialCopy && model.cut_preview?.copy?.id===initialCopy && !model.pending && cutter &&
      cutter.view.turn?.job.job_id!==initialCopy && cutter.view.cutting?.job_id!==initialCopy && !cutter.view.queue?.some(q=>q.job.job_id===initialCopy))model.cut_preview={};
   const previewJob=cutter?.view?.cutting || cutter?.view?.turn?.job;
-  if(['cut','test-cut'].includes(snapshot.ui.screen) && cutter?.view?.turn && (!model.cut_preview?.copy || previewJob?.job_id===model.cut_preview.copy.id)){
+  const hasActivePreview=cutter?.view?.execution && model.cut_preview?.execution===cutter.view.execution && model.cut_preview?.copy?.id===previewJob?.job_id && model.cut_preview?.geometry;
+  if(['cut','test-cut'].includes(snapshot.ui.screen) && !hasActivePreview && cutter?.view?.turn && (!model.cut_preview?.copy || previewJob?.job_id===model.cut_preview.copy.id)){
     try {
     const preview=await api(`/api/v1/cutters/${encodeURIComponent(cutter.id)}/preview?kind=${snapshot.ui.screen==='test-cut'?'test':'main'}`);
     if(model.selectedCutter===cutter.id && model.snapshot.incarnation===snapshot.incarnation && model.snapshot.ui.screen===snapshot.ui.screen && (!model.cut_preview?.copy || model.cut_preview.copy.id===previewJob.job_id))model.cut_preview={...preview,copy:preview.copy || model.cut_preview?.copy};
