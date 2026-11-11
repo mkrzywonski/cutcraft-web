@@ -11,6 +11,7 @@ impl Desktop {
         let modal=egui::Modal::new(egui::Id::new("dialog"))
             .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(20)).show(ctx,|ui|{
                 ui.set_width(620_f32.min(ctx.content_rect().width()-60.));
+                if matches!(d.kind.as_str(), "materials"|"mats"|"material-edit"|"mat-edit") { ui.set_height((ctx.content_rect().height()-100.).clamp(200.,760.)); }
                 ui.horizontal(|ui| {ui.heading(&d.title);if self.button(ui,"Close dialog",true){open=false;}});
                 if self.cut_busy(){
                     ui.horizontal(|ui|{ui.strong("Cutter active");if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}});
@@ -256,6 +257,7 @@ if self.button(ui,"User manual",true){self.send("link",json!({"url":"https://git
                 );
             });
         } else {
+            crate::mat::editor_diagram(ui, &d.value);
             for (key, label, n) in [
                 ("outer_mm", "Outer size (width / height)", 2),
                 ("sticky_mm", "Sticky grid (left / top / right / bottom)", 4),

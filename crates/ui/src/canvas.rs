@@ -388,6 +388,9 @@ impl Desktop {
                 }
             }
             if mat {
+                if let Some(m) = &self.remote.geometry.mat {
+                    crate::mat::draw_orientation(&painter, m, |[x, y]| point(x, y));
+                }
                 let media = self.media_bounds();
                 let selected = match self.target.as_str() {
                     "media" => media,

@@ -121,10 +121,134 @@ pub(crate) fn draw_mat(
     }
 }
 
+/// Physical loading direction and the cutter coordinate origin, distinct from printed zero.
+pub(crate) fn draw_orientation(
+    painter: &egui::Painter,
+    mat: &cutcraft_web_protocol::MatGeometry,
+    at: impl Fn([f64; 2]) -> egui::Pos2,
+) {
+    let ink = egui::Color32::from_rgb(20, 90, 120);
+    let top = at([mat.outer_mm[0] / 2., 0.]);
+    painter.arrow(
+        top + egui::vec2(0., 25.),
+        egui::vec2(0., -19.),
+        egui::Stroke::new(2., ink),
+    );
+    painter.text(
+        top + egui::vec2(8., 16.),
+        egui::Align2::LEFT_CENTER,
+        "Load this edge first",
+        egui::FontId::proportional(11.),
+        ink,
+    );
+    let start = at(mat.origin_mm);
+    painter.circle_filled(start, 4., ink);
+    painter.circle_stroke(start, 4., egui::Stroke::new(1.5, egui::Color32::WHITE));
+    painter.text(
+        start + egui::vec2(7., 7.),
+        egui::Align2::LEFT_TOP,
+        "Start corner",
+        egui::FontId::proportional(11.),
+        ink,
+    );
+}
+
+/// A transient editor diagram. Invalid in-progress numbers never drive ruler loops.
+pub(crate) fn editor_diagram(ui: &mut egui::Ui, value: &serde_json::Value) {
+    let mut geometry = value.clone();
+    geometry["origin_mm"] = value["cut_origin_mm"].clone();
+    let Ok(mat) = serde_json::from_value::<cutcraft_web_protocol::MatGeometry>(geometry) else {
+        return;
+    };
+    let [w, h] = mat.outer_mm;
+    let [x0, y0, x1, y1] = mat.sticky_mm;
+    let finite = mat
+        .outer_mm
+        .iter()
+        .chain(&mat.sticky_mm)
+        .chain(&mat.grid_origin_mm)
+        .chain(&mat.origin_mm)
+        .all(|v| v.is_finite());
+    if !finite
+        || w <= 0.
+        || h <= 0.
+        || w > 2000.
+        || h > 2000.
+        || x0 < 0.
+        || y0 < 0.
+        || x1 <= x0
+        || y1 <= y0
+        || x1 > w
+        || y1 > h
+    {
+        ui.weak("Enter an outer size and a sticky grid inside it to see the mat.");
+        return;
+    }
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 220.), egui::Sense::hover());
+    let scale = (f64::from(rect.width() - 32.) / w)
+        .min(f64::from(rect.height() - 32.) / h)
+        .max(0.001);
+    let origin = rect.center() - egui::vec2((w * scale) as f32, (h * scale) as f32) * 0.5;
+    let at = |[x, y]: [f64; 2]| origin + egui::vec2((x * scale) as f32, (y * scale) as f32);
+    let painter = ui.painter_at(rect);
+    // The full-size workspace has room for the approximate-measurement note.
+    let mut diagram = mat.clone();
+    diagram.approximate = false;
+    draw_mat(&painter, &diagram, scale, at);
+    draw_orientation(&painter, &diagram, at);
+    ui.weak("Blue is the outer mat; the pale area is the sticky grid. Rulers start at the ruler origin. The dot marks the cutter’s start corner.");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use cutcraft_web_protocol::{MatGeometry, RulerUnit};
+
+    #[test]
+    fn editor_diagram_updates_from_draft_measurements_and_tolerates_incomplete_input() {
+        let ctx = egui::Context::default();
+        for (width, drawn) in [(330., true), (0., false), (1e12, false)] {
+            let value = serde_json::json!({"outer_mm":[width,350.],"sticky_mm":[10.,20.,300.,330.],"grid_origin_mm":[10.,20.],"cut_origin_mm":[12.,22.],"rulers":["inches","none","centimetres","none"]});
+            let mut output = ctx.run_ui(Default::default(), |ui| editor_diagram(ui, &value));
+            output.textures_delta.clear();
+            let has_start = output.shapes.iter().any(
+                |s| matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="Start corner"),
+            );
+            assert_eq!(has_start, drawn);
+        }
+    }
+
+    #[test]
+    fn orientation_uses_cut_origin_and_points_into_the_cutter() {
+        let mat = MatGeometry {
+            outer_mm: [150., 160.],
+            origin_mm: [22., 33.],
+            grid_origin_mm: [25., 40.],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            draw_orientation(ui.painter(), &mat, |[x, y]| {
+                egui::pos2(x as f32 * 2., y as f32 * 2.)
+            })
+        });
+        output.textures_delta.clear();
+        assert!(
+            output.shapes.iter().any(
+                |s| matches!(&s.shape,egui::Shape::Circle(c) if c.center==egui::pos2(44.,66.))
+            )
+        );
+        assert!(output.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::LineSegment {points,..} if points[0]==egui::pos2(150.,25.) && points[1]==egui::pos2(150.,6.))));
+        for label in ["Start corner", "Load this edge first"] {
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|s| matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()==label))
+            );
+        }
+    }
 
     #[test]
     fn mixed_rulers_and_grid_use_the_printed_zero_not_the_cut_origin() {

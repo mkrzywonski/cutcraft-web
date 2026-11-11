@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.18.1 — 2026-11-11
+
+- Mark the cutter’s start corner and loading direction on mat previews. Show a live diagram of the outer mat, sticky grid, rulers and start corner while editing a mat. Give material and mat editors more vertical room.
+
 ## 0.18.0 — 2026-11-06
 
 - Re-render the visible artwork region after zooming or panning, at the display pixel density. Keep the previous image while the view settles, coalesce render requests and reject obsolete replies.

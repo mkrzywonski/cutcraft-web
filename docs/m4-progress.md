@@ -256,3 +256,17 @@ Zoom/Fit input producing a sharper region without clearing artwork. Unit/transpo
 resize scale, pixel density, pan, settling, bounded dimensions, texture replacement and late
 cross-account replies. Compact layout was unchanged (last browser pass 0.17.1). Full Show me,
 paired reference captures and the other M4 gates remain open.
+
+## Mat orientation and editor diagram (0.18.1)
+
+Mat previews mark the actual cutter start corner independently of ruler zero and indicate the
+edge loaded into the cutter. The mat editor draws the draft outer edge, sticky area, mixed rulers
+and start corner. Invalid in-progress dimensions do not enter drawing loops. Material/mat editors
+use more of the available height; the final dialog screenshot was inspected with measurements
+visible below the diagram.
+
+All 476 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The focused desktop presentation workflow passes (mat editor, source-region zoom, compact toolbar
+at 600 pixels/24 points). Full cut workflow and 22-fixture suite last passed at 0.18.0. No hardware
+was used. Review findings #141–142 remain open: fresh-checkout assets, unprepared cut presentation,
+active-test area identity and repeated active preview work. These precede further gesture polish.

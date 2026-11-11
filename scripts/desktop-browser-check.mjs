@@ -24,6 +24,12 @@ const input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#fil
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[fixture]});
 await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open authored design');
 await sleep(300);
+await click('Menu Edit'); await click('Mats…'); await click('New…');
+await until(async()=>!!await page('CutCraft.controls()["Save changes"]'),'Mat editor opened');
+await sleep(200);
+const matEditor=await cdp('Page.captureScreenshot',{format:'png'});
+await fs.writeFile(`${artifacts}/mat-editor.png`,Buffer.from(matEditor.data,'base64'));
+await click('Close dialog');
 await until(async()=>!!(await state()).picture_key,'Initial source region');
 await sleep(500);
 const imageBeforeZoom=(await state()).picture_key;
