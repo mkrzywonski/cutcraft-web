@@ -299,3 +299,20 @@ also passed with the bundle. The build-script matrix tests missing/wrong-version
 in development and release profiles, and HTTP tests cover both configurations. This is not a
 release-package acceptance claim; source/content hashing, compression, platform checks and the
 other M4 acceptance gates remain open. Full cutting/compact browser workflows last passed 0.18.2.
+
+## Media handles and printed-grid snapping (0.18.4)
+
+Media selection has eight handles, with amber selection distinct from the blue design. Edge
+handles change only their axis; resizing keeps the opposite edge fixed even when snapped. Moving
+media preserves its dimensions. Move snapping uses the mat's printed ruler zero and the actual
+selection bounds, including designs with a placement offset. Selected dimensions respect inches.
+
+All 480 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The focused browser workflow verifies a real media edge drag and exactly one Undo step. The full
+simulation browser workflow also passes, including two tests followed by a design cut on one
+loaded mat, active reload, modal Stop and the narrow toolbar at 24 points. The remaining design-corner,
+interactive dimension and gesture-settling acceptance items remain open.
+
+Review #145 additionally reports uncertain-Start messaging/availability, Save As dialog clipping,
+dark appearance, stopped outcome presentation, remaining-time formatting, menu shortcut hints,
+mat-list units and the test-spot default. These are tracked as defects, not intentional omissions.

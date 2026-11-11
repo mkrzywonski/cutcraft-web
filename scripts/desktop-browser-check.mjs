@@ -74,6 +74,36 @@ await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:x+25,y:y+25,button:
 await until(async()=>(await state()).snapshot.ui.size_mm[0]>25.5,'Drag resize');
 await click('Undo');await until(async()=>Math.abs((await state()).snapshot.ui.size_mm[0]-25.4)<.001,'Undo drag');
 console.log('PASS: open, typed units, material edit, Save As, clean view navigation, drag, Undo');
+async function scrollPanelTo(label){
+ await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:1120,y:650});
+ for(let n=0;n<16;n++){
+  const r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);
+  if(r && r[1]>180 && r[3]<780)return;
+  await cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:1120,y:650,deltaX:0,deltaY:r&&r[1]<180?-250:250});await sleep(150);
+ }
+ throw Error('Could not scroll to '+label);
+}
+await scrollPanelTo('Cutting a piece of material'); await click('Cutting a piece of material');
+await until(async()=>(await state()).snapshot.ui.sheet.piece_mm?.[0]===250,'Enable material piece');
+await click('Move media');
+await until(async()=>!!await page('CutCraft.controls()["Resize e"]'),'Media edge handle');
+const mediaBefore=(await state()).snapshot.ui;
+const edge=await page('CutCraft.controls()["Resize e"]');
+const ex=(edge[0]+edge[2])/2,ey=(edge[1]+edge[3])/2;
+await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:ex,y:ey});
+await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:ex,y:ey,button:'left',clickCount:1});
+await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:ex+25,y:ey+40,button:'left',buttons:1});
+await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:ex+25,y:ey+40,button:'left',clickCount:1});
+await until(async()=>(await state()).snapshot.ui.sheet.piece_mm[0]>250,'Resize media east edge');
+const mediaAfter=(await state()).snapshot.ui;
+if(mediaAfter.sheet.piece_mm[1]!==250 || JSON.stringify(mediaAfter.sheet.piece_at_mm??[0,0])!==JSON.stringify(mediaBefore.sheet.piece_at_mm??[0,0]))throw Error('An east-edge drag moved the opposite edge or changed height');
+if(mediaAfter.history.undo.length!==mediaBefore.history.undo.length+1)throw Error('A gesture must add exactly one Undo');
+await click('Undo');await until(async()=>(await state()).snapshot.ui.sheet.piece_mm[0]===250,'Undo media edge drag');
+await scrollPanelTo('Cutting a piece of material');await click('Cutting a piece of material');
+await until(async()=>!(await state()).snapshot.ui.sheet.piece_mm,'Forget material piece');
+await click('Move design');
+console.log('PASS: media edge drag changes one dimension, keeps its opposite edge and creates one Undo');
+if(!process.env.CUTCRAFT_MEDIA_ONLY){
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Test screen');
 if((await state()).state.cutters[0].view.turn)throw Error('Toolbar Test Cut prepared a job before explicit review');
 await until(async()=>!!await page('CutCraft.controls()["Preview canvas"]'),'Unprepared cut retains its mat preview');
@@ -146,6 +176,7 @@ for(const [width,height] of [[1280,800],[1920,1080]]){
  await fs.writeFile(`${artifacts}/desktop-${width}x${height}.png`,Buffer.from(shot.data,'base64'));
 }
 console.log('PASS: reload preserves settings without restarting motion; desktop screenshots captured');
+}
 }
 // Exercise the overflow controls with the largest supported interface text.
 await click((await state()).snapshot.ui.screen==='test-cut'?'Test Cut':'Cut Preview');

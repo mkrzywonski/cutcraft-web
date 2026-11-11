@@ -84,3 +84,6 @@ that reference's `main.rs` layout, with browser actions routed through the share
 `crates/ui/src/artwork.rs` adapts the same reference viewport’s region margin, grid snapping,
 pixel-density calculation, 4096-pixel cap and 120 ms settling delay. Rendering remains on the
 authenticated server worker; browser transport coalesces requests and fences late responses.
+
+Media edge resizing and printed-grid snapping in `crates/ui/src/canvas.rs` adapt the same
+reference’s `workspace.rs` gesture contracts, through revision-checked shared commands.

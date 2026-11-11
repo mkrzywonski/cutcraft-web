@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.18.4 — 2026-11-11
+
+- Restore all eight media resize handles. Keep the opposite edge fixed when resizing, preserve media size when moving, and snap positions to the mat’s printed grid. Show selected dimensions in the chosen units.
+
 ## 0.18.3 — 2026-11-11
 
 - Allow native development checks on a fresh checkout without generated browser files. Report the missing desktop bundle explicitly; require current-version desktop assets for release builds.

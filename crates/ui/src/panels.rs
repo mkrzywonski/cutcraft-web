@@ -465,10 +465,9 @@ impl Desktop {
             }
             "Media" => {
                 let mut piece = sheet["piece_mm"].is_array();
-                if ui
-                    .checkbox(&mut piece, "Cutting a piece of material")
-                    .changed()
-                {
+                let response = ui.checkbox(&mut piece, "Cutting a piece of material");
+                self.record("Cutting a piece of material", &response);
+                if response.changed() {
                     self.command(
                         "sheet.piece",
                         if piece {

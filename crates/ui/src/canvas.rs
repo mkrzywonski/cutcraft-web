@@ -8,6 +8,8 @@ pub struct CanvasDrag {
     target: String,
     bounds: [f64; 4],
     offset: [f64; 2],
+    mat_origin: [f64; 2],
+    ruler_offset: [f64; 2],
     size: [f64; 2],
     angle: f64,
     scale: f32,
@@ -116,7 +118,8 @@ impl Desktop {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Move:");
                 for target in ["design", "media", "test spot"] {
-                    ui.selectable_value(&mut self.target, target.into(), target);
+                    let response = ui.selectable_value(&mut self.target, target.into(), target);
+                    self.record(&format!("Move {target}"), &response);
                 }
                 ui.weak("Top edge enters cutter ↑");
             });
@@ -421,7 +424,11 @@ impl Desktop {
                         b = drag.preview(self.drag_delta);
                     }
                     let r = Rect::from_min_max(point(b[0], b[1]), point(b[2], b[3]));
-                    let ink = Color32::from_rgb(0, 110, 100);
+                    let ink = if self.target == "media" {
+                        Color32::from_rgb(170, 110, 20)
+                    } else {
+                        Color32::from_rgb(35, 105, 180)
+                    };
                     painter.rect_stroke(r, 0, Stroke::new(1., ink), StrokeKind::Outside);
                     self.controls.insert(
                         "Selected bounds".into(),
@@ -431,9 +438,13 @@ impl Desktop {
                         let handles = if self.target == "media" {
                             vec![
                                 ("nw", r.left_top()),
+                                ("n", r.center_top()),
                                 ("ne", r.right_top()),
-                                ("sw", r.left_bottom()),
+                                ("e", r.right_center()),
                                 ("se", r.right_bottom()),
+                                ("s", r.center_bottom()),
+                                ("sw", r.left_bottom()),
+                                ("w", r.left_center()),
                             ]
                         } else {
                             vec![("se", r.right_bottom())]
@@ -458,7 +469,15 @@ impl Desktop {
                     painter.text(
                         r.left_bottom() + Vec2::new(0., 12.),
                         egui::Align2::LEFT_TOP,
-                        format!("{:.1} × {:.1} mm", b[2] - b[0], b[3] - b[1]),
+                        if self.remote.snapshot.ui.units == "inches" {
+                            format!(
+                                "{:.2} × {:.2} in",
+                                (b[2] - b[0]) / 25.4,
+                                (b[3] - b[1]) / 25.4
+                            )
+                        } else {
+                            format!("{:.1} × {:.1} mm", b[2] - b[0], b[3] - b[1])
+                        },
                         egui::FontId::proportional(12.),
                         ink,
                     );
@@ -498,9 +517,13 @@ impl Desktop {
                     let handles = if self.target == "media" {
                         vec![
                             ("nw", r.left_top()),
+                            ("n", r.center_top()),
                             ("ne", r.right_top()),
-                            ("sw", r.left_bottom()),
+                            ("e", r.right_center()),
                             ("se", r.right_bottom()),
+                            ("s", r.center_bottom()),
+                            ("sw", r.left_bottom()),
+                            ("w", r.left_center()),
                         ]
                     } else {
                         vec![("se", r.right_bottom())]
@@ -544,6 +567,19 @@ impl Desktop {
                         target: self.target.clone(),
                         bounds: b,
                         offset,
+                        mat_origin: origin,
+                        ruler_offset: self
+                            .remote
+                            .geometry
+                            .mat
+                            .as_ref()
+                            .map(|m| {
+                                [
+                                    m.origin_mm[0] - m.grid_origin_mm[0],
+                                    m.origin_mm[1] - m.grid_origin_mm[1],
+                                ]
+                            })
+                            .unwrap_or([0., 0.]),
                         size: self.remote.snapshot.ui.size_mm.unwrap_or([1., 1.]),
                         angle: number(&sheet["placement"]["rotation_deg"]),
                         scale,
@@ -608,12 +644,12 @@ impl CanvasDrag {
                 } else {
                     if corner.contains('w') {
                         b[0] = (b[0] + dx).min(b[2] - 1.);
-                    } else {
+                    } else if corner.contains('e') {
                         b[2] = (b[2] + dx).max(b[0] + 1.);
                     }
                     if corner.contains('n') {
                         b[1] = (b[1] + dy).min(b[3] - 1.);
-                    } else {
+                    } else if corner.contains('s') {
                         b[3] = (b[3] + dy).max(b[1] + 1.);
                     }
                 }
@@ -624,12 +660,38 @@ impl CanvasDrag {
     fn command(&self, delta: Vec2, snap: Option<f64>) -> (&'static str, serde_json::Value) {
         let b = self.preview(delta);
         let round = |x: f64| snap.map_or(x, |step| (x / step).round() * step);
-        let x = round(self.offset[0] + b[0] - self.bounds[0]);
-        let y = round(self.offset[1] + b[1] - self.bounds[1]);
+        let snapped_offset = |axis: usize| {
+            let corner = self.bounds[axis] - self.mat_origin[axis];
+            let next = corner + b[axis] - self.bounds[axis];
+            let snapped = round(next + self.ruler_offset[axis]) - self.ruler_offset[axis];
+            self.offset[axis] + snapped - corner
+        };
+        let (x, y) = (snapped_offset(0), snapped_offset(1));
         if self.target == "media" {
+            if self.kind == "move" {
+                return (
+                    "sheet.piece",
+                    json!({"x_mm":x,"y_mm":y,"width_mm":self.bounds[2]-self.bounds[0],"height_mm":self.bounds[3]-self.bounds[1]}),
+                );
+            }
+            // Reference resize contract: snap the changed size, then derive its moving edge
+            // from the fixed opposite edge. Unchanged axes retain their exact dimensions.
+            let mut size = [
+                self.bounds[2] - self.bounds[0],
+                self.bounds[3] - self.bounds[1],
+            ];
+            let mut offset = self.offset;
+            for (axis, low, high) in [(0, 'w', 'e'), (1, 'n', 's')] {
+                if self.kind.contains(low) || self.kind.contains(high) {
+                    size[axis] = round(b[axis + 2] - b[axis]).max(1.);
+                    if self.kind.contains(low) {
+                        offset[axis] += self.bounds[axis + 2] - self.bounds[axis] - size[axis];
+                    }
+                }
+            }
             (
                 "sheet.piece",
-                json!({"x_mm":x,"y_mm":y,"width_mm":round(b[2]-b[0]).max(1.),"height_mm":round(b[3]-b[1]).max(1.)}),
+                json!({"x_mm":offset[0],"y_mm":offset[1],"width_mm":size[0],"height_mm":size[1]}),
             )
         } else if self.target == "test spot" {
             ("sheet.test_spot", json!({"x_mm":x,"y_mm":y}))
@@ -827,12 +889,48 @@ mod tests {
             target: target.into(),
             bounds: [10., 20., 110., 70.],
             offset: [2., 3.],
+            mat_origin: [8., 17.],
+            ruler_offset: [0., 0.],
             size: [100., 50.],
             angle: 0.,
             scale: 2.,
             incarnation: "i".into(),
             revision: 4,
         }
+    }
+    #[test]
+    fn media_edge_handles_change_one_axis_and_keep_the_opposite_edge_fixed() {
+        for (edge, expected) in [
+            ("w", [12., 3., 90., 50.]),
+            ("e", [2., 3., 110., 50.]),
+            ("n", [2., 8., 100., 45.]),
+            ("s", [2., 3., 100., 55.]),
+        ] {
+            let d = drag("media", edge);
+            let (id, p) = d.command(Vec2::new(20., 10.), None);
+            assert_eq!(id, "sheet.piece");
+            assert_eq!(
+                p,
+                json!({"x_mm":expected[0],"y_mm":expected[1],"width_mm":expected[2],"height_mm":expected[3]})
+            );
+        }
+        let d = drag("media", "w");
+        let p = d.command(Vec2::new(23., 80.), Some(5.)).1;
+        assert_eq!(
+            p,
+            json!({"x_mm":12.,"y_mm":3.,"width_mm":90.,"height_mm":50.})
+        );
+    }
+    #[test]
+    fn moving_media_snaps_to_printed_zero_without_resizing_it() {
+        let mut d = drag("media", "move");
+        d.bounds = [10., 20., 112., 73.];
+        d.ruler_offset = [-1., 2.];
+        let p = d.command(Vec2::new(3., 3.), Some(5.)).1;
+        assert_eq!(
+            p,
+            json!({"x_mm":6.,"y_mm":3.,"width_mm":102.,"height_mm":53.})
+        );
     }
     #[test]
     fn media_resize_preserves_opposite_corner_and_minimum_size() {
