@@ -742,6 +742,39 @@ fn simultaneous_uploads_with_the_same_key_make_one_job() {
 }
 
 #[tokio::test]
+async fn desktop_bundle_is_served_or_explicitly_unavailable_in_a_native_only_build() {
+    let h = harness();
+    for path in [
+        "/desktop",
+        "/desktop/pkg/cutcraft_ui.js",
+        "/desktop/pkg/cutcraft_ui_bg.wasm",
+    ] {
+        let response = send_raw(&h.app, get(path, "cameo-pi.local")).await;
+        assert_eq!(
+            response.status(),
+            if cfg!(desktop_assets) {
+                StatusCode::OK
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            },
+            "{path}"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        if !cfg!(desktop_assets) {
+            assert!(
+                std::str::from_utf8(&body)
+                    .unwrap()
+                    .contains("scripts/build-desktop.sh")
+            );
+        } else if path.ends_with(".wasm") {
+            assert!(body.starts_with(b"\0asm"));
+        }
+    }
+    let response = send_raw(&h.app, get("/desktop/pkg/unknown-file", "cameo-pi.local")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn the_web_interface_loads_before_login_with_a_strict_policy() {
     let h = harness();
     send_raw(

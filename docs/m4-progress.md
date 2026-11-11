@@ -284,3 +284,18 @@ now 3.9.0; no advisory exceptions were added. All 477 Rust tests, formatting, na
 workspace build and dependency policy pass. Full desktop simulation and compact browser checks
 pass; the latter was rerun after an interrupted process. The unprepared-cut screenshot was
 inspected. Review #141's clean-checkout asset issue and the other M4 gates remain open.
+
+## Clean native checkout and desktop bundle gate (0.18.3)
+
+Addresses review #141: the four native Cargo checks run from a source-only copy with no generated
+desktop directory. Native-only development binaries return an explicit HTTP 503 with build
+instructions for desktop routes; they never pretend to serve a working desktop. A build script
+requires generated assets stamped with the current app version for release builds. The desktop
+build script writes that stamp; README distinguishes native checks from a runnable desktop build.
+
+All 478 tests, formatting, native Clippy and workspace build passed in the source-only copy and
+with the bundle present. Wasm Clippy, dependency policy and the focused desktop browser workflow
+also passed with the bundle. The build-script matrix tests missing/wrong-version/current bundles
+in development and release profiles, and HTTP tests cover both configurations. This is not a
+release-package acceptance claim; source/content hashing, compression, platform checks and the
+other M4 acceptance gates remain open. Full cutting/compact browser workflows last passed 0.18.2.

@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.18.3 — 2026-11-11
+
+- Allow native development checks on a fresh checkout without generated browser files. Report the missing desktop bundle explicitly; require current-version desktop assets for release builds.
+
 ## 0.18.2 — 2026-11-11
 
 - Update the MCP SDK to 3.9.0 to address unbounded transport memory use.

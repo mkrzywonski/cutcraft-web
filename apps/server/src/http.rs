@@ -1368,6 +1368,19 @@ async fn layout_js() -> Response {
         include_str!("../web/desktop/layout.js"),
     )
 }
+#[cfg(not(desktop_assets))]
+fn desktop_unavailable() -> Response {
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(header::CACHE_CONTROL, "no-store"), (header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "The desktop layout is not bundled in this development build. In the pinned nix-shell, run scripts/build-desktop.sh, then rebuild and restart the server.",
+    ).into_response()
+}
+#[cfg(not(desktop_assets))]
+async fn desktop_index() -> Response {
+    desktop_unavailable()
+}
+#[cfg(desktop_assets)]
 async fn desktop_index() -> Response {
     asset(
         "text/html; charset=utf-8",
@@ -1386,6 +1399,14 @@ async fn desktop_css() -> Response {
         include_str!("../web/desktop/desktop.css"),
     )
 }
+#[cfg(not(desktop_assets))]
+async fn desktop_asset(Path(name): Path<String>) -> Response {
+    match name.as_str() {
+        "cutcraft_ui.js" | "cutcraft_ui_bg.wasm" => desktop_unavailable(),
+        _ => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+#[cfg(desktop_assets)]
 async fn desktop_asset(Path(name): Path<String>) -> Response {
     match name.as_str() {
         "cutcraft_ui.js" => asset(

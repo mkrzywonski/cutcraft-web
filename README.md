@@ -16,7 +16,11 @@ same capabilities.
 requirements. This is the independent M4 implementation branch, still under development:
 [M4 progress and remaining gates](docs/m4-progress.md). The M3 service remains its base.
 
-For development, enter `nix-shell`, run `scripts/build-desktop.sh`, then
+The four native Cargo checks work on a fresh checkout without generated browser files.
+Such a development binary explicitly reports the desktop layout unavailable until it is bundled.
+Release builds refuse missing or differently versioned desktop assets.
+
+For a runnable desktop development build, enter `nix-shell`, run `scripts/build-desktop.sh`, then
 `cargo build --workspace --locked`. The first shell entry builds the pinned WebAssembly
 packaging tool; subsequent builds and browser tests use that tool without downloading it.
 The server executable is `target/debug/cutcraft-web`. Use `--practice` for simulator
