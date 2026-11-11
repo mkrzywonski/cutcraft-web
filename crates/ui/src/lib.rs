@@ -247,12 +247,17 @@ impl Desktop {
                 self.dialog = None;
             }
         }
-        ctx.set_visuals(if self.dark {
+        ctx.set_theme(if self.dark {
+            egui::Theme::Dark
+        } else {
+            egui::Theme::Light
+        });
+        let mut style = (**root.style()).clone();
+        style.visuals = if self.dark {
             egui::Visuals::dark()
         } else {
             egui::Visuals::light()
-        });
-        let mut style = (**root.style()).clone();
+        };
         let size = self.remote.snapshot.ui.font_size;
         let size = if size >= 10. { size } else { 14. };
         style.text_styles = egui::Style::default().text_styles;
@@ -358,6 +363,38 @@ pub fn list(v: &Value) -> Vec<Value> {
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+
+    #[test]
+    fn appearance_changes_reach_the_root_and_popup_style() {
+        let mut desktop = Desktop::default();
+        let ctx = egui::Context::default();
+        for dark in [false, true, false, true] {
+            desktop.remote.preferences = json!({"dark": dark});
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280., 800.),
+                    )),
+                    ..Default::default()
+                },
+                |root| {
+                    desktop.frame(root);
+                    assert_eq!(root.visuals().dark_mode, dark);
+                },
+            );
+            output.textures_delta.clear();
+            assert_eq!(
+                ctx.theme(),
+                if dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                }
+            );
+            assert_eq!(ctx.style_of(ctx.theme()).visuals.dark_mode, dark);
+        }
+    }
 
     #[test]
     fn another_account_cannot_inherit_dialog_drafts_or_pending_actions() {

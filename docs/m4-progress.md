@@ -316,3 +316,17 @@ interactive dimension and gesture-settling acceptance items remain open.
 Review #145 additionally reports uncertain-Start messaging/availability, Save As dialog clipping,
 dark appearance, stopped outcome presentation, remaining-time formatting, menu shortcut hints,
 mat-list units and the test-spot default. These are tracked as defects, not intentional omissions.
+
+## Dialog sizing and dark appearance (0.18.5)
+
+Addresses the Save As clipping and theme findings in review #145. Each dialog kind has its own
+layout identity, so a short conflict dialog cannot constrain the following Save As. Conflict
+wording also covers another person saving the project. The selected theme is applied to both
+the root widget and popup styles rather than overwritten by the previous frame's style.
+
+All 481 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy passed.
+The imported independent browser harness passes its save-conflict subset: refusing a stale save
+without losing edits, Save As to a separate project, and Reload of the newest revision. The
+Save As screenshot was inspected with both action buttons inside the padded dialog. The focused
+presentation browser workflow also passes. Its uncertain-Start cases were explicitly skipped;
+those findings remain open. Full simulated cutting last passed at 0.18.4.

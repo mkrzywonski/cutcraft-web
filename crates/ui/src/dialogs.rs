@@ -8,7 +8,7 @@ impl Desktop {
         };
         let mut open = true;
         let mut done = false;
-        let modal=egui::Modal::new(egui::Id::new("dialog"))
+        let modal=egui::Modal::new(egui::Id::new(("dialog", d.kind.as_str())))
             .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(20)).show(ctx,|ui|{
                 ui.set_width(620_f32.min(ctx.content_rect().width()-60.));
                 if matches!(d.kind.as_str(), "materials"|"mats"|"material-edit"|"mat-edit") { ui.set_height((ctx.content_rect().height()-100.).clamp(200.,760.)); }
@@ -39,7 +39,7 @@ if self.button(ui,"Cancel",true){done=true;}});},
 if self.button(ui,"Close design",!self.remote.pending){self.command("design.close",json!({}));done=true;}
 if self.button(ui,"Cancel",true){done=true;}});},
                         "save-conflict"=>{
-                            ui.label("Another device saved a newer library revision. Your current work is still here.");
+                            ui.label("This project has a newer library revision. Your current work is still here.");
                             if self.button(ui,"Reload saved project",!self.remote.pending) && let Some(saved)=self.remote.snapshot.design.as_ref().and_then(|d|d.saved.as_ref()){
                                 self.send("open",json!({"project":{"job":saved.job},"replace_unsaved":true}));
                             }

@@ -69,6 +69,7 @@ const view=async()=>(await a.state()).state.cutters[0].view;
 // After a finished test the desktop asks for review first ("Try another pattern").
 const readyToStart=async()=>{await a.until(async()=>{const v=await view();return v.activity==='idle'&&v.mat_loaded&&!(await a.state()).pending;},'Ready to start',45000);await sleep(300);if(await a.control('Try another pattern')){await a.click('Try another pattern');await sleep(200);}};
 
+if(!process.env.CUTCRAFT_SAVE_ONLY){
 console.log(' A. Start reached the cutter but its reply was lost');
 fault='response';
 let p0=posts(),l0=lookups();
@@ -115,6 +116,7 @@ p0=posts();
 await a.click('Start');
 await a.until(async()=>(await view()).turn?.tests===testsBefore+1,'Deliberate Start completes',45000);
 check(posts()-p0===1,'one deliberate Start, one cut');
+}
 await a.cdp('Fetch.disable');
 
 // ---------------------------------------------------------------------------------------------
@@ -201,7 +203,7 @@ check(reloaded.snapshot.ui.sheet.material.force===13,`Reload shows the newest sa
 check(!(await sam.control('Reload saved project')),'the conflict dialog closes after Reload');
 await sam.shot('save-conflict-reloaded');
 
-console.log(failures.length?`\n${failures.length} check(s) failed:\n- `+failures.join('\n- '):'\nAll uncertainty and conflict checks passed.');
+console.log(failures.length?`\n${failures.length} check(s) failed:\n- `+failures.join('\n- '):process.env.CUTCRAFT_SAVE_ONLY?'\nAll save-conflict checks passed (Start fault cases skipped).':'\nAll uncertainty and conflict checks passed.');
 process.exitCode=failures.length?1:0;
 browserWs?.close();
 process.exit();
