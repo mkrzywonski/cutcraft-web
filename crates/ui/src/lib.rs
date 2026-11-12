@@ -26,6 +26,7 @@ pub struct Remote {
     pub uploads: Value,
     pub me: Value,
     pub cut_preview: Value,
+    pub start_recovery: Value,
     pub preferences: Value,
     pub connected: bool,
     pub pending: bool,

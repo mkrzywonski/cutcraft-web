@@ -49,7 +49,7 @@ async function browser(method,params={}){
 console.log('Uncertain Start');
 const a=await tab();
 const sent=[];
-a.on(m=>{if(m.method==='Network.requestWillBeSent'){const u=new URL(m.params.request.url);if(/\/api\/v1\/cutters\/[^/]+\/starts?(\/|$)/.test(u.pathname))sent.push({method:m.params.request.method,path:u.pathname});}});
+a.on(m=>{if(m.method==='Network.requestWillBeSent'){const u=new URL(m.params.request.url);if(/\/api\/v1\/cutters\/[^/]+\/starts?(\/|$)/.test(u.pathname))sent.push({method:m.params.request.method,path:u.pathname,body:m.params.request.postData});}});
 const posts=()=>sent.filter(r=>r.method==='POST'&&r.path.endsWith('/start')).length;
 const lookups=()=>sent.filter(r=>r.method==='GET'&&r.path.includes('/starts/')).length;
 // fault: 'response' drops the reply after the server handled it; 'request' drops it before.
@@ -95,27 +95,48 @@ check(posts()-p0===1,'Start was not retried');
 check(lookups()-l0===1,'the desktop looked up the Start by its key');
 check(/not confirmed|check the cutter/i.test(msgB),`the message says Start is not confirmed (message: ${JSON.stringify(msgB)})`);
 await a.shot('uncertain-start-not-sent');
+const originalUnknown=sent.filter(r=>r.method==='POST').at(-1).body;
+const beforeDisabled=posts();await a.click('Start');await sleep(300);
+check(posts()===beforeDisabled,'Start is disabled while the original request is unresolved');
 
-console.log(' C. Start and its lookup both lost (connection down)');
+console.log(' C. Reconciliation is unavailable (connection down)');
 fault='offline';p0=posts();l0=lookups();
-await a.click('Start');
+await a.click('Retry original Start');
 await a.until(async()=>!!(await a.state()).message && !(await a.state()).pending,'Offline Start reported');
 const msgC=(await a.state()).message;
 await a.shot('uncertain-start-offline');
 fault=null;
 await sleep(3000);
-check(posts()-p0===1,'Start was not retried when the connection returned');
+check(posts()-p0===0,'Failed lookup and reconnection do not resend Start');
 check(/not confirmed|check the cutter/i.test(msgC),`the message says Start is not confirmed (message: ${JSON.stringify(msgC)})`);
 const beforeReload=posts();
 await a.reload();await sleep(3000);
 check(posts()===beforeReload&&(await view()).activity==='idle'&&(await view()).turn.tests===testsBefore,'reload after an uncertain Start sends nothing and starts nothing');
 
-console.log(' D. A deliberate Start afterwards still works');
+console.log(' D. A deliberate retry afterwards uses the original request');
 await readyToStart();
 p0=posts();
-await a.click('Start');
+await a.click('Retry original Start');
 await a.until(async()=>(await view()).turn?.tests===testsBefore+1,'Deliberate Start completes',45000);
-check(posts()-p0===1,'one deliberate Start, one cut');
+check(posts()-p0===1,'one deliberate retry, one cut');
+check(sent.filter(r=>r.method==='POST').at(-1).body===originalUnknown,'retry after reload reuses the exact original body and key');
+console.log(' E. A fresh Start and its lookup are both lost');
+await readyToStart();
+fault='offline';p0=posts();l0=lookups();
+await a.click('Start');
+await a.until(async()=>!!(await a.state()).message && !(await a.state()).pending,'Offline fresh Start reported');
+check(posts()-p0===1&&lookups()-l0===1,'one Start attempt and one lookup while offline');
+check(/not confirmed/i.test((await a.state()).message),'offline Start has clear recovery guidance');
+check(!(await a.state()).connected,'failed reconciliation does not claim Connected');
+const offlineBody=sent.filter(r=>r.method==='POST').at(-1).body;
+fault=null;
+await a.reload();await sleep(1500);
+check(posts()-p0===1,'reload never replays the offline Start');
+await readyToStart();
+await a.click('Retry original Start');
+await a.until(async()=>(await view()).turn?.tests===testsBefore+2,'Offline Start recovered deliberately',45000);
+check(sent.filter(r=>r.method==='POST').at(-1).body===offlineBody,'offline recovery preserves the original request');
+
 }
 await a.cdp('Fetch.disable');
 

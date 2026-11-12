@@ -330,3 +330,24 @@ without losing edits, Save As to a separate project, and Reload of the newest re
 Save As screenshot was inspected with both action buttons inside the padded dialog. The focused
 presentation browser workflow also passes. Its uncertain-Start cases were explicitly skipped;
 those findings remain open. Full simulated cutting last passed at 0.18.4.
+
+## Unconfirmed Start recovery (0.18.6)
+
+Addresses the Start findings in review #145. Before sending Start, the desktop remembers its
+exact request and key in account-scoped browser session storage. An unknown outcome disables
+new Start and survives reload. Check Start status only reads; Retry original Start first looks
+up the result and reuses the original body/key only on a deliberate press. A failed lookup sends
+nothing. Known acceptance/refusal clears recovery. Unavailable recovery storage prevents sending;
+account changes do not inherit or resend another account's request. Stop remains independent.
+
+All 481 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy pass.
+Transport regressions cover persistence, exact retry, blocked new keys, account switches during
+lookup and unavailable storage. The full uncertainty/save-conflict browser harness passes:
+lost accepted reply, missing request, unavailable reconciliation, reload, deliberate exact retry,
+fresh Start plus lookup both lost, and two-person Save As/Reload conflict handling. An initial
+browser run found a transient incorrect Connected status; the corrected run passes and the
+recovery screenshot was inspected. No hardware was used.
+
+These checks do not close all M4 cutter recovery gates. Late acceptance versus failed Stop,
+changes to the reviewed copy/cutter while recovery is open, and the complete stopped/finished
+presentation still need their remaining acceptance coverage and independent review.

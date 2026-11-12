@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.18.6 — 2026-11-11
+
+- Remember an unresolved Start across browser reloads and keep new Start disabled. Offer read-only status checking and a deliberate retry of the original request after looking up its result; failed lookups never resend motion.
+
 ## 0.18.5 — 2026-11-11
 
 - Keep each dialog’s layout independent so Save As remains usable after a save conflict. Apply dark appearance consistently to panels, menus and dialogs.

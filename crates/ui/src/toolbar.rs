@@ -416,6 +416,15 @@ impl Desktop {
             let cutter=cutters.iter().find(|c|c["id"]==self.cutter).cloned().unwrap_or_default();let v=cutter["view"].clone();
             ui.separator();
             let preview=self.remote.cut_preview.clone();let busy=self.cut_busy();
+            let uncertain=!self.remote.start_recovery.is_null();
+            if uncertain {
+                ui.strong("Start is not confirmed");
+                ui.label(format!("Check cutter {} before trying again. A retry uses the original request; it does not create another cut.",text(&self.remote.start_recovery["cutter"])));
+                if self.button(ui,"Check Start status",!self.remote.pending){self.send("check-start",json!({}));}
+                if self.button(ui,"Retry original Start",!self.remote.pending){self.send("retry-start",json!({}));}
+                if !busy && self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.remote.start_recovery["cutter"],"action":"stop"}));}
+            }
+
             let copy = &preview["copy"];
             let changed = self.remote.snapshot.design.as_ref().is_some_and(|design|
                 !copy.is_null() && (copy["project_revision"] != design.project_revision
@@ -454,7 +463,7 @@ impl Desktop {
                     if self.button(ui,"Try another pattern",!self.remote.pending){self.reviewed_tests=tests;}
                 }
                 let own_copy=preview.get("copy").filter(|c|!c.is_null());
-                let ready=!changed && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
+                let ready=!uncertain && !changed && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
                 if self.button(ui,"Start",ready){let start=json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});self.send("start",json!({"cutter":self.cutter,"start":start}));}
                 if v["mat"]["state"]=="used" {ui.strong("Fresh material needed");ui.label("Unload and load fresh material for another cut.");}
                 if tests>0{ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));}
