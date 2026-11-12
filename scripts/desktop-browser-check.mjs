@@ -152,6 +152,10 @@ await click('Load virtual mat');await until(async()=>(await state()).state.cutte
 await click('Start');await until(async()=>(await state()).state.cutters[0].view.activity==='testing','Test running for modal Stop');
 const stoppedExecution=(await state()).state.cutters[0].view.execution;
 const activeCopy=(await state()).cut_preview.copy.id;
+await until(async()=>(await state()).cut_preview?.motion?.passes?.length>0,'Sender pass ranges reach the desktop');
+const runningShot=await cdp('Page.captureScreenshot',{format:'png'});
+await fs.writeFile(`${artifacts}/estimated-progress.png`,Buffer.from(runningShot.data,'base64'));
+
 await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Active cut reload ready');
 await until(async()=>(await state()).cut_preview?.geometry && (await state()).cut_preview?.execution===stoppedExecution,'Recover exact active execution preview');

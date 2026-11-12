@@ -263,6 +263,19 @@ fn included_by_default() -> bool {
     true
 }
 
+/// Sender pass ranges for estimated cutting progress. Optional in older preview responses.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CutMotion {
+    pub units_per_mm: f64,
+    pub passes: Vec<MotionPass>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MotionPass {
+    pub bytes: [usize; 2],
+    pub points: Vec<[i32; 2]>,
+}
+
 /// One picture of the artwork (spec §12), named by everything that affects it, so the browser
 /// can cache it and a stale one is never mistaken for the current one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

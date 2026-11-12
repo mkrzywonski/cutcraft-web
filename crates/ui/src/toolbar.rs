@@ -442,14 +442,26 @@ impl Desktop {
             } else { ui.label("Recovering the reviewed material settings…"); }
             for (n,step) in list(&preview["steps"]).iter().enumerate(){ui.label(format!("{}. {}",n+1,text(step)));}
             let waiting=preview["copy"]["id"].as_str().is_some_and(|id|list(&v["queue"]).iter().any(|q|q["job"]["job_id"]==id));
+            if let Some(seconds)=preview["estimate_s"].as_f64().filter(|s|s.is_finite()) {ui.label(format!("About {:.0} seconds (estimate)",seconds.ceil()));}
             if waiting{ui.strong("Waiting for this cutter");ui.label("Your prepared cut is in the queue. Start will be available when it is your turn and the mat is ready.");}
             if !waiting && (preview.is_null() || preview["geometry"].is_null()){ui.label(if test {"Choose Cut pattern to review the pattern and loading instructions."} else {"Choose Cut this sheet to review the design and loading instructions."});if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
             ui.separator();
             let state=text(&v["activity"]);ui.strong(match state{"testing"=>"Test cut in progress","cutting"=>"Cutting","paused"=>"Paused","stopping"=>"Stopping — waiting for confirmation","confirming-stop"=>"Checking that the cutter stopped","check-cutter"=>"Check the cutter",_=>if v["mat_loaded"]==true{"Mat loaded"}else{"Load the mat"}});
             if busy {
-                let fraction=crate::number(&v["progress"]["fraction"]) as f32;ui.add(egui::ProgressBar::new(fraction).show_percentage());
-                ui.label(format!("About {:.0} seconds remaining",crate::number(&v["progress"]["remaining_s"])));
-                if self.button(ui,if state=="paused"{"Resume"}else{"Pause"},matches!(state,"testing"|"cutting"|"paused")){self.send("cutter",json!({"id":self.cutter,"action":if state=="paused"{"resume"}else{"pause"}}));}
+                if v["progress"].is_null(){ui.label("Starting… waiting for the first progress estimate.");}
+                else {
+                    let fraction=(crate::number(&v["progress"]["fraction"]) as f32).clamp(0.,1.);
+                    ui.add(egui::ProgressBar::new(fraction).text(format!("About {:.0}% (estimated)",fraction*100.)));
+                    if let Some(seconds)=v["progress"]["remaining_s"].as_f64().filter(|s|s.is_finite() && *s>=0.) {
+                        ui.label(if seconds<1.{"Less than a second remaining (estimate)".into()}else{format!("About {:.0} seconds remaining (estimate)",seconds.ceil())});
+                    }
+                }
+                ui.strong("Estimated progress — not the blade’s exact position");
+                if !preview["motion"].is_null() {
+                for (colour,label) in [(crate::motion::DONE,"Black: cut (estimated)"),(crate::motion::TODO,"Red: still to cut"),(crate::motion::QUEUED,"Orange: queued; blade may be anywhere along it")] {ui.horizontal_wrapped(|ui|{let (r,_)=ui.allocate_exact_size(egui::vec2(20.,12.),egui::Sense::hover());ui.painter().rect_filled(r,2.,egui::Color32::from_gray(246));ui.painter().line_segment([r.left_center(),r.right_center()],egui::Stroke::new(2.,colour));ui.small(label);});}
+                } else {ui.small("Detailed motion preview unavailable.");}
+                let pausing=v["progress"]["phase"]=="pausing";
+                if self.button(ui,if state=="paused"{"Resume"}else if pausing{"Pausing…"}else{"Pause"},!pausing && matches!(state,"testing"|"cutting"|"paused")){self.send("cutter",json!({"id":self.cutter,"action":if state=="paused"{"resume"}else{"pause"}}));}
                 if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}
             }else{
                 if v["mat"]["state"]=="unseen" && v["mat_loaded"]==true{

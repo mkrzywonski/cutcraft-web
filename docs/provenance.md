@@ -87,3 +87,7 @@ authenticated server worker; browser transport coalesces requests and fences lat
 
 Media edge resizing and printed-grid snapping in `crates/ui/src/canvas.rs` adapt the same
 reference’s `workspace.rs` gesture contracts, through revision-checked shared commands.
+
+`crates/ui/src/motion.rs` adapts the reference `cutting.rs` estimated byte-range progress
+drawing (black/red passes, queued path and approximate blade marker). The preview receives
+pass ranges and quantized points from the same encoder as the sender, without raw commands.

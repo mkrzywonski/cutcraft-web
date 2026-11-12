@@ -351,3 +351,23 @@ recovery screenshot was inspected. No hardware was used.
 These checks do not close all M4 cutter recovery gates. Late acceptance versus failed Stop,
 changes to the reviewed copy/cutter while recovery is open, and the complete stopped/finished
 presentation still need their remaining acceptance coverage and independent review.
+
+## Sender-based estimated progress and cut-order playback (0.19.0)
+
+The frozen preview includes optional typed sender pass ranges, quantized points and the model's
+units per mm. The cut screen draws estimated completed paths black, remaining paths red, queued
+motion orange and an approximate blade marker using the reference display algorithm. The server
+regression compares preview ranges/points with the actual encoder output for the recorded active
+test area. Older preview payloads remain readable, with the detailed legend omitted when absent.
+
+Startup waits for a real progress estimate instead of displaying zero seconds. Time, percentage,
+blade position and legend all identify estimates; Pause shows Pausing until the checkpoint. Mat
+cut-order playback advances by physical path length, including repeated passes, rather than by
+contour count. The protocol version remains 7: existing request/response fields are unchanged,
+and the added motion payload is optional and ignored by older clients.
+
+All 483 Rust tests, formatting, native/wasm Clippy, workspace build, dependency policy and the full
+desktop simulated workflow passed. The browser verifies that sender pass metadata reaches the UI;
+the startup/progress screenshot was inspected. Unit paint tests exercise estimated completed and
+remaining paths, the queued path and marker. Terminal outcome retention and the other acceptance
+items remain open. No physical cutter was used.

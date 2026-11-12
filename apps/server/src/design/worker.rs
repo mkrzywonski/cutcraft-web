@@ -1169,7 +1169,11 @@ impl Worker {
                 },
                 approximate: !roll && profile.approximate,
             }),
-            sheet: plan.operations.iter().map(|o| stroke(o, origin)).collect(),
+            sheet: plan
+                .operations
+                .iter()
+                .flat_map(|o| (0..o.passes).map(move |_| stroke(o, origin)))
+                .collect(),
             art_box_mm: art.map(shift),
             test_spot_mm: spot,
             lines,

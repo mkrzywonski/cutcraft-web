@@ -347,10 +347,44 @@ impl Desktop {
             } else {
                 &self.remote.geometry.lines
             };
-            if mat || pane == 1 || self.screen() == "overlay" {
+            let motion = matches!(self.screen(), "cut" | "test-cut")
+                .then(|| {
+                    serde_json::from_value::<cutcraft_web_protocol::CutMotion>(
+                        self.remote.cut_preview["motion"].clone(),
+                    )
+                    .ok()
+                })
+                .flatten();
+            if let Some(motion) = motion.as_ref().filter(|_| !self.unprepared_cut_preview) {
+                let cutter = crate::list(&self.remote.state["cutters"])
+                    .into_iter()
+                    .find(|c| c["id"] == self.cutter)
+                    .unwrap_or_default();
+                let estimate = (self.cut_busy()
+                    && cutter["view"]["execution"] == self.remote.cut_preview["execution"])
+                    .then(|| {
+                        serde_json::from_value::<crate::motion::Estimate>(
+                            cutter["view"]["progress"]["estimate"].clone(),
+                        )
+                        .ok()
+                    })
+                    .flatten();
+                let origin = self
+                    .remote
+                    .geometry
+                    .mat
+                    .as_ref()
+                    .map_or([0., 0.], |m| m.origin_mm);
+                crate::motion::draw(&painter, motion, estimate.as_ref(), origin, point);
+            } else if mat || pane == 1 || self.screen() == "overlay" {
                 let mut last = None;
-                let limit = (lines.len() as f32 * self.order) as usize;
-                for (i, line) in lines.iter().enumerate() {
+                let mut distance = lines
+                    .iter()
+                    .filter(|line| line.included)
+                    .map(|line| crate::motion::length(&line.points))
+                    .sum::<f64>()
+                    * f64::from(self.order);
+                for line in lines {
                     if !line.included
                         && !line.source_ids.iter().any(|id| self.highlight.contains(id))
                         && !line.item.as_ref().is_some_and(|id| self.peek.contains(id))
@@ -371,10 +405,22 @@ impl Desktop {
                     last = points.last().copied();
                     let colour = if line.source_ids.iter().any(|id| self.highlight.contains(id)) {
                         Color32::from_rgb(220, 110, 20)
-                    } else if i >= limit {
-                        Color32::from_gray(200)
                     } else {
                         colour(&line.colour)
+                    };
+                    let points = if mat && self.order < 1. {
+                        painter.add(egui::Shape::line(
+                            points,
+                            Stroke::new(1., Color32::from_gray(190)),
+                        ));
+                        let prefix = crate::motion::prefix(&line.points, distance);
+                        distance = (distance - crate::motion::length(&line.points)).max(0.);
+                        prefix
+                            .iter()
+                            .map(|p| point(f64::from(p[0]), f64::from(p[1])))
+                            .collect::<Vec<_>>()
+                    } else {
+                        points
                     };
                     if points.len() > 1 {
                         if colour.r() > 220 && colour.g() > 220 && colour.b() > 220 {

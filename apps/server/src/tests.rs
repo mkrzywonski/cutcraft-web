@@ -3486,6 +3486,37 @@ async fn edited_cut_replaces_the_idle_copy_without_losing_test_areas() {
     let area = lock(&h.app.service.cutters[0].shared)
         .active_test_area()
         .unwrap();
+    let stored = h
+        .app
+        .service
+        .copies
+        .get(first["id"].as_str().unwrap(), 1)
+        .unwrap();
+    let expected_plan = cutcraft_path::test_cut_plan(
+        &stored.project.project,
+        &stored.plan.sheet,
+        [area[0], area[1]],
+    )
+    .unwrap();
+    let expected =
+        cutcraft_device::gpgl::encode(&expected_plan, &cutcraft_device::gpgl::CAMEO_1).unwrap();
+    let motion: cutcraft_web_protocol::CutMotion =
+        serde_json::from_value(active["motion"].clone()).unwrap();
+    assert_eq!(
+        motion.units_per_mm,
+        cutcraft_device::gpgl::CAMEO_1.units_per_mm
+    );
+    assert_eq!(motion.passes.len(), expected.passes.len());
+    for (shown, sent) in motion.passes.iter().zip(&expected.passes) {
+        assert_eq!(
+            shown.bytes, sent.bytes,
+            "progress uses the sender's byte boundaries"
+        );
+        assert_eq!(
+            shown.points, sent.points,
+            "progress includes exact quantized motion and repeats"
+        );
+    }
     let origin: [f64; 2] =
         serde_json::from_value(active["geometry"]["mat"]["origin_mm"].clone()).unwrap();
     let mut bounds = [

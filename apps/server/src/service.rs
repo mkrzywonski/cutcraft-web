@@ -564,11 +564,32 @@ impl Service {
             .ok_or_else(|| ApiError::bad_request("The cut has no sheet."))?;
         let profile = sheet.mat_profile();
         let origin = profile.cut_origin_mm;
+        let encoded = cutcraft_device::gpgl::encode(&plan, &CAMEO_1).map_err(|problems| {
+            ApiError::bad_request(
+                problems
+                    .iter()
+                    .map(|d| d.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
+        let motion = cutcraft_web_protocol::CutMotion {
+            units_per_mm: CAMEO_1.units_per_mm,
+            passes: encoded
+                .passes
+                .into_iter()
+                .map(|pass| cutcraft_web_protocol::MotionPass {
+                    bytes: pass.bytes,
+                    points: pass.points,
+                })
+                .collect(),
+        };
+
         let strokes:Vec<_>=plan.operations.iter().map(|o|json!({"colour":o.colour.as_deref().unwrap_or("#235f5a"),"aid":o.kind.is_aid(),"points":o.points.iter().map(|p|[p[0]+origin[0],p[1]+origin[1]]).collect::<Vec<_>>()})).collect();
         Ok(
             json!({"copy":copy,"job":job,"execution":view.execution,"kind":kind,"sheet":{"piece_mm":sheet.piece_mm,"piece_at_mm":sheet.piece_at_mm},"turn":turn.id,"action_epoch":view.action_epoch,"generation":view.mat,"material":plan.material,"mirrored":plan.mirror,"steps":setup_steps(&plan),"occupied":turn.taken,
             "geometry":{"id":format!("{}-{}-{:?}",plan.plan_id,view.action_epoch,kind),"mat":{"outer_mm":profile.outer_mm,"sticky_mm":profile.sticky_mm,"origin_mm":origin,"grid_origin_mm":profile.grid_origin_mm,"rulers":profile.rulers,"approximate":profile.approximate},"sheet":strokes,"lines":[]},
-            "estimate_s":plan.estimate_s}),
+            "estimate_s":plan.estimate_s,"motion":motion}),
         )
     }
 
