@@ -27,7 +27,10 @@ function restoreStart(){
  if(!model.me.principal)return;
  try{const saved=JSON.parse(sessionStorage.getItem(startStorageKey(model.me.principal))||'null');
   if(saved!==null){if(saved.owner!==model.me.principal || !saved.cutter || !saved.body?.key)throw new Error('Invalid saved Start');model.start_recovery=saved;}
- }catch{throw new Error('Could not read the saved Start request. Reload before starting a cut.');}
+ }catch{model.start_recovery={owner:model.me.principal,unreadable:true};}
+}
+function sameStart(saved){
+ try{return JSON.parse(sessionStorage.getItem(startStorageKey(saved.owner))||'null')?.body?.key===saved.body?.key;}catch{return false;}
 }
 function saveStart(saved){
  // Store before sending motion, so reload cannot turn an unknown outcome into a new Start.
@@ -35,23 +38,52 @@ function saveStart(saved){
  if(model.me.principal===saved.owner)model.start_recovery=saved;
 }
 function clearStart(saved){
+ if(!sameStart(saved))return false;
  sessionStorage.removeItem(startStorageKey(saved.owner));
  if(model.me.principal===saved.owner)model.start_recovery=null;
+ return true;
 }
-async function lookupStart(saved){
+function startFenced(saved,state){
+ const v=state.cutters?.find(c=>c.id===saved.cutter)?.view;
+ return (state.boot!==undefined && state.boot!==saved.body.boot) ||
+  (v?.action_epoch!==undefined && v.action_epoch!==saved.body.action_epoch) ||
+  (v?.mat?.generation!==undefined && v.mat.generation!==saved.body.generation);
+}
+async function reconcileStart(state){
+ const saved=model.start_recovery;
+ if(model.pending || !saved || saved.unreadable || !startFenced(saved,state))return;
+ // Observe the invalidating fence BEFORE lookup: an admission also advances the epoch.
+ // A subsequent missing receipt means a late copy cannot start with the old fence.
+ await lookupStart(saved,true);
+}
+async function lookupStart(saved,retire=false){
  try{
   const result=await api(`/api/v1/cutters/${encodeURIComponent(saved.cutter)}/starts/${encodeURIComponent(saved.body.key)}`);
-  if(result.answer==='started'){clearStart(saved);return true;}
+  if(result.answer==='started'){
+   if(clearStart(saved) && retire && model.me.principal===saved.owner)model.message='The original Start was confirmed.';
+   return true;
+  }
  }catch(e){
   if(e.status===409){clearStart(saved);throw e;}
-  saved.lookup_failed=e.status!==404;saveStart(saved);
+  const missing=e.status===404 && e.code==='start-not-found';
+  if(missing && retire){
+   if(clearStart(saved) && model.me.principal===saved.owner)model.message='The earlier Start can no longer run. Inspect the cutter before preparing another cut.';
+   return true;
+  }
+  saved.lookup_failed=e instanceof TypeError || e.status>=500;
+  if(sameStart(saved))saveStart(saved);
   if(saved.lookup_failed && model.me.principal===saved.owner)model.connected=false;
-  if(e.status!==404)throw new Error(uncertainStartMessage);
+  if(e.status===401 || e.status===403){
+   if(model.me.principal===saved.owner){clearPrivate();model.me.login_required=true;model.connected=true;}
+   throw e;
+  }
+  if(!missing)throw new Error(uncertainStartMessage);
  }
  return false;
 }
 async function sendStart(saved){
  if(model.me.principal!==saved.owner)throw new Error('The account changed. No Start was sent.');
+ if(!sameStart(saved))throw new Error('This Start was already resolved. No Start was sent.');
  try{await api(`/api/v1/cutters/${encodeURIComponent(saved.cutter)}/start`,'POST',saved.body);clearStart(saved);}
  catch(e){
   if(e.status>=400 && e.status<500){clearStart(saved);throw e;}
@@ -78,6 +110,7 @@ async function refresh(){
   if(old.incarnation && old.incarnation!==snapshot.incarnation)clearPrivate();
   restoreStart();
   model.snapshot=snapshot;model.state=state;model.connected=!model.start_recovery?.lookup_failed;
+  await reconcileStart(state);
   document.title=(snapshot.design?.name?`${snapshot.design.name} — `:'')+'CutCraft';
   if(snapshot.design?.geometry?.id && (snapshot.design.geometry.id!==old.design?.geometry?.id || !model.geometry.id)){
    const geometry=await api('/api/v1/design/geometry');if(model.snapshot.incarnation===snapshot.incarnation && model.snapshot.design?.geometry?.id===geometry.id)model.geometry=geometry;
@@ -101,7 +134,7 @@ async function refresh(){
   if((old.design?.opened_source_sha256 || old.design?.source_sha256)!==(snapshot.design?.opened_source_sha256 || snapshot.design?.source_sha256))clearPicture();
   if(art && pictureWanted?.art.id!==art.id){const region=art.bounds.map(n=>n/art.scale);const width=1200,height=Math.max(1,Math.min(1600,Math.round(width*(region[3]-region[1])/(region[2]-region[0]))));requestPicture(art,{art:art.id,region,zoom_step:0,width,height});}else void pumpPicture();
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
- }catch(e){if(e.status===401 || e.status===403){clearPrivate();model.me.login_required=true;}model.connected=false;model.message=e.message;}finally{refreshing=false;}
+ }catch(e){const auth=e.status===401 || e.status===403;if(auth){clearPrivate();model.me.login_required=true;}model.connected=auth;model.message=e.message;}finally{refreshing=false;}
 }
 function requestPicture(art,request){
  const scope=presentationScope(), source=`${model.snapshot.incarnation}|${model.snapshot.design.opened_source_sha256 || model.snapshot.design.source_sha256}`;
@@ -127,7 +160,7 @@ async function upload(file){if(!file)return;await execute(async()=>{const r=awai
 async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
 async function dispatch({action,params:p}){
  if(action==='artwork'){const art=model.snapshot.design?.art;if(art?.id===p.art)requestPicture(art,p);return;}
- if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});await refresh();}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}return;}
+ if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
  if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='preference'){Object.assign(model.preferences,p);localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='reset-folds'){model.preferences.folds={};localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
@@ -174,6 +207,7 @@ async function dispatch({action,params:p}){
    }
    case 'check-start':case 'retry-start':{
      restoreStart();const saved=model.start_recovery;if(!saved)break;
+     if(saved.unreadable)throw new Error('Browser session storage is unreadable. Start is blocked; other project controls remain available.');
      if(await lookupStart(saved)){model.message='The original Start was confirmed.';break;}
      if(action==='retry-start')await sendStart(saved);
      else throw new Error(uncertainStartMessage);

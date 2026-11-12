@@ -417,9 +417,12 @@ impl Desktop {
             ui.separator();
             let preview=self.remote.cut_preview.clone();let busy=self.cut_busy();
             let uncertain=!self.remote.start_recovery.is_null();
-            if uncertain {
+            if self.remote.start_recovery["unreadable"] == true {
+                ui.strong("Start is blocked");
+                ui.label("The browser could not read its saved Start request. Restore access to browser session storage and reload. Other project controls remain available.");
+            } else if uncertain {
                 ui.strong("Start is not confirmed");
-                ui.label(format!("Check cutter {} before trying again. A retry uses the original request; it does not create another cut.",text(&self.remote.start_recovery["cutter"])));
+                ui.label(format!("Check cutter {} before trying again. Retry uses revision {} of the originally prepared copy, even if you have since edited the design.",text(&self.remote.start_recovery["cutter"]), self.remote.start_recovery["body"]["revision"]));
                 if self.button(ui,"Check Start status",!self.remote.pending){self.send("check-start",json!({}));}
                 if self.button(ui,"Retry original Start",!self.remote.pending){self.send("retry-start",json!({}));}
                 if !busy && self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.remote.start_recovery["cutter"],"action":"stop"}));}

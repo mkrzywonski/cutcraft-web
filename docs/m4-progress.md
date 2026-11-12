@@ -392,3 +392,27 @@ one Undo per drag, and a typed 1.5-inch dimension preserving the top-left corner
 workflow also covers shared loaded-mat reuse, Stop through a modal, reload, and the 600px toolbar
 at 24pt. Authored-fixture captures are local at `/tmp/cutcraft-desktop-check.4d2s4c`; the combined
 check log is `/tmp/codex-m4-020-final.log`. No hardware was used.
+
+## Start reconciliation after Stop and changed loading state (0.20.1)
+
+Addresses review #149. A newly observed boot, action epoch or loading-generation change is
+followed by a read-only lookup. Only a missing receipt after that observation resolves the
+request as unable to start; acceptance resolves it as confirmed. Nothing automatically resends
+Start. A restart may have lost a receipt, so the message does not assert the cut never ran.
+Stop refreshes the view even when the idle Stop is refused, since that refusal still advances
+the epoch. A late lookup cannot replace or clear a newer stored request.
+
+Authentication failures request sign-in instead of claiming a network outage. An unreadable
+recovery record blocks Start while letting the project refresh normally. Retry identifies the
+original prepared revision. Recovery storage is per tab and per account; other tabs/devices rely
+on the server's existing fences and idempotency checks.
+
+The transport regressions cover changed/unchanged fences, accepted/missing/unavailable receipts,
+401/403, corrupt storage, and a newer request arriving during lookup. The simulator browser
+harness adds Stop after a lost request: uncertainty clears with no extra Start and no motion.
+All 487 Rust tests, fmt, native/wasm Clippy, workspace build and dependency policy pass.
+The full desktop workflow passes (`/tmp/codex-m4-recovery-full.log`). The final uncertainty
+and conflict browser run passes after the confirmation-message correction, with local captures
+at `/tmp/cutcraft-uncertainty-check.fXfx1M` and log `/tmp/codex-m4-recovery-browser-final.log`.
+The final transport regression also asserts that automatic acceptance replaces the old warning.
+The resolved-by-Stop screenshot was inspected. No hardware was used.

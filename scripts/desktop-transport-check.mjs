@@ -52,6 +52,13 @@ await vm.runInContext('model.cut_preview={};refresh()',context);
 assert.equal(vm.runInContext('model.cut_preview.copy.id',context),'my-copy','Reload recovers the server-owned copy without issuing a command');
 assert.equal(calls.some(p=>p.endsWith('/queue') || p.endsWith('/start')),false);
 console.log('PASS: read-only prepared cut recovery');
+startStorage.set('cutcraft.pending-start.household','invalid JSON');
+await vm.runInContext('refresh()',context);
+assert.equal(vm.runInContext('model.start_recovery.unreadable',context),true);
+assert.equal(vm.runInContext('model.connected',context),true,'Unreadable Start storage must not block normal project refresh');
+assert.equal(vm.runInContext('model.snapshot.incarnation',context),incarnation);
+startStorage.clear();await vm.runInContext('refresh()',context);
+console.log('PASS: corrupt Start storage blocks only Start, not project refresh');
 
 let releasePreview;
 previewGate=new Promise(resolve=>{releasePreview=resolve;});
@@ -211,3 +218,54 @@ await vm.runInContext(`dispatch(${originalIntent})`,context);
 assert.match(vm.runInContext('model.message',context),/Nothing was sent/);
 context.sessionStorage.setItem=saveSession;
 console.log('PASS: account changes during reconciliation and unavailable session storage cannot send Start');
+
+// Only an observed changed fence followed by a missing receipt can retire an unknown Start.
+const resetRecovery=()=>{
+ startStorage.clear();
+ vm.runInContext(`clearPrivate();model.me={principal:'start-owner'};model.pending=false;model.connected=true;saveStart({owner:'start-owner',cutter:'practice',body:${originalBody}})`,context);
+};
+let reconcileStatus=404,reconcileGate=null;
+const reconciliationCalls=[];
+context.fetch=async(path,options={})=>{
+ reconciliationCalls.push({path,method:options.method});
+ assert.equal(options.method,'GET','Reconciliation never sends motion');
+ if(reconcileGate)await reconcileGate;
+ if(reconcileStatus==='offline')throw new TypeError('Network unavailable');
+ return {ok:reconcileStatus===200,status:reconcileStatus,json:async()=>reconcileStatus===200?{answer:'started'}:{code:reconcileStatus===404?'start-not-found':'unauthorized',message:'Sign in again.'}};
+};
+const currentFence={boot:'boot',cutters:[{id:'practice',view:{action_epoch:4,mat:{generation:3}}}]};
+resetRecovery();
+await vm.runInContext(`reconcileStart(${JSON.stringify(currentFence)})`,context);
+assert.equal(reconciliationCalls.length,0,'Unchanged fences retain uncertainty without automatic retries');
+for(const changed of [
+ {boot:'restarted',cutters:currentFence.cutters},
+ {boot:'boot',cutters:[{id:'practice',view:{action_epoch:5,mat:{generation:3}}}]},
+ {boot:'boot',cutters:[{id:'practice',view:{action_epoch:4,mat:{generation:null}}}]},
+]){
+ resetRecovery();await vm.runInContext(`reconcileStart(${JSON.stringify(changed)})`,context);
+ assert.equal(startStorage.size,0,'A later missing receipt resolves a fenced-out request');
+ assert.match(vm.runInContext('model.message',context),/can no longer run/);
+}
+const changedFence={...currentFence,boot:'restarted'};
+resetRecovery();reconcileStatus=200;
+await vm.runInContext(`reconcileStart(${JSON.stringify(changedFence)})`,context);
+assert.equal(startStorage.size,0,'An accepted receipt also resolves the request after an epoch change');
+assert.equal(vm.runInContext('model.message',context),'The original Start was confirmed.','Automatic reconciliation replaces the old uncertainty message');
+resetRecovery();reconcileStatus='offline';
+await assert.rejects(vm.runInContext(`reconcileStart(${JSON.stringify(changedFence)})`,context),/not confirmed/);
+assert.equal(startStorage.size,1,'An unavailable lookup never resolves uncertainty');
+for(const status of [401,403]){
+ resetRecovery();reconcileStatus=status;
+ await assert.rejects(vm.runInContext('lookupStart(model.start_recovery)',context),/Sign in again/);
+ assert.equal(vm.runInContext('model.me.login_required',context),true,'Authentication failure requests sign-in');
+ assert.equal(vm.runInContext('model.connected',context),true,'Authentication is not a network outage');
+ assert.equal(startStorage.size,1,'Signing out retains the original request for its owner');
+}
+resetRecovery();reconcileStatus=404;
+let releaseReconcile;reconcileGate=new Promise(resolve=>{releaseReconcile=resolve;});
+const lateLookup=vm.runInContext(`reconcileStart(${JSON.stringify(changedFence)})`,context);
+vm.runInContext("saveStart({...model.start_recovery,body:{...model.start_recovery.body,key:'newer-start'}})",context);
+releaseReconcile();await lateLookup;reconcileGate=null;
+assert.equal(vm.runInContext('model.start_recovery.body.key',context),'newer-start','A late lookup cannot clear a newer unresolved request');
+assert.equal(JSON.parse([...startStorage.values()][0]).body.key,'newer-start');
+console.log('PASS: changed-fence recovery is read-only, preserves unknown outcomes and newer requests, and distinguishes authentication');

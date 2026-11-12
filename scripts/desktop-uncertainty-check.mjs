@@ -137,6 +137,20 @@ await a.click('Retry original Start');
 await a.until(async()=>(await view()).turn?.tests===testsBefore+2,'Offline Start recovered deliberately',45000);
 check(sent.filter(r=>r.method==='POST').at(-1).body===offlineBody,'offline recovery preserves the original request');
 
+console.log(' F. Stop invalidates an unknown Start without requiring Retry');
+await readyToStart();
+fault='request';p0=posts();
+await a.click('Start');
+await a.until(async()=>!!(await a.state()).start_recovery && !(await a.state()).pending,'Unknown Start retained');
+fault=null;
+const testsAtStop=(await view()).turn.tests;
+await a.click('Stop now');
+await a.until(async()=>!(await a.state()).start_recovery,'Stopped unknown Start is reconciled');
+check(posts()-p0===1,'Stop reconciliation never posts another Start');
+check((await view()).activity==='idle' && (await view()).turn.tests===testsAtStop,'Stop reconciliation never moves the cutter');
+check(/can no longer run/.test((await a.state()).message),'Recovery explains that the earlier request can no longer run');
+await a.shot('uncertain-start-resolved-by-stop');
+
 }
 await a.cdp('Fetch.disable');
 
