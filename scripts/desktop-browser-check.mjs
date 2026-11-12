@@ -103,6 +103,38 @@ await scrollPanelTo('Cutting a piece of material');await click('Cutting a piece 
 await until(async()=>!(await state()).snapshot.ui.sheet.piece_mm,'Forget material piece');
 await click('Move design');
 console.log('PASS: media edge drag changes one dimension, keeps its opposite edge and creates one Undo');
+// All linked corners preserve the opposite corner, through one shared command/Undo.
+for(const [handle,dx,dy,fixed] of [['nw',10,10,[2,3]],['ne',-10,10,[0,3]],['sw',10,-10,[2,1]],['se',-10,-10,[0,1]]]){
+ await sleep(250);
+ const before=await state(),b=before.geometry.art_box_mm;
+ const r=await page(`CutCraft.controls()["Resize ${handle}"]`),x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;
+ await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x,y});
+ await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});
+ await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:x+dx,y:y+dy,button:'left',buttons:1});
+ await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:x+dx,y:y+dy,button:'left',clickCount:1});
+ await until(async()=>{const s=await state();return !s.pending&&s.geometry.id!==before.geometry.id&&s.snapshot.ui.size_mm[0]<25.4;},'Resize '+handle);
+ const after=await state();
+ for(const axis of fixed)if(Math.abs(after.geometry.art_box_mm[axis]-b[axis])>.001)throw Error(handle+' moved its fixed corner');
+ if(after.snapshot.ui.history.undo.length!==before.snapshot.ui.history.undo.length+1)throw Error(handle+' produced more than one Undo');
+ await click('Undo');await until(async()=>{const s=await state();return !s.pending&&Math.abs(s.snapshot.ui.size_mm[0]-25.4)<.001&&s.geometry.art_box_mm.every((v,i)=>Math.abs(v-b[i])<.001);},'Undo '+handle);
+}
+await sleep(250);
+const dimensionBefore=(await state()).geometry.art_box_mm;
+const dimension=await page('CutCraft.controls()["Width dimension"]');
+const dimensionX=(dimension[0]+dimension[2])/2,dimensionY=(dimension[1]+dimension[3])/2;
+await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:dimensionX,y:dimensionY});
+for(const clickCount of [1,2]){
+ await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:dimensionX,y:dimensionY,button:'left',clickCount});
+ await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:dimensionX,y:dimensionY,button:'left',clickCount});
+ await sleep(50);
+}
+await type('Dimension','1.5 in');
+await until(async()=>{const s=await state();return !s.pending&&Math.abs(s.snapshot.ui.size_mm[0]-38.1)<.001;},'Typed canvas dimension');
+const dimensionAfter=(await state()).geometry.art_box_mm;
+for(const axis of [0,1])if(Math.abs(dimensionBefore[axis]-dimensionAfter[axis])>.001)throw Error('Typed dimension moved the top-left corner');
+await click('Undo');await until(async()=>Math.abs((await state()).snapshot.ui.size_mm[0]-25.4)<.001,'Undo typed dimension');
+console.log('PASS: all four design corners use one Undo, preserve their anchors, and typed dimensions preserve top-left');
+
 if(!process.env.CUTCRAFT_MEDIA_ONLY){
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Test screen');
 if((await state()).state.cutters[0].view.turn)throw Error('Toolbar Test Cut prepared a job before explicit review');

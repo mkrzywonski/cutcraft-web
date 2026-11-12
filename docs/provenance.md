@@ -91,3 +91,7 @@ reference’s `workspace.rs` gesture contracts, through revision-checked shared 
 `crates/ui/src/motion.rs` adapts the reference `cutting.rs` estimated byte-range progress
 drawing (black/red passes, queued path and approximate blade marker). The preview receives
 pass ranges and quantized points from the same encoder as the sender, without raw commands.
+
+Linked corner gestures and the bounded settling display in `canvas.rs` adapt the reference
+`workspace.rs` interaction. Anchored scaling is now a single shared `design.size` edit, rather
+than the reference’s separate size and placement changes, to preserve one gesture/Undo.

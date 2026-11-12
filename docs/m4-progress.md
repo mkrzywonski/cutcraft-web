@@ -371,3 +371,24 @@ desktop simulated workflow passed. The browser verifies that sender pass metadat
 the startup/progress screenshot was inspected. Unit paint tests exercise estimated completed and
 remaining paths, the queued path and marker. Terminal outcome retention and the other acceptance
 items remain open. No physical cutter was used.
+
+## Anchored sizing and gesture settling (0.20.0)
+
+All four design corners resize with linked proportions while the opposite corner stays fixed.
+The shared `design.size` command accepts `fixed_corner`, applying scale and placement together
+as one Undo, including rotated and mirrored sheets. Canvas dimensions accept typed lengths in
+inches/mm, including fractions. Dropped geometry stays visible while the updated plan arrives;
+refusal or a bounded timeout releases that temporary display. It never changes server state.
+
+Browser protocol 8 is required because protocol-7 servers refuse the new command parameter.
+The server regression explicitly rejects a protocol-7 request without creating a private area.
+The SSH client dependency is updated to russh 0.65.1 for RUSTSEC-2026-0495; the affected agent
+server API is not used by CutCraft.
+
+All 487 Rust tests, formatting, native/wasm Clippy, workspace build and dependency policy pass.
+Control tests verify each anchor under rotation/mirroring and a single Undo. UI tests cover
+linked sizing, a vertical-line design and settling lifecycle. The full desktop and compact browser checks pass. Real browser inputs verify all four anchors,
+one Undo per drag, and a typed 1.5-inch dimension preserving the top-left corner. The desktop
+workflow also covers shared loaded-mat reuse, Stop through a modal, reload, and the 600px toolbar
+at 24pt. Authored-fixture captures are local at `/tmp/cutcraft-desktop-check.4d2s4c`; the combined
+check log is `/tmp/codex-m4-020-final.log`. No hardware was used.

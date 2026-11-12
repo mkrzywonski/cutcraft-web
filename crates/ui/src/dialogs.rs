@@ -21,6 +21,21 @@ impl Desktop {
                     match d.kind.as_str(){
                         "materials"|"mats"=>self.library_dialog(ui,&mut d),
                         "material-edit"|"mat-edit"=>{self.editor(ui,&mut d);},
+                        "dimension"=>{
+                            ui.label("Linked proportions; the top-left corner stays fixed. You can include mm, cm, in or fractions.");
+                            let mut value=text(&d.value["length"]).to_owned();
+                            let enter=ui.input(|i|i.key_pressed(egui::Key::Enter));
+                            let response=ui.text_edit_singleline(&mut value);self.record("Dimension",&response);
+                            d.value["length"]=json!(value);
+                            let parsed=crate::panels::parse_length(&value,d.value["inches"]==true).filter(|v|*v>0.);
+                            let submit=(response.has_focus()||response.lost_focus())&&enter;
+                            if (self.button(ui,"Apply dimension",parsed.is_some()&&!self.remote.pending&&self.remote.connected)||submit) && let Some(value)=parsed {
+                                let key=text(&d.value["size_key"]);
+                                self.send("command",json!({"id":"design.size","params":{key:number(&d.value["source_length"])*value/number(&d.value["original_mm"]),"fixed_corner":"nw"},"incarnation":d.value["incarnation"],"revision":d.value["revision"],"close_dialog":true}));
+                            }
+                            if parsed.is_none(){ui.label("Enter a positive length.");}
+                            if self.button(ui,"Cancel",true){done=true;}
+                        },
                         "save"=>{string_field(ui,"Name",&mut d.value["name"]);string_field(ui,"Folder (optional, / separated)",&mut d.value["folder"]);ui.horizontal(|ui|{if self.button(ui,"Save project",!self.remote.pending){let folder:Vec<_>=text(&d.value["folder"]).split('/').filter(|s|!s.is_empty()).collect();self.send("save",json!({"as":{"name":d.value["name"],"folder":folder},"close_after":self.close_after_save}));}
 if self.button(ui,"Cancel",true){done=true;}});},
                         "trace"=>{

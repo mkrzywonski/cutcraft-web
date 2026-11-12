@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.20.0 — 2026-11-12
+
+- Update russh to 0.65 to address RUSTSEC-2026-0495; CutCraft uses its SSH client, not the affected agent server.
+
+- Resize designs from all four corners with linked proportions and one Undo, keeping the opposite corner fixed. Double-click a canvas dimension to type a length. Keep the dropped geometry visible while the updated plan arrives. Require browser protocol 8 for anchored sizing.
+
 ## 0.19.0 — 2026-11-11
 
 - Draw estimated cutting progress from the sender’s exact byte ranges and quantized paths, with completed/remaining colours, queued motion and an approximate blade marker. Label estimates explicitly, distinguish startup and pausing, and play cut order by distance including repeat passes.

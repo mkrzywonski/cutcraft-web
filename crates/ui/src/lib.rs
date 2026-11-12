@@ -75,6 +75,7 @@ pub struct Desktop {
     pub pan: egui::Vec2,
     pub drag_start: Option<canvas::CanvasDrag>,
     pub drag_delta: egui::Vec2,
+    pub drag_settling: Option<canvas::Settling>,
     pub target: String,
     pub show_test: bool,
     pub tool_motion: bool,
@@ -109,6 +110,7 @@ impl Default for Desktop {
             pan: egui::Vec2::ZERO,
             drag_start: None,
             drag_delta: egui::Vec2::ZERO,
+            drag_settling: None,
             target: "design".into(),
             show_test: true,
             tool_motion: false,
@@ -161,6 +163,7 @@ impl Desktop {
             self.art_requested = None;
             self.art_sent = None;
             self.drag_start = None;
+            self.drag_settling = None;
             self.drag_delta = egui::Vec2::ZERO;
             self.pan = egui::Vec2::ZERO;
             self.zoom = 1.;

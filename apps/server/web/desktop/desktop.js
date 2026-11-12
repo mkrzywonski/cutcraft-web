@@ -1,7 +1,7 @@
 // Browser transport only. Geometry and all desktop widgets are drawn by the Rust UI.
 // Mutations retain the exact request through a lost reply; no optimistic project state.
 import init, {start} from '/desktop/pkg/cutcraft_ui.js';
-const PROTOCOL=7;
+const PROTOCOL=8;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
 let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null;
@@ -139,7 +139,7 @@ async function dispatch({action,params:p}){
  if(action==='highlight'){model.message='Show me: inspecting the affected artwork.';return;}
  await execute(async()=>{
   switch(action){
-   case 'command':{const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
+   case 'command':{const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:p.close_dialog===true || ['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
    case 'save':{const {close_after,...save}=p;await api('/api/v1/design/save','POST',savedBody(save));if(close_after){await refresh();await command('design.close');}model.result={close_dialog:true};model.message='Saved to the library.';break;}
    case 'open':await open(p);break;
    case 'library':model.library=await api('/api/v1/library?path='+encodeURIComponent(p.path||''));break;

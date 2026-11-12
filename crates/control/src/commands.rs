@@ -493,9 +493,36 @@ struct TestCutParams {
     on_scrap: bool,
 }
 
+#[derive(Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum FixedCorner {
+    Nw,
+    Ne,
+    Sw,
+    Se,
+}
+impl FixedCorner {
+    fn point(self, bounds: [f64; 4]) -> [f64; 2] {
+        [
+            bounds[if matches!(self, Self::Ne | Self::Se) {
+                2
+            } else {
+                0
+            }],
+            bounds[if matches!(self, Self::Sw | Self::Se) {
+                3
+            } else {
+                1
+            }],
+        ]
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SizeParams {
+    /// Keep this corner of the visible cut bounds fixed while resizing. One command and Undo.
+    fixed_corner: Option<FixedCorner>,
     /// New design width in mm; the height follows.
     width_mm: Option<f64>,
     /// New design height in mm; the width follows.
@@ -2306,7 +2333,19 @@ impl Controller {
                             );
                         }
                     };
+                    if p.fit && p.fixed_corner.is_some() {return Err("Fit chooses its own placement; omit fixed_corner.".into());}
+                    let anchors = p.fixed_corner.map(|corner| project.sheets.iter().map(|sheet| {
+                        Ok((sheet.id.clone(), design_cut_bounds(project, &sheet.id)?.map(|b|corner.point(b))))
+                    }).collect::<Result<Vec<_>,String>>()).transpose()?;
                     project.set_scale(scale)?;
+                    if let (Some(corner), Some(anchors)) = (p.fixed_corner, anchors) {
+                        for (id, old) in anchors {
+                            if let (Some(old),Some(new))=(old,design_cut_bounds(project,&id)?.map(|b|corner.point(b))) {
+                                let sheet=project.sheets.iter_mut().find(|s|s.id==id).expect("existing sheet");
+                                for axis in 0..2 {sheet.placement.offset_mm[axis]+=old[axis]-new[axis];}
+                            }
+                        }
+                    }
                     if p.fit {
                         move_to_fit_corner(project)?;
                     }
@@ -3228,6 +3267,28 @@ fn fit_area(
     };
     let c = cutcraft_import::job::project::PLACEMENT_CLEARANCE_MM;
     Ok([x0 + c, y0 + c, x1 - c, y1 - c])
+}
+
+/// Bounds of the design cuts, excluding aids whose margins do not scale with the artwork.
+fn design_cut_bounds(
+    project: &cutcraft_import::job::Project,
+    sheet: &str,
+) -> Result<Option<[f64; 4]>, String> {
+    Ok(cutcraft_path::plan_sheet(project, sheet)?
+        .operations
+        .iter()
+        .filter(|o| !o.kind.is_aid())
+        .flat_map(|o| o.points.iter())
+        .fold(None, |bounds: Option<[f64; 4]>, p| {
+            Some(bounds.map_or([p[0], p[1], p[0], p[1]], |b| {
+                [
+                    b[0].min(p[0]),
+                    b[1].min(p[1]),
+                    b[2].max(p[0]),
+                    b[3].max(p[1]),
+                ]
+            }))
+        }))
 }
 
 /// How much the design must grow (or shrink) for every sheet's cuts to fit [`fit_area`]. The
@@ -6017,6 +6078,76 @@ mod tests {
         assert_eq!(after.session_material, before.session_material);
         assert_eq!(after.revision, before.revision);
         assert_eq!(controller.snapshot().unwrap().materials, library);
+    }
+
+    #[test]
+    fn anchored_resize_preserves_each_corner_in_one_undo_with_rotation_and_mirror() {
+        let dir = tempfile::tempdir().unwrap();
+        let (controller, read, _) = headless(dir.path());
+        run(
+            &controller,
+            "design.open",
+            json!({"path":read.join("design.svg")}),
+        )
+        .unwrap();
+        run(
+            &controller,
+            "sheet.place",
+            json!({"x":100.,"y":90.,"rotate":37.}),
+        )
+        .unwrap();
+        run(&controller, "sheet.set", json!({"mirror":true})).unwrap();
+        for (name, corner) in [
+            ("nw", FixedCorner::Nw),
+            ("ne", FixedCorner::Ne),
+            ("sw", FixedCorner::Sw),
+            ("se", FixedCorner::Se),
+        ] {
+            let before = controller
+                .snapshot()
+                .unwrap()
+                .design
+                .unwrap()
+                .project
+                .clone();
+            let anchor = corner.point(
+                design_cut_bounds(&before, &before.sheets[0].id)
+                    .unwrap()
+                    .unwrap(),
+            );
+            run(
+                &controller,
+                "design.size",
+                json!({"scale":before.scale*1.5,"fixed_corner":name}),
+            )
+            .unwrap();
+            let after = controller
+                .snapshot()
+                .unwrap()
+                .design
+                .unwrap()
+                .project
+                .clone();
+            let actual = corner.point(
+                design_cut_bounds(&after, &after.sheets[0].id)
+                    .unwrap()
+                    .unwrap(),
+            );
+            assert!((actual[0] - anchor[0]).abs() < 1e-6 && (actual[1] - anchor[1]).abs() < 1e-6);
+            run(&controller, "history.undo", json!({})).unwrap();
+            let restored = controller
+                .snapshot()
+                .unwrap()
+                .design
+                .unwrap()
+                .project
+                .clone();
+            assert_eq!(restored.scale, before.scale);
+            assert_eq!(
+                restored.sheets, before.sheets,
+                "one Undo restores both scale and placement"
+            );
+        }
     }
 
     #[test]

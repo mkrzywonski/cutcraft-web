@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

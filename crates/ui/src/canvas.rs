@@ -16,7 +16,42 @@ pub struct CanvasDrag {
     incarnation: String,
     revision: u64,
 }
+pub struct Settling {
+    target: String,
+    original: [f64; 4],
+    bounds: [f64; 4],
+    geometry: String,
+    result: u64,
+    until: f64,
+}
+impl Settling {
+    fn finished(
+        &self,
+        geometry: &str,
+        result: u64,
+        refused: bool,
+        pending: bool,
+        now: f64,
+    ) -> bool {
+        now >= self.until
+            || (result != self.result && refused)
+            || (!pending && geometry != self.geometry)
+    }
+}
 impl Desktop {
+    fn preview_change(&self) -> Option<(String, [f64; 4], [f64; 4])> {
+        if self.screen() != "mat" {
+            return None;
+        }
+        self.drag_start
+            .as_ref()
+            .map(|d| (d.target.clone(), d.bounds, d.preview(self.drag_delta)))
+            .or_else(|| {
+                self.drag_settling
+                    .as_ref()
+                    .map(|d| (d.target.clone(), d.original, d.bounds))
+            })
+    }
     fn canvas_sheet(&self) -> &serde_json::Value {
         if matches!(self.screen(), "cut" | "test-cut") && !self.unprepared_cut_preview {
             &self.remote.cut_preview["sheet"]
@@ -60,9 +95,29 @@ impl Desktop {
         let origin = self.remote.geometry.mat.as_ref()?.origin_mm;
         let x = origin[0] + number(&s["piece_at_mm"][0]);
         let y = origin[1] + number(&s["piece_at_mm"][1]);
-        Some([x, y, x + w, y + h])
+        Some(
+            self.preview_change()
+                .filter(|(target, _, _)| target == "media")
+                .map_or([x, y, x + w, y + h], |(_, _, b)| b),
+        )
     }
     pub fn canvas(&mut self, ui: &mut Ui) {
+        if self.drag_settling.as_ref().is_some_and(|d| {
+            d.finished(
+                &self.remote.geometry.id,
+                self.remote.result_id,
+                self.remote.result.get("error_code").is_some(),
+                self.remote.pending,
+                ui.input(|i| i.time),
+            )
+        }) {
+            self.drag_settling = None;
+        }
+        if self.drag_settling.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(30));
+        }
+        let change = self.preview_change();
         if matches!(self.screen(), "cut" | "test-cut") && self.remote.geometry.mat.is_none() {
             ui.centered_and_justified(|ui| {
                 ui.label(if self.cut_busy() {
@@ -270,14 +325,9 @@ impl Desktop {
             if mat {
                 if let Some(m) = &self.remote.geometry.mat {
                     crate::mat::draw_mat(&painter, m, f64::from(scale), |[x, y]| point(x, y));
-                    let s = self.canvas_sheet();
-                    if let (Some(w), Some(h)) =
-                        (s["piece_mm"][0].as_f64(), s["piece_mm"][1].as_f64())
-                    {
-                        let x = m.origin_mm[0] + number(&s["piece_at_mm"][0]);
-                        let y = m.origin_mm[1] + number(&s["piece_at_mm"][1]);
+                    if let Some([x0, y0, x1, y1]) = self.media_bounds() {
                         painter.rect_filled(
-                            Rect::from_min_max(point(x, y), point(x + w, y + h)),
+                            Rect::from_min_max(point(x0, y0), point(x1, y1)),
                             0,
                             Color32::from_rgba_unmultiplied(250, 240, 206, 180),
                         );
@@ -394,7 +444,20 @@ impl Desktop {
                     let points: Vec<_> = line
                         .points
                         .iter()
-                        .map(|p| point(p[0] as f64, p[1] as f64))
+                        .map(|p| {
+                            let q = if mat {
+                                change
+                                    .as_ref()
+                                    .filter(|(target, _, _)| target == "design")
+                                    .map(|(_, old, new)| {
+                                        map_bounds([f64::from(p[0]), f64::from(p[1])], *old, *new)
+                                    })
+                                    .unwrap_or([f64::from(p[0]), f64::from(p[1])])
+                            } else {
+                                [f64::from(p[0]), f64::from(p[1])]
+                            };
+                            point(q[0], q[1])
+                        })
                         .collect();
                     if self.tool_motion
                         && mat
@@ -446,7 +509,12 @@ impl Desktop {
                     "test spot" => self.remote.geometry.test_spot_mm,
                     _ => self.remote.geometry.art_box_mm,
                 };
-                if let Some(b) = self.remote.geometry.test_spot_mm.filter(|_| self.show_test) {
+                if let Some(mut b) = self.remote.geometry.test_spot_mm.filter(|_| self.show_test) {
+                    if let Some((target, _, next)) = &change
+                        && target == "test spot"
+                    {
+                        b = *next;
+                    }
                     let r = Rect::from_min_max(point(b[0], b[1]), point(b[2], b[3]));
                     painter.rect_stroke(
                         r,
@@ -466,8 +534,10 @@ impl Desktop {
                 if self.screen() == "mat"
                     && let Some(mut b) = selected
                 {
-                    if let Some(drag) = &self.drag_start {
-                        b = drag.preview(self.drag_delta);
+                    if let Some((target, _, next)) = &change
+                        && target == &self.target
+                    {
+                        b = *next;
                     }
                     let r = Rect::from_min_max(point(b[0], b[1]), point(b[2], b[3]));
                     let ink = if self.target == "media" {
@@ -493,7 +563,12 @@ impl Desktop {
                                 ("w", r.left_center()),
                             ]
                         } else {
-                            vec![("se", r.right_bottom())]
+                            vec![
+                                ("nw", r.left_top()),
+                                ("ne", r.right_top()),
+                                ("sw", r.left_bottom()),
+                                ("se", r.right_bottom()),
+                            ]
                         };
                         for (name, p) in handles {
                             painter.rect_filled(Rect::from_center_size(p, Vec2::splat(9.)), 2, ink);
@@ -512,21 +587,53 @@ impl Desktop {
                             [p.x - 7., p.y - 7., p.x + 7., p.y + 7.],
                         );
                     }
-                    painter.text(
-                        r.left_bottom() + Vec2::new(0., 12.),
-                        egui::Align2::LEFT_TOP,
-                        if self.remote.snapshot.ui.units == "inches" {
-                            format!(
-                                "{:.2} × {:.2} in",
-                                (b[2] - b[0]) / 25.4,
-                                (b[3] - b[1]) / 25.4
-                            )
+                    for (axis, label, pos, align) in [
+                        (
+                            0,
+                            "Width dimension",
+                            r.center_bottom() + Vec2::new(0., 12.),
+                            egui::Align2::CENTER_TOP,
+                        ),
+                        (
+                            1,
+                            "Height dimension",
+                            r.left_center() - Vec2::new(12., 0.),
+                            egui::Align2::RIGHT_CENTER,
+                        ),
+                    ] {
+                        let value = b[axis + 2] - b[axis];
+                        let inches = self.remote.snapshot.ui.units == "inches";
+                        let caption = if inches {
+                            format!("{:.2} in", value / 25.4)
                         } else {
-                            format!("{:.1} × {:.1} mm", b[2] - b[0], b[3] - b[1])
-                        },
-                        egui::FontId::proportional(12.),
-                        ink,
-                    );
+                            format!("{value:.1} mm")
+                        };
+                        let text_rect =
+                            painter.text(pos, align, caption, egui::FontId::proportional(12.), ink);
+                        let response = ui.interact(
+                            text_rect.expand(4.),
+                            ui.id().with(label),
+                            egui::Sense::click(),
+                        );
+                        self.record(label, &response);
+                        if self.target == "design"
+                            && value > 0.
+                            && response.double_clicked()
+                            && !self.remote.pending
+                        {
+                            self.open_dialog(
+                                "dimension",
+                                if axis == 0 {
+                                    "Design width"
+                                } else {
+                                    "Design height"
+                                },
+                            );
+                            if let Some(d) = &mut self.dialog {
+                                d.value = json!({"length":format!("{:.4}",value/if inches{25.4}else{1.}),"inches":inches,"original_mm":value,"source_length":self.remote.snapshot.ui.size_mm.map_or(1.,|s|if s[0]>0.{s[0]}else{s[1]}),"size_key":if self.remote.snapshot.ui.size_mm.is_some_and(|s|s[0]>0.){"width_mm"}else{"height_mm"},"incarnation":self.remote.snapshot.incarnation,"revision":self.remote.snapshot.revision});
+                            }
+                        }
+                    }
                 }
             }
             if panes == 2 {
@@ -544,6 +651,9 @@ impl Desktop {
             && self.remote.connected
             && response.drag_started()
         {
+            self.playing = false;
+            self.order = 1.;
+            self.drag_settling = None;
             let pointer = ui.input(|i| i.pointer.press_origin());
             let selected = match self.target.as_str() {
                 "media" => self.media_bounds(),
@@ -572,7 +682,12 @@ impl Desktop {
                             ("w", r.left_center()),
                         ]
                     } else {
-                        vec![("se", r.right_bottom())]
+                        vec![
+                            ("nw", r.left_top()),
+                            ("ne", r.right_top()),
+                            ("sw", r.left_bottom()),
+                            ("se", r.right_bottom()),
+                        ]
                     };
                     for (name, pos) in handles {
                         if p.distance(pos) < 10. {
@@ -646,6 +761,14 @@ impl Desktop {
                     None
                 };
                 let (id, params) = drag.command(self.drag_delta, snap);
+                self.drag_settling = Some(Settling {
+                    target: drag.target.clone(),
+                    original: drag.bounds,
+                    bounds: drag.dropped_bounds(self.drag_delta, snap),
+                    geometry: self.remote.geometry.id.clone(),
+                    result: self.remote.result_id,
+                    until: ui.input(|i| i.time) + 2.,
+                });
                 self.send("command",json!({"id":id,"params":params,"incarnation":drag.incarnation,"revision":drag.revision}));
             }
             self.drag_delta = Vec2::ZERO;
@@ -671,6 +794,67 @@ pub(crate) fn colour(hex: &str) -> Color32 {
 }
 
 impl CanvasDrag {
+    fn fixed_corner(&self) -> &'static str {
+        match self.kind.as_str() {
+            "nw" => "se",
+            "ne" => "sw",
+            "sw" => "ne",
+            _ => "nw",
+        }
+    }
+    fn scaled_bounds(&self, factor: f64) -> [f64; 4] {
+        let fixed = [
+            self.bounds[if self.kind.contains('w') { 2 } else { 0 }],
+            self.bounds[if self.kind.contains('n') { 3 } else { 1 }],
+        ];
+        [
+            fixed[0] + (self.bounds[0] - fixed[0]) * factor,
+            fixed[1] + (self.bounds[1] - fixed[1]) * factor,
+            fixed[0] + (self.bounds[2] - fixed[0]) * factor,
+            fixed[1] + (self.bounds[3] - fixed[1]) * factor,
+        ]
+    }
+    fn dropped_bounds(&self, delta: Vec2, snap: Option<f64>) -> [f64; 4] {
+        let (id, p) = self.command(delta, snap);
+        match id {
+            "design.size" => self.scaled_bounds(if self.size[0] > 0. {
+                number(&p["width_mm"]) / self.size[0]
+            } else {
+                number(&p["height_mm"]) / self.size[1]
+            }),
+            "sheet.piece" => {
+                let x = number(&p["x_mm"]) + self.mat_origin[0];
+                let y = number(&p["y_mm"]) + self.mat_origin[1];
+                [
+                    x,
+                    y,
+                    x + number(&p["width_mm"]),
+                    y + number(&p["height_mm"]),
+                ]
+            }
+            "sheet.place" if self.kind == "move" => {
+                let dx = number(&p["x"]) - self.offset[0];
+                let dy = number(&p["y"]) - self.offset[1];
+                [
+                    self.bounds[0] + dx,
+                    self.bounds[1] + dy,
+                    self.bounds[2] + dx,
+                    self.bounds[3] + dy,
+                ]
+            }
+            "sheet.test_spot" => {
+                let x = number(&p["x_mm"]) + self.mat_origin[0];
+                let y = number(&p["y_mm"]) + self.mat_origin[1];
+                [
+                    x,
+                    y,
+                    x + self.bounds[2] - self.bounds[0],
+                    y + self.bounds[3] - self.bounds[1],
+                ]
+            }
+            _ => self.preview(delta),
+        }
+    }
     fn preview(&self, delta: Vec2) -> [f64; 4] {
         let [dx, dy] = [(delta.x / self.scale) as f64, (delta.y / self.scale) as f64];
         let mut b = self.bounds;
@@ -684,9 +868,18 @@ impl CanvasDrag {
             "rotate" => {}
             corner => {
                 if self.target == "design" {
-                    let factor = ((b[2] - b[0] + dx) / (b[2] - b[0]).max(0.001)).max(0.01);
-                    b[2] = b[0] + (b[2] - b[0]) * factor;
-                    b[3] = b[1] + (b[3] - b[1]) * factor;
+                    let fx =
+                        1. + if corner.contains('w') { -dx } else { dx } / (b[2] - b[0]).max(0.001);
+                    let fy =
+                        1. + if corner.contains('n') { -dy } else { dy } / (b[3] - b[1]).max(0.001);
+                    let factor = if b[2] - b[0] < 1e-6 {
+                        fy
+                    } else if b[3] - b[1] < 1e-6 {
+                        fx
+                    } else {
+                        (fx + fy) / 2.
+                    };
+                    b = self.scaled_bounds(factor.clamp(0.02, 50.));
                 } else {
                     if corner.contains('w') {
                         b[0] = (b[0] + dx).min(b[2] - 1.);
@@ -749,13 +942,28 @@ impl CanvasDrag {
         } else if self.kind == "move" {
             ("sheet.place", json!({"x":x,"y":y}))
         } else {
+            let axis = usize::from(self.bounds[2] - self.bounds[0] < 1e-6);
+            let factor = round(b[axis + 2] - b[axis]).max(0.1)
+                / (self.bounds[axis + 2] - self.bounds[axis]).max(0.001);
+            let (key, size) = if self.size[0] > 0. {
+                ("width_mm", self.size[0])
+            } else {
+                ("height_mm", self.size[1])
+            };
             (
                 "design.size",
-                json!({"width_mm":self.size[0]*(b[2]-b[0])/(self.bounds[2]-self.bounds[0]).max(0.001)}),
+                json!({key:size*factor,"fixed_corner":self.fixed_corner()}),
             )
         }
     }
 }
+fn map_bounds(p: [f64; 2], old: [f64; 4], new: [f64; 4]) -> [f64; 2] {
+    [
+        new[0] + (p[0] - old[0]) * (new[2] - new[0]) / (old[2] - old[0]).max(1e-9),
+        new[1] + (p[1] - old[1]) * (new[3] - new[1]) / (old[3] - old[1]).max(1e-9),
+    ]
+}
+
 /// Keep the source coordinate under the pointer fixed, including at zoom limits.
 fn zoom_at(zoom: &mut f32, pan: &mut Vec2, anchor: Vec2, factor: f32) {
     let next = (*zoom * factor).clamp(0.1, 50.);
@@ -1000,12 +1208,64 @@ mod tests {
         );
     }
     #[test]
+    fn every_design_corner_keeps_its_opposite_fixed_and_snaps_linked_size() {
+        for (handle, fixed, delta, index) in [
+            ("nw", "se", [-20., -10.], [2, 3]),
+            ("ne", "sw", [20., -10.], [0, 3]),
+            ("sw", "ne", [-20., 10.], [2, 1]),
+            ("se", "nw", [20., 10.], [0, 1]),
+        ] {
+            let d = drag("design", handle);
+            let delta = Vec2::from(delta);
+            let b = d.dropped_bounds(delta, Some(5.));
+            assert_eq!(b[index[0]], d.bounds[index[0]]);
+            assert_eq!(b[index[1]], d.bounds[index[1]]);
+            assert!(((b[2] - b[0]) / (b[3] - b[1]) - 2.).abs() < 1e-9);
+            let p = d.command(delta, Some(5.)).1;
+            assert_eq!(p["fixed_corner"], fixed);
+            assert!((p["width_mm"].as_f64().unwrap() - 110.).abs() < 1e-9);
+        }
+    }
+    #[test]
+    fn dropped_geometry_holds_until_a_new_plan_refusal_or_timeout() {
+        let d = Settling {
+            target: "design".into(),
+            original: [0.; 4],
+            bounds: [1.; 4],
+            geometry: "old".into(),
+            result: 4,
+            until: 2.,
+        };
+        assert!(!d.finished("old", 4, false, false, 1.));
+        assert!(!d.finished("new", 5, false, true, 1.));
+        assert!(d.finished("new", 5, false, false, 1.));
+        assert!(d.finished("old", 5, true, false, 1.));
+        assert!(d.finished("old", 4, false, true, 2.));
+        assert_eq!(
+            map_bounds([20., 30.], [10., 20., 110., 70.], [5., 10., 205., 110.]),
+            [25., 30.]
+        );
+    }
+
+    #[test]
+    fn vertical_lines_resize_by_the_nonzero_dimension() {
+        let mut d = drag("design", "se");
+        d.bounds = [10., 20., 10., 70.];
+        d.size = [0., 50.];
+        let delta = Vec2::new(100., 20.);
+        assert_eq!(
+            d.command(delta, None).1,
+            json!({"height_mm":60.,"fixed_corner":"nw"})
+        );
+        assert_eq!(d.dropped_bounds(delta, None), [10., 20., 10., 80.]);
+    }
+    #[test]
     fn design_resize_preserves_proportions() {
         let d = drag("design", "se");
-        assert_eq!(d.preview(Vec2::new(100., 0.)), [10., 20., 160., 95.]);
+        assert_eq!(d.preview(Vec2::new(100., 50.)), [10., 20., 160., 95.]);
         assert_eq!(
-            d.command(Vec2::new(100., 0.), None).1,
-            json!({"width_mm":150.})
+            d.command(Vec2::new(100., 50.), None).1,
+            json!({"width_mm":150.,"fixed_corner":"nw"})
         );
     }
 }
