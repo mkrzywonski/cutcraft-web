@@ -96,7 +96,9 @@ if self.button(ui,"Cancel",true){done=true;}});},
 
                         },
                         "about"=>{ui.heading("CutCraft");ui.label(format!("Version {}",env!("CARGO_PKG_VERSION")));ui.label("Prepare, arrange and cut your designs. Your files stay on your CutCraft server.");if self.button(ui,"Font licences",true){self.open_dialog("font-licences","Bundled font licences");}
-if self.button(ui,"User manual",true){self.send("link",json!({"url":"https://github.com/mkrzywonski/cutcraft-web/blob/main/docs/help/design-guide.md"}));}},
+ui.label("Licensed under MIT OR Apache-2.0.");ui.hyperlink_to("Project on GitHub","https://github.com/mkrzywonski/cutcraft-web");
+if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}},
+                        "manual"=>help(ui,include_str!("../../../docs/help/manual.md")),
                         "font-licences"=>help(ui,include_str!("../../../docs/help/font-licences.md")),
                         "troubleshooting"=>help(ui,include_str!("../../../docs/help/troubleshooting.md")),
                         "ai-help"=>help(ui,include_str!("../../../docs/help/mcp.md")),

@@ -3,65 +3,210 @@ use egui::{Key, Modifiers, Ui};
 use serde_json::json;
 impl Desktop {
     pub fn menus(&mut self, ui: &mut Ui) {
-        egui::MenuBar::new().ui(ui,|ui| {
-            let menu = ui.menu_button("File",|ui|{
-                if self.button(ui,"Open…",true) {self.send("upload",json!({}));ui.close();}
-                if self.button(ui,"Open from library…",true) {self.send("library",json!({}));self.open_dialog("library","Open from library");ui.close();}
-                if self.button(ui,"Recent designs…",true) {self.send("uploads",json!({}));self.open_dialog("uploads","Recent designs");ui.close();}
-                ui.separator();
-                if self.button(ui,"Save",self.has_design()) {self.save(false);ui.close();}
-                if self.button(ui,"Save As…",self.has_design()) {self.save(true);ui.close();}
-                if self.button(ui,"Download project…",self.has_design()) {self.send("download",json!({"kind":"project"}));ui.close();}
-                if self.button(ui,"Update from Design…",self.has_design()) {self.send("upload",json!({"update":true}));ui.close();}
-                ui.menu_button("Export",|ui| {for (kind,label) in [("preview-svg","Cut Preview SVG"),("preview-png","Cut Preview PNG"),("cutter-file","Cutter file (inspection only)"),("plan","Cut plan")] {if self.button(ui,label,self.has_design()){self.send("download",json!({"kind":kind}));ui.close();}}});
-                ui.separator();
-                if self.button(ui,"Close design",self.has_design()) {self.open_dialog("close","Close design");ui.close();}
-            });
-            self.record("Menu File",&menu.response);
-            let menu = ui.menu_button("Edit",|ui|{
-                self.action_button(ui,"Undo","history.undo",json!({}));self.action_button(ui,"Redo","history.redo",json!({}));
-                if self.button(ui,"History…",true){self.open_dialog("history","History");ui.close();}
-                ui.separator();
-                for (kind,label) in [("materials","Materials…"),("mats","Mats…"),("preferences","Preferences…")] {if self.button(ui,label,true){self.open_dialog(kind,label);ui.close();}}
-                if self.button(ui,"AI connection…",true){self.send("settings",json!({"section":"keys"}));ui.close();}
-            });
-            self.record("Menu Edit",&menu.response);
-            let menu = ui.menu_button("View",|ui|{
-                for (screen,label) in [("side-by-side","Side by side"),("overlay","Overlay"),("mat","Cut Preview")] {
-                    let selected=self.screen()==screen;
-                    if ui.add_enabled(!self.cut_busy(),egui::Button::selectable(selected,label)).clicked(){self.command("view.show",json!({"screen":screen}));ui.close();}
+        egui::MenuBar::new().ui(ui, |ui| {
+            let menu = ui.menu_button("File", |ui| {
+                if self.button(ui, "Open…", true) {
+                    self.send("upload", json!({}));
+                    ui.close();
                 }
-                ui.separator();let zoom=self.view_controls_enabled();let mat=self.screen()=="mat";
-                if self.button(ui,if mat{"Make design bigger"}else{"Zoom in"},zoom){self.zoom_view(true);}
-                if self.button(ui,if mat{"Make design smaller"}else{"Zoom out"},zoom){self.zoom_view(false);}
-                if self.button(ui,if mat{"Fit design to mat"}else{"Fit in window"},zoom){self.fit_view();}
-                ui.checkbox(&mut self.tool_motion,"Show moves between cuts");
-                ui.checkbox(&mut self.show_test,"Show test-cut spot");
+                if self.button(ui, "Open from library…", true) {
+                    self.send("library", json!({}));
+                    self.open_dialog("library", "Open from library");
+                    ui.close();
+                }
+                if self.button(ui, "Recent designs…", true) {
+                    self.send("uploads", json!({}));
+                    self.open_dialog("uploads", "Recent designs");
+                    ui.close();
+                }
                 ui.separator();
-                for units in ["inches","millimetres"] {if ui.radio(self.remote.snapshot.ui.units==units,units).clicked(){self.command("settings.units",json!({"units":units}));}}
-                if self.button(ui,"Interface font size and theme…",true){self.open_dialog("preferences","Preferences");ui.close();}
-                if self.button(ui,"Reset panel layout",true){self.command("settings.panel",json!({"order":[],"locked":[]}));self.send("reset-folds",json!({}));}
-                if self.button(ui,"Phone layout",true){self.send("layout",json!({"layout":"compact"}));}
+                if self.button(ui, "Save", self.has_design()) {
+                    self.save(false);
+                    ui.close();
+                }
+                if self.button(ui, "Save As…", self.has_design()) {
+                    self.save(true);
+                    ui.close();
+                }
+                if self.button(ui, "Download project…", self.has_design()) {
+                    self.send("download", json!({"kind":"project"}));
+                    ui.close();
+                }
+                if self.button(ui, "Update from Design…", self.has_design()) {
+                    self.send("upload", json!({"update":true}));
+                    ui.close();
+                }
+                ui.menu_button("Export", |ui| {
+                    for (kind, label) in [
+                        ("preview-svg", "Cut Preview SVG"),
+                        ("preview-png", "Cut Preview PNG"),
+                        ("cutter-file", "Cutter file (inspection only)"),
+                        ("plan", "Cut plan"),
+                    ] {
+                        if self.button(ui, label, self.has_design()) {
+                            self.send("download", json!({"kind":kind}));
+                            ui.close();
+                        }
+                    }
+                });
+                ui.separator();
+                if self.button(ui, "Close design", self.has_design()) {
+                    self.open_dialog("close", "Close design");
+                    ui.close();
+                }
+            });
+            self.record("Menu File", &menu.response);
+            let menu = ui.menu_button("Edit", |ui| {
+                self.action_button(ui, "Undo", "history.undo", json!({}));
+                self.action_button(ui, "Redo", "history.redo", json!({}));
+                if self.button(ui, "History…", true) {
+                    self.open_dialog("history", "History");
+                    ui.close();
+                }
+                ui.separator();
+                for (kind, label) in [
+                    ("materials", "Materials…"),
+                    ("mats", "Mats…"),
+                    ("preferences", "Preferences…"),
+                ] {
+                    if self.button(ui, label, true) {
+                        self.open_dialog(kind, label);
+                        ui.close();
+                    }
+                }
+                if self.button(ui, "AI connection…", true) {
+                    self.send("settings", json!({"section":"keys"}));
+                    ui.close();
+                }
+            });
+            self.record("Menu Edit", &menu.response);
+            let menu = ui.menu_button("View", |ui| {
+                for (screen, label) in [
+                    ("side-by-side", "Side by side"),
+                    ("overlay", "Overlay"),
+                    ("mat", "Cut Preview"),
+                ] {
+                    let selected = self.screen() == screen;
+                    if ui
+                        .add_enabled(!self.cut_busy(), egui::Button::selectable(selected, label))
+                        .clicked()
+                    {
+                        self.command("view.show", json!({"screen":screen}));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                let zoom = self.view_controls_enabled();
+                let mat = self.screen() == "mat";
+                if self.button(ui, if mat { "Make design bigger" } else { "Zoom in" }, zoom) {
+                    self.zoom_view(true);
+                }
+                if self.button(
+                    ui,
+                    if mat {
+                        "Make design smaller"
+                    } else {
+                        "Zoom out"
+                    },
+                    zoom,
+                ) {
+                    self.zoom_view(false);
+                }
+                if self.button(
+                    ui,
+                    if mat {
+                        "Fit design to mat"
+                    } else {
+                        "Fit in window"
+                    },
+                    zoom,
+                ) {
+                    self.fit_view();
+                }
+                ui.checkbox(&mut self.tool_motion, "Show moves between cuts");
+                ui.checkbox(&mut self.show_test, "Show test-cut spot");
+                ui.separator();
+                for units in ["inches", "millimetres"] {
+                    if ui
+                        .radio(self.remote.snapshot.ui.units == units, units)
+                        .clicked()
+                    {
+                        self.command("settings.units", json!({"units":units}));
+                    }
+                }
+                if self.button(ui, "Interface font size and theme…", true) {
+                    self.open_dialog("preferences", "Preferences");
+                    ui.close();
+                }
+                if self.button(ui, "Reset panel layout", true) {
+                    self.command("settings.panel", json!({"order":[],"locked":[]}));
+                    self.send("reset-folds", json!({}));
+                }
+                if self.button(ui, "Phone layout", true) {
+                    self.send("layout", json!({"layout":"compact"}));
+                }
+            });
+            self.record("Menu View", &menu.response);
+            let menu = ui.menu_button("Cut", |ui| {
+                if self.button(ui, "Cut Preview", !self.cut_busy()) {
+                    self.command("view.show", json!({"screen":"mat"}));
+                    ui.close();
+                }
+                if self.button(ui, "Stop now", self.cut_busy()) {
+                    self.send("cutter", json!({"id":self.cutter,"action":"stop"}));
+                    ui.close();
+                }
 
+                if self.button(ui, "Cut…", self.ready() && !self.cut_busy()) {
+                    self.enter_cut(false);
+                    ui.close();
+                }
+                if self.button(ui, "Test Cut…", self.has_design() && !self.cut_busy()) {
+                    self.enter_cut(true);
+                    ui.close();
+                }
+                if self.button(ui, "Cutters and queue…", true) {
+                    self.send("settings", json!({"section":"cutters"}));
+                    ui.close();
+                }
             });
-            self.record("Menu View",&menu.response);
-            let menu = ui.menu_button("Cut",|ui| {
-                if self.button(ui,"Cut Preview",!self.cut_busy()){self.command("view.show",json!({"screen":"mat"}));ui.close();}
-                if self.button(ui,"Stop now",self.cut_busy()){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));ui.close();}
-
-                if self.button(ui,"Cut…",self.ready() && !self.cut_busy()){self.enter_cut(false);ui.close();}
-                if self.button(ui,"Test Cut…",self.has_design() && !self.cut_busy()){self.enter_cut(true);ui.close();}
-                if self.button(ui,"Cutters and queue…",true){self.send("settings",json!({"section":"cutters"}));ui.close();}
+            self.record("Menu Cut", &menu.response);
+            let menu = ui.menu_button("Help", |ui| {
+                for (kind, label) in [
+                    ("design-help", "How to save designs for cutting"),
+                    ("troubleshooting", "Troubleshooting"),
+                    ("ai-help", "Set up AI tools"),
+                    ("about", "About CutCraft"),
+                ] {
+                    if self.button(ui, label, true) {
+                        self.open_dialog(kind, label);
+                        ui.close();
+                    }
+                }
+                if self.button(ui, "Manual", true) {
+                    self.open_dialog("manual", "User manual");
+                    ui.close();
+                }
             });
-            self.record("Menu Cut",&menu.response);
-            let menu = ui.menu_button("Help",|ui| {
-                for (kind,label) in [("design-help","How to save designs for cutting"),("troubleshooting","Troubleshooting"),("ai-help","Set up AI tools"),("about","About CutCraft")] {if self.button(ui,label,true){self.open_dialog(kind,label);ui.close();}}
-                if self.button(ui,"Manual",true){self.send("link",json!({"url":"https://github.com/mkrzywonski/cutcraft-web/blob/main/docs/help/design-guide.md"}));ui.close();}
-            });
-            self.record("Menu Help",&menu.response);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui| {
-                if self.button(ui,"Account",true){self.send("settings",json!({"section":"settings"}));}
-                ui.add(egui::Label::new(egui::RichText::new(self.remote.snapshot.design.as_ref().map(|d|format!("{}{}",d.name,if d.unsaved {" •"}else{""})).unwrap_or_else(||"CutCraft".into())).weak()).truncate());
+            self.record("Menu Help", &menu.response);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.button(ui, "Account", true) {
+                    self.send("settings", json!({"section":"settings"}));
+                }
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            self.remote
+                                .snapshot
+                                .design
+                                .as_ref()
+                                .map(|d| format!("{}{}", d.name, if d.unsaved { " •" } else { "" }))
+                                .unwrap_or_else(|| "CutCraft".into()),
+                        )
+                        .weak(),
+                    )
+                    .truncate(),
+                );
             });
         });
     }

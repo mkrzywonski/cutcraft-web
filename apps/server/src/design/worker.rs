@@ -121,6 +121,8 @@ pub struct Worker {
     /// The library revision the project was opened from or last saved as.
     saved: Option<SavedRef>,
     name: Option<String>,
+    /// Unscaled source bounds, cached only within this private worker.
+    source_bounds: Option<(String, std::collections::BTreeMap<String, [f64; 4]>)>,
     /// The registry's read commands: only these may come without a revision.
     reads: Vec<&'static str>,
     /// Every registry command's class, for the authority policy.
@@ -336,6 +338,7 @@ impl Worker {
             unsaved: false,
             saved: None,
             name: None,
+            source_bounds: None,
         };
         worker.restore();
         Ok(worker)
@@ -1062,10 +1065,48 @@ impl Worker {
         })
     }
 
-    fn geometry(&self) -> Result<Geometry, String> {
+    fn geometry(&mut self) -> Result<Geometry, String> {
         let s = self.controller.snapshot()?;
         let open = s.design.as_ref().ok_or("No design is open.")?;
         let project = &open.project;
+        let cache_key = serde_json::to_string(&(
+            &self.incarnation,
+            &open.inspection["source_sha256"],
+            &open.recipe,
+            &project.prepared.page,
+        ))
+        .map_err(|e| e.to_string())?;
+        if self
+            .source_bounds
+            .as_ref()
+            .is_none_or(|(key, _)| key != &cache_key)
+        {
+            let ids: std::collections::BTreeSet<String> =
+                ["pending", "changes", "diagnostics", "stroked_fills"]
+                    .into_iter()
+                    .flat_map(|key| open.prepared[key].as_array().into_iter().flatten())
+                    .flat_map(|item| item["source_ids"].as_array().into_iter().flatten())
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect();
+            let bounds = if ids.is_empty() {
+                Default::default()
+            } else {
+                cutcraft_control::source_view(open)
+                    .map(|view| view.bounds_by_id_mm(&ids.into_iter().collect::<Vec<_>>()))
+                    .unwrap_or_default()
+            };
+            self.source_bounds = Some((cache_key, bounds));
+        }
+        let source_bounds_mm = self
+            .source_bounds
+            .as_ref()
+            .map(|(_, bounds)| {
+                bounds
+                    .iter()
+                    .map(|(id, b)| (id.clone(), b.map(|n| n * project.scale)))
+                    .collect()
+            })
+            .unwrap_or_default();
         let lines = cutcraft_path::assembly(project)
             .into_iter()
             .map(|(op, included)| {
@@ -1098,6 +1139,7 @@ impl Worker {
             return Ok(Geometry {
                 id: geometry_id(project.revision, None),
                 lines,
+                source_bounds_mm,
                 ..Geometry::default()
             });
         };
@@ -1176,6 +1218,7 @@ impl Worker {
                 .collect(),
             art_box_mm: art.map(shift),
             test_spot_mm: spot,
+            source_bounds_mm,
             lines,
         })
     }
@@ -1277,6 +1320,65 @@ fn art_view(open: &cutcraft_control::OpenDesign, incarnation: &str) -> Option<Ar
 mod tests {
     use super::*;
     use cutcraft_web_protocol::KeyLookup;
+
+    #[test]
+    fn withheld_background_has_source_bounds_scaled_and_isolated_to_the_open_design() {
+        let dir = area();
+        std::fs::write(
+            dir.path().join("designs/star.svg"),
+            include_str!("../../../../examples/issues/08-background-rectangle.svg"),
+        )
+        .unwrap();
+        let mut w = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let before = open(&mut w);
+        let question = before.ui.report["pending"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|q| q["source_ids"].as_array().is_some_and(|a| !a.is_empty()))
+            .unwrap();
+        let id = question["source_ids"][0].as_str().unwrap().to_owned();
+        let geometry = w.geometry().unwrap();
+        assert!(
+            !geometry
+                .lines
+                .iter()
+                .any(|line| line.source_ids.contains(&id)),
+            "unanswered background must not become cut geometry"
+        );
+        let bounds = geometry.source_bounds_mm[&id];
+        assert!(
+            bounds
+                .iter()
+                .zip([0., 0., 100., 80.])
+                .all(|(a, b)| (a - b).abs() < 0.01),
+            "{bounds:?}"
+        );
+        let reply = w.answer(WorkerRequest::Command(CommandRequest {
+            id: "design.size".into(),
+            params: json!({"scale":2.}),
+            key: "resize".into(),
+            incarnation: before.incarnation,
+            revision: Some(before.revision),
+        }));
+        assert!(
+            matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })),
+            "{reply:?}"
+        );
+        assert_eq!(
+            w.geometry().unwrap().source_bounds_mm[&id],
+            bounds.map(|n| n * 2.)
+        );
+        std::fs::write(dir.path().join("designs/star.svg"), STAR).unwrap();
+        assert!(matches!(
+            open_as(&mut w, "replace-source", true),
+            CommandReply::Applied { .. }
+        ));
+        assert_ne!(
+            w.geometry().unwrap().source_bounds_mm.get(&id),
+            Some(&bounds)
+        );
+    }
 
     #[test]
     fn pdf_page_answers_keep_the_opened_source_identity_but_change_the_render_identity() {

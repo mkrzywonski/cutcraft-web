@@ -43,12 +43,14 @@ pub const MCP_HELP: &str = include_str!("../../../docs/help/mcp.md");
 /// The plain-language guide to saving designs for cutting, with text as shapes.
 pub const TROUBLESHOOTING_HELP: &str = include_str!("../../../docs/help/troubleshooting.md");
 
+pub const MANUAL_HELP: &str = include_str!("../../../docs/help/manual.md");
+
 pub const DESIGN_HELP: &str = include_str!("../../../docs/help/design-guide.md");
 
 /// Canonical public documentation and project links, shared with desktop and MCP help.
-pub const PROJECT_URL: &str = "https://github.com/mkrzywonski/cutcraft";
+pub const PROJECT_URL: &str = "https://github.com/mkrzywonski/cutcraft-web";
 pub const MANUAL_URL: &str =
-    "https://github.com/mkrzywonski/cutcraft/blob/main/docs/manual/README.md";
+    "https://github.com/mkrzywonski/cutcraft-web/blob/main/docs/help/manual.md";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The version and the commit it was built from, e.g. "1.0.0 (abc1234)".
 pub const APP_BUILD: &str = env!("CUTCRAFT_BUILD");
@@ -68,7 +70,7 @@ pub enum HelpTopic {
     Troubleshooting,
     /// Application version, purpose and licence.
     About,
-    /// Open the GitHub user manual in the desktop browser.
+    /// The bundled user manual, available without internet access.
     Manual,
 }
 
@@ -82,7 +84,7 @@ impl HelpTopic {
             HelpTopic::About => format!(
                 "# CutCraft\n\nVersion {APP_VERSION}\n\nPrepare designs and cut vinyl with your Silhouette Cameo.\n\nLicensed under MIT OR Apache-2.0.\n\n{PROJECT_URL}"
             ),
-            HelpTopic::Manual => format!("# CutCraft user manual\n\n{MANUAL_URL}"),
+            HelpTopic::Manual => MANUAL_HELP.to_owned(),
         }
     }
 }
@@ -1207,7 +1209,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert!(manual.value["help"].as_str().unwrap().contains(MANUAL_URL));
+        assert_eq!(manual.value["help"], MANUAL_HELP);
         let snapshot = controller.snapshot().unwrap();
         assert!(snapshot.open_manual && snapshot.show_about);
         controller.hide_help(HelpTopic::Manual).unwrap();

@@ -120,6 +120,19 @@ impl SourceView {
     /// questions name them) in prepared mm, or none when none of them are drawn. A picture is
     /// one object, the whole picture.
     pub fn bounds_mm(&self, ids: &[String]) -> Option<[f64; 4]> {
+        self.bounds_by_id_mm(ids).into_values().reduce(|a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        })
+    }
+
+    /// Resolve source ids in one batch, building symbol bounds only once. Missing ids are
+    /// omitted; these are visual bounds, including objects withheld from the cut pending review.
+    pub fn bounds_by_id_mm(&self, ids: &[String]) -> std::collections::BTreeMap<String, [f64; 4]> {
         match &self.kind {
             Kind::Vector { doc, origin_pt, .. } => {
                 let symbols = doc.symbol_boxes();
@@ -131,30 +144,38 @@ impl SourceView {
                         for index in path {
                             node = node.children()?.get(index.parse::<usize>().ok()?)?;
                         }
-                        node.visual_bounds_with(&symbols)
-                    })
-                    .reduce(|a, b| a.union(b))
-                    .map(|r| {
-                        [
+                        let r = node.visual_bounds_with(&symbols)?;
+                        let bounds = [
                             (r.x0 - origin_pt[0]) * MM_PER_PT,
                             (r.y0 - origin_pt[1]) * MM_PER_PT,
                             (r.x1 - origin_pt[0]) * MM_PER_PT,
                             (r.y1 - origin_pt[1]) * MM_PER_PT,
-                        ]
+                        ];
+                        bounds
+                            .iter()
+                            .all(|n| n.is_finite())
+                            .then(|| (id.clone(), bounds))
                     })
+                    .collect()
             }
             Kind::Picture {
                 image,
                 mm_per_px,
                 origin_mm,
-            } => (!ids.is_empty()).then(|| {
-                [
-                    -origin_mm[0],
-                    -origin_mm[1],
-                    f64::from(image.width()) * mm_per_px - origin_mm[0],
-                    f64::from(image.height()) * mm_per_px - origin_mm[1],
-                ]
-            }),
+            } => ids
+                .iter()
+                .map(|id| {
+                    (
+                        id.clone(),
+                        [
+                            -origin_mm[0],
+                            -origin_mm[1],
+                            f64::from(image.width()) * mm_per_px - origin_mm[0],
+                            f64::from(image.height()) * mm_per_px - origin_mm[1],
+                        ],
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -322,6 +343,14 @@ mod tests {
             .unwrap();
         assert!(near(both, [0.0, 5.0, 30.0, 20.0]), "{both:?}");
         assert_eq!(view.bounds_mm(&["source/0/9".into()]), None);
+        let batch = view.bounds_by_id_mm(&[
+            "source/0/0".into(),
+            "source/0/1".into(),
+            "source/0/9".into(),
+        ]);
+        assert_eq!(batch.len(), 2);
+        assert!(near(batch["source/0/0"], [20., 5., 30., 10.]));
+        assert!(near(batch["source/0/1"], [0., 15., 5., 20.]));
     }
 
     #[test]

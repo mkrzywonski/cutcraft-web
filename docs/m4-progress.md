@@ -416,3 +416,26 @@ and conflict browser run passes after the confirmation-message correction, with 
 at `/tmp/cutcraft-uncertainty-check.fXfx1M` and log `/tmp/codex-m4-recovery-browser-final.log`.
 The final transport regression also asserts that automatic acceptance replaces the old warning.
 The resolved-by-Stop screenshot was inspected. No hardware was used.
+
+## Source-object inspection and bundled manual (0.21.0)
+
+Show me now combines source-object visual bounds with any prepared cut lines. An unanswered
+background or other withheld object can be located before it has cut geometry. Both comparison
+panes outline the selected region; parent ids match descendants by path segment, not accidental
+text prefixes. The private worker batches symbol-bound resolution and caches unscaled bounds
+by source, preparation recipe, page and session. The browser receives only ids and scaled bounds.
+This additive optional geometry field keeps protocol 8 compatible with older payloads.
+
+Help → Manual and About → User manual open the bundled guide without needing internet access.
+The shared `help.show` manual topic returns the same guide. The guide covers uploaded sources,
+issues, views, material adjustments, mat placement, test cuts, cutting, saving and recovery.
+About includes the licence and the maintained CutCraft-Web project link.
+
+Targeted source, UI and worker tests pass, including an unanswered authored background with no
+cut geometry, scaling its bounds, replacing its source and avoiding source-id prefix collisions.
+All 489 Rust tests, fmt, native/wasm Clippy, workspace build, dependency policy and full
+desktop/compact browser workflows pass (`/tmp/codex-m4-showme-full.log`). A final focused
+presentation run also passes after correcting the manual glyph and waiting for rendered artwork
+in the Show me capture (`/tmp/codex-m4-showme-final-browser.log`). Its authored-fixture images
+are local at `/tmp/cutcraft-desktop-check.9tFIv5`; the manual and source-object captures were
+inspected. No hardware was used.

@@ -38,6 +38,49 @@ impl Settling {
             || (!pending && geometry != self.geometry)
     }
 }
+fn source_selected(selected: &[String], id: &str) -> bool {
+    selected.iter().any(|parent| {
+        id == parent
+            || id
+                .strip_prefix(parent)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+fn highlight_bounds(
+    geometry: &cutcraft_web_protocol::Geometry,
+    selected: &[String],
+) -> Option<[f64; 4]> {
+    let source = geometry
+        .source_bounds_mm
+        .iter()
+        .filter(|(id, _)| source_selected(selected, id))
+        .map(|(_, b)| *b);
+    let cuts = geometry
+        .lines
+        .iter()
+        .filter(|line| {
+            line.source_ids
+                .iter()
+                .any(|id| source_selected(selected, id))
+        })
+        .flat_map(|line| line.points.iter())
+        .map(|p| {
+            [
+                f64::from(p[0]),
+                f64::from(p[1]),
+                f64::from(p[0]),
+                f64::from(p[1]),
+            ]
+        });
+    source.chain(cuts).reduce(|a, b| {
+        [
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ]
+    })
+}
 impl Desktop {
     fn preview_change(&self) -> Option<(String, [f64; 4], [f64; 4])> {
         if self.screen() != "mat" {
@@ -244,25 +287,11 @@ impl Desktop {
                 .map(|a| a.bounds)
                 .unwrap_or([0., 0., 100., 100.])
         };
-        if !mat && !self.highlight.is_empty() {
-            let points = self
-                .remote
-                .geometry
-                .lines
-                .iter()
-                .filter(|l| l.source_ids.iter().any(|id| self.highlight.contains(id)))
-                .flat_map(|l| l.points.iter());
-            let mut found = None;
-            for p in points {
-                let b = found.get_or_insert([p[0] as f64, p[1] as f64, p[0] as f64, p[1] as f64]);
-                b[0] = b[0].min(p[0] as f64);
-                b[1] = b[1].min(p[1] as f64);
-                b[2] = b[2].max(p[0] as f64);
-                b[3] = b[3].max(p[1] as f64);
-            }
-            if let Some(b) = found {
-                bounds = [b[0] - 3., b[1] - 3., b[2] + 3., b[3] + 3.];
-            }
+        let shown = (!mat)
+            .then(|| highlight_bounds(&self.remote.geometry, &self.highlight))
+            .flatten();
+        if let Some(b) = shown {
+            bounds = [b[0] - 3., b[1] - 3., b[2] + 3., b[3] + 3.];
         }
         let panes = if self.screen() == "side-by-side" {
             2
@@ -436,7 +465,10 @@ impl Desktop {
                     * f64::from(self.order);
                 for line in lines {
                     if !line.included
-                        && !line.source_ids.iter().any(|id| self.highlight.contains(id))
+                        && !line
+                            .source_ids
+                            .iter()
+                            .any(|id| source_selected(&self.highlight, id))
                         && !line.item.as_ref().is_some_and(|id| self.peek.contains(id))
                     {
                         continue;
@@ -466,7 +498,11 @@ impl Desktop {
                         painter.line_segment([a, *b], Stroke::new(0.6, Color32::LIGHT_BLUE));
                     }
                     last = points.last().copied();
-                    let colour = if line.source_ids.iter().any(|id| self.highlight.contains(id)) {
+                    let colour = if line
+                        .source_ids
+                        .iter()
+                        .any(|id| source_selected(&self.highlight, id))
+                    {
                         Color32::from_rgb(220, 110, 20)
                     } else {
                         colour(&line.colour)
@@ -498,6 +534,19 @@ impl Desktop {
                         ));
                     }
                 }
+            }
+            if let Some(b) = shown {
+                let r = Rect::from_min_max(point(b[0], b[1]), point(b[2], b[3]));
+                painter.rect_stroke(
+                    r,
+                    0.,
+                    egui::Stroke::new(2., Color32::from_rgb(230, 145, 20)),
+                    egui::StrokeKind::Outside,
+                );
+                self.controls.insert(
+                    format!("Shown source {pane}"),
+                    [r.min.x, r.min.y, r.max.x, r.max.y],
+                );
             }
             if mat {
                 if let Some(m) = &self.remote.geometry.mat {
@@ -974,6 +1023,37 @@ fn zoom_at(zoom: &mut f32, pan: &mut Vec2, anchor: Vec2, factor: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn show_me_uses_source_bounds_without_cut_lines_and_respects_id_segments() {
+        let mut g = cutcraft_web_protocol::Geometry::default();
+        g.source_bounds_mm
+            .insert("source/0/1".into(), [10., 20., 30., 40.]);
+        g.source_bounds_mm
+            .insert("source/0/10".into(), [100., 200., 300., 400.]);
+        assert_eq!(
+            highlight_bounds(&g, &["source/0/1".into()]),
+            Some([10., 20., 30., 40.])
+        );
+        assert_eq!(
+            highlight_bounds(&g, &["source/0".into()]),
+            Some([10., 20., 300., 400.])
+        );
+        assert_eq!(highlight_bounds(&g, &["source/1".into()]), None);
+        let mut desktop = Desktop::default();
+        desktop.remote.snapshot.design = Some(cutcraft_web_protocol::DesignView {
+            name: "Authored source".into(),
+            ..Default::default()
+        });
+        desktop.remote.snapshot.ui.screen = "side-by-side".into();
+        desktop.remote.geometry = g;
+        desktop.highlight = vec!["source/0/1".into()];
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.canvas(ui));
+        output.textures_delta.clear();
+        assert!(desktop.controls.contains_key("Shown source 0"));
+        assert!(desktop.controls.contains_key("Shown source 1"));
+    }
+
     #[test]
     fn zoom_keeps_the_point_under_the_pointer_in_both_panes() {
         for anchor in [Vec2::new(-70., 35.), Vec2::new(120., -80.)] {

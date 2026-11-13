@@ -209,6 +209,10 @@ pub struct Geometry {
     /// Where the next test cut goes, on the mat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_spot_mm: Option<[f64; 4]>,
+    /// Visual source bounds for issue/info objects, even when they have no prepared cut lines.
+    /// Coordinates match `lines`; no paths or embedded-source metadata cross this boundary.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub source_bounds_mm: std::collections::BTreeMap<String, [f64; 4]>,
     /// The cut lines over the artwork, in mm as resized.
     #[serde(default)]
     pub lines: Vec<Stroke>,

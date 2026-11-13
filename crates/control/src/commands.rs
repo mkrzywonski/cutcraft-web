@@ -960,7 +960,7 @@ fn registry() -> Vec<Spec> {
             Edit,
             Window,
             HelpParams,
-            "Open or close a help window and return its guide. Topics: AI setup, saving designs, troubleshooting, About, or the GitHub user manual (opens in the desktop browser)."
+            "Open or close a help window and return its guide. Topics: AI setup, saving designs, troubleshooting, About, or the bundled user manual."
         ),
         spec!(
             "view.inspect",

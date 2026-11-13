@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.21.0 — 2026-11-13
+
+- Show me now locates source objects withheld from cutting and outlines their bounds in both comparison panes. Include the user manual in Help and About for offline reading, with the same text available through the shared help command.
+
 ## 0.20.1 — 2026-11-12
 
 - Resolve an unknown Start without retrying after a changed cutter fence and a missing receipt. Preserve newer requests during reconciliation, distinguish sign-in failures from outages, and keep project controls working when browser recovery storage is unreadable. Retry explicitly names the original prepared revision.

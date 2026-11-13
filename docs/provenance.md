@@ -95,3 +95,9 @@ pass ranges and quantized points from the same encoder as the sender, without ra
 Linked corner gestures and the bounded settling display in `canvas.rs` adapt the reference
 `workspace.rs` interaction. Anchored scaling is now a single shared `design.size` edit, rather
 than the reference’s separate size and placement changes, to preserve one gesture/Undo.
+
+The source-object Show me bounds and bundled manual in 0.21.0 adapt CutCraft 1.0.5's
+`crates/import/src/source.rs`, workspace selection behaviour and `docs/manual/README.md` at
+`39654a9465ecdef7478703ee586276304dbc29c6`. The web worker sends only scaled bounds and source ids,
+not its private inspection metadata. The manual is rewritten for uploaded files, server sessions,
+the shared library and the browser's download flow; reference screenshots are not imported.
