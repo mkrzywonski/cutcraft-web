@@ -1,7 +1,7 @@
 // Browser transport only. Geometry and all desktop widgets are drawn by the Rust UI.
 // Mutations retain the exact request through a lost reply; no optimistic project state.
 import init, {start} from '/desktop/pkg/cutcraft_ui.js';
-const PROTOCOL=8;
+const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
 let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null;
@@ -162,10 +162,7 @@ async function dispatch({action,params:p}){
  if(action==='artwork'){const art=model.snapshot.design?.art;if(art?.id===p.art)requestPicture(art,p);return;}
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
  if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
- if(action==='preference'){Object.assign(model.preferences,p);localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
- if(action==='reset-folds'){model.preferences.folds={};localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='layout'){localStorage.setItem('cutcraft.layout',p.layout);location.assign('/station');return;}
- if(action==='fold'){model.preferences.folds||={};model.preferences.folds[p.group]=p.open;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='upload'){uploadMode=p;document.querySelector('#file').click();return;}
  if(action==='link'){window.open(p.url,'_blank','noopener,noreferrer');return;}
  if(action==='settings'){window.open(`/station#/${p.section==='keys'?'settings':p.section}`,'_blank','noopener');return;}

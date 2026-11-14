@@ -434,6 +434,8 @@ struct PreferencesFile {
     #[serde(default = "default_font_size")]
     font_size: f32,
     #[serde(default)]
+    dark: bool,
+    #[serde(default)]
     panel: PanelLayout,
     #[serde(default)]
     new_design: NewDesign,
@@ -450,6 +452,7 @@ impl Default for PreferencesFile {
             units: Units::default(),
             snap: Snap::default(),
             font_size: default_font_size(),
+            dark: false,
             panel: PanelLayout::default(),
             new_design: NewDesign::default(),
         }
@@ -591,6 +594,20 @@ impl SettingsStore {
             ..self.preferences()
         };
         self.write("preferences.json", &preferences)
+    }
+
+    pub fn load_dark(&self) -> bool {
+        self.preferences().dark
+    }
+
+    pub fn save_dark(&self, dark: bool) -> Result<(), String> {
+        self.write(
+            "preferences.json",
+            &PreferencesFile {
+                dark,
+                ..self.preferences()
+            },
+        )
     }
 
     pub fn load_font_size(&self) -> f32 {

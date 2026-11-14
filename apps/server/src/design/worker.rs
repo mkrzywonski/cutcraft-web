@@ -977,6 +977,7 @@ impl Worker {
                 .unwrap_or("mm")
                 .into(),
             font_size: s.font_size,
+            dark: s.dark,
             snap: json!({"enabled":s.snap.enabled,"step_mm":s.snap.step(s.units)}),
             panel: json!(s.panel),
             defaults: json!(s.new_design),
@@ -1320,6 +1321,54 @@ fn art_view(open: &cutcraft_control::OpenDesign, incarnation: &str) -> Option<Ar
 mod tests {
     use super::*;
     use cutcraft_web_protocol::KeyLookup;
+
+    #[test]
+    fn appearance_and_panel_folds_belong_to_the_person_and_survive_worker_restart() {
+        let first = area();
+        let second = area();
+        let lists = first.path().join("lists");
+        let mut a = Worker::new(first.path(), &lists).unwrap();
+        let mut b = Worker::new(second.path(), &lists).unwrap();
+        let opened = open(&mut a);
+        let revision = opened.design.unwrap().project_revision;
+        for (id, params) in [
+            ("settings.appearance", json!({"dark":true})),
+            (
+                "settings.panel",
+                json!({"open":{"Info":true,"Material":false}}),
+            ),
+        ] {
+            let before = snapshot(&mut a);
+            let reply = a.answer(WorkerRequest::Command(CommandRequest {
+                id: id.into(),
+                params,
+                key: id.into(),
+                incarnation: before.incarnation,
+                revision: Some(before.revision),
+            }));
+            assert!(
+                matches!(reply, WorkerReply::Command(CommandReply::Applied { .. })),
+                "{reply:?}"
+            );
+        }
+        let changed = snapshot(&mut a);
+        assert!(changed.ui.dark);
+        assert_eq!(changed.ui.panel["open"]["Info"], true);
+        assert_eq!(
+            changed.design.unwrap().project_revision,
+            revision,
+            "appearance must not edit the project"
+        );
+        let other = snapshot(&mut b);
+        assert!(!other.ui.dark);
+        assert!(other.ui.panel["open"].is_null());
+        a.checkpoint().unwrap();
+        drop(a);
+        let mut restored = Worker::new(first.path(), &lists).unwrap();
+        let after = snapshot(&mut restored);
+        assert!(after.ui.dark);
+        assert_eq!(after.ui.panel["open"]["Material"], false);
+    }
 
     #[test]
     fn withheld_background_has_source_bounds_scaled_and_isolated_to_the_open_design() {

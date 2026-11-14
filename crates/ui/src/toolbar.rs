@@ -139,8 +139,7 @@ impl Desktop {
                     ui.close();
                 }
                 if self.button(ui, "Reset panel layout", true) {
-                    self.command("settings.panel", json!({"order":[],"locked":[]}));
-                    self.send("reset-folds", json!({}));
+                    self.command("settings.panel", json!({"order":[],"locked":[],"open":{}}));
                 }
                 if self.button(ui, "Phone layout", true) {
                     self.send("layout", json!({"layout":"compact"}));

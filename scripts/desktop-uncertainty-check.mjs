@@ -33,7 +33,7 @@ async function tab(context){
   // Wait until the project revision has stopped moving (follow-up view commands after open).
   async settle(){let last=-1;for(let i=0;i<40;i++){const s=await t.state();if(!s.pending&&s.snapshot.revision===last)return;last=s.snapshot.revision;await sleep(250);}},
   // Same-origin JSON call from inside the page, with the desktop's protocol and CSRF headers.
-  api:(path,method='GET',body)=>t.page(`(async()=>{const c=document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';const r=await fetch(${JSON.stringify(path)},{method:${JSON.stringify(method)},credentials:'same-origin',headers:{'content-type':'application/json','x-cutcraft-protocol':'8','x-csrf-token':decodeURIComponent(c)},body:${body===undefined?'undefined':JSON.stringify(JSON.stringify(body))}});return {status:r.status,body:await r.json().catch(()=>null)};})()`),
+  api:(path,method='GET',body)=>t.page(`(async()=>{const c=document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';const r=await fetch(${JSON.stringify(path)},{method:${JSON.stringify(method)},credentials:'same-origin',headers:{'content-type':'application/json','x-cutcraft-protocol':'9','x-csrf-token':decodeURIComponent(c)},body:${body===undefined?'undefined':JSON.stringify(JSON.stringify(body))}});return {status:r.status,body:await r.json().catch(()=>null)};})()`),
  };
  await t.cdp('Runtime.enable');await t.cdp('Page.enable');await t.cdp('Network.enable');
  await t.cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
@@ -165,6 +165,17 @@ async function person(name){const ctx=(await browser('Target.createBrowserContex
 const alex=await person('alex'),sam=await person('sam');
 
 await alex.open(fixture);
+console.log('Per-person appearance and panel folds');
+await alex.click('Menu Edit');await alex.click('Preferences…');await alex.click('Dark appearance');
+await alex.until(async()=>(await alex.state()).snapshot.ui.dark===true && !(await alex.state()).pending,'Dark appearance saved');
+await alex.click('Close dialog');await alex.click('Panel Info');
+await alex.until(async()=>(await alex.state()).snapshot.ui.panel.open?.Info===true,'Info fold saved');
+await alex.reload();
+check((await alex.state()).snapshot.ui.dark===true && (await alex.state()).snapshot.ui.panel.open?.Info===true,'appearance and folds survive browser reload');
+check(!(await sam.state()).snapshot.ui.dark && !(await sam.state()).snapshot.ui.panel.open?.Info,'another person retains separate appearance and folds');
+await alex.shot('per-person-dark-appearance');
+await alex.click('Menu Edit');await alex.click('Preferences…');await alex.click('Dark appearance');
+await alex.until(async()=>!(await alex.state()).snapshot.ui.dark && !(await alex.state()).pending,'Restore light appearance');await alex.click('Close dialog');
 await alex.click('Save');await alex.until(async()=>!!await alex.control('Save project'),'First Save opens Save As');
 await alex.click('Save project');
 await alex.until(async()=>{const d=(await alex.state()).snapshot.design;return d.saved&&!d.unsaved;},'Alex saves to the library');

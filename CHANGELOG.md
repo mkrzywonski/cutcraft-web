@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.21.1 — 2026-11-13
+
+- Save interface appearance and panel fold state per person on the server, across browsers and worker restarts. Use shared validated settings commands instead of browser-only state. Require protocol 9 for the appearance action. Complete the supported-format list in the bundled manual.
+
 ## 0.21.0 — 2026-11-13
 
 - Show me now locates source objects withheld from cutting and outlines their bounds in both comparison panes. Include the user manual in Help and About for offline reading, with the same text available through the shared help command.

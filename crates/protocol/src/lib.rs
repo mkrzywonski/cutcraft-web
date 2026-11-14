@@ -10,7 +10,7 @@ use serde_json::Value;
 
 /// Raised whenever a change is not additive (docs/development.md §5). A client with another
 /// version is told to reload.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// One change or question, as a registry command (spec §5, §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -105,6 +105,8 @@ pub struct Presentation {
     pub screen: String,
     pub units: String,
     pub font_size: f32,
+    #[serde(default)]
+    pub dark: bool,
     pub snap: Value,
     pub panel: Value,
     pub defaults: Value,

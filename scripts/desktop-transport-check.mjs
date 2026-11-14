@@ -19,7 +19,7 @@ const context=vm.createContext({
   calls.push(path);
   let value={};let ok=true;
   if(path.endsWith('/me'))value=meIdentity;
-  else if(path.endsWith('/snapshot'))value={protocol:8,incarnation,revision:1,design:designView,ui:{screen:'test-cut'}};
+  else if(path.endsWith('/snapshot'))value={protocol:9,incarnation,revision:1,design:designView,ui:{screen:'test-cut'}};
   else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity,cutting,execution,turn:turn?{job:{job_id:turn}}:null,queue}}]};
   else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},execution,geometry:{id:'frozen'}};ok=!refusePreview;}
   else throw Error('Unexpected request '+path);

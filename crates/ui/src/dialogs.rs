@@ -67,7 +67,7 @@ if self.button(ui,"Cancel",true){done=true;}});},
                         },
                         "history"=>{for kind in ["undo","redo"]{ui.heading(kind);for step in list(&self.remote.snapshot.ui.history[kind]).iter().rev(){ui.label(format!("{} — {}",text(&step["label"]),text(&step["origin"])));}}},
                         "preferences"=>{
-                            ui.heading("Interface");if ui.checkbox(&mut self.dark,"Dark appearance").changed(){self.send("preference",json!({"dark":self.dark}));}
+                            ui.heading("Interface");let appearance=ui.add_enabled(!self.remote.pending && self.remote.connected,egui::Checkbox::new(&mut self.dark,"Dark appearance"));self.record("Dark appearance",&appearance);if appearance.changed(){self.command("settings.appearance",json!({"dark":self.dark}));}
                             self.value_field(ui,"Text size (10–24 points)",self.remote.snapshot.ui.font_size as f64,"settings.font_size","points",None);
                             for units in ["millimetres","inches"]{if ui.radio(self.remote.snapshot.ui.units==units,units).clicked(){self.command("settings.units",json!({"units":units}));}}
                             if self.button(ui,"Restore default text size",true){self.command("settings.font_size",json!({"points":14}));}

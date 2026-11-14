@@ -439,3 +439,24 @@ presentation run also passes after correcting the manual glyph and waiting for r
 in the Show me capture (`/tmp/codex-m4-showme-final-browser.log`). Its authored-fixture images
 are local at `/tmp/cutcraft-desktop-check.9tFIv5`; the manual and source-object captures were
 inspected. No hardware was used.
+
+## Per-person appearance and panel folds (0.21.1)
+
+Dark/light appearance now uses `settings.appearance` in the shared controller. Folded groups use
+its existing `settings.panel.open`, and Reset panel layout clears the order, locks and folds in
+one action. The desktop no longer writes independent browser-only appearance/fold preferences.
+These settings live in each person's area, survive worker/browser restarts, and do not edit the
+project. Browser protocol 9 requires the new appearance command; protocol 8 is refused before
+creating a private area. The bundled manual's format list now matches OPEN-01.
+
+All 490 Rust tests, fmt, native/wasm Clippy, workspace build and dependency policy pass. The
+worker regression checks separate people, restart and unchanged project revision. Browser checks
+exercise theme/fold controls, reload and two-account isolation, followed by save-conflict handling;
+Start fault cases were explicitly skipped for this preferences run. The full desktop simulated
+cut workflow and compact browser suite also pass. Log: `/tmp/codex-m4-preferences-full.log`.
+Local captures: `/tmp/cutcraft-uncertainty-check.xRFfy2` and
+`/tmp/cutcraft-desktop-check.UrHknL`; the dark-appearance capture was inspected. No hardware used.
+
+Font-management work remains open: the pinned VectorCraft global font database also catalogs
+system/service-user fonts. A process per person does not by itself meet bundled-plus-own-font
+isolation; an explicit engine font-path configuration is needed before enabling private uploads.

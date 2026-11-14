@@ -174,6 +174,8 @@ pub struct Snapshot {
     pub units: Units,
     /// Base interface font size in points.
     pub font_size: f32,
+    /// Their saved interface appearance.
+    pub dark: bool,
     /// Snap to grid on the Cut preview.
     pub snap: Snap,
     /// How they arranged the right panel.
@@ -459,6 +461,7 @@ impl Controller {
         let recent = store.load_recent();
         let units = store.load_units();
         let font_size = store.load_font_size();
+        let dark = store.load_dark();
         let snap = store.load_snap();
         let panel = store.load_panel();
         let new_design = store.load_new_design();
@@ -509,6 +512,7 @@ impl Controller {
                 mats,
                 units,
                 font_size,
+                dark,
                 snap,
                 panel,
                 new_design,

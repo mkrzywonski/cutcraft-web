@@ -608,6 +608,13 @@ struct FontSizeParams {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct AppearanceParams {
+    /// Dark interface colours; false restores light colours.
+    dark: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct NewDesignParams {
     /// A material name from `materials.list` (a unique start is enough); "" goes back to the
     /// material last used. Left out, it is unchanged.
@@ -1091,6 +1098,16 @@ fn registry() -> Vec<Spec> {
             Nothing,
             UnitsParams,
             "Show and type lengths in inches or millimetres in the window. Commands always take mm."
+        ),
+        spec!(
+            "settings.appearance",
+            "Interface appearance",
+            Some("View"),
+            None,
+            Edit,
+            Nothing,
+            AppearanceParams,
+            "Save dark or light appearance for this person, across browsers and sessions."
         ),
         spec!(
             "settings.font_size",
@@ -2445,6 +2462,16 @@ impl Controller {
                 self.change(|s| s.units = p.units)
                     .map_err(CommandError::failed)?;
                 value(json!({"units": p.units}))
+            }
+            "settings.appearance" => {
+                let p: AppearanceParams = decode(params)?;
+                self.0
+                    .store
+                    .save_dark(p.dark)
+                    .map_err(CommandError::failed)?;
+                self.change(|s| s.dark = p.dark)
+                    .map_err(CommandError::failed)?;
+                value(json!({"dark":p.dark}))
             }
             "settings.font_size" => {
                 let p: FontSizeParams = decode(params)?;
@@ -3929,6 +3956,7 @@ pub(crate) fn result_schema(id: &str) -> Value {
         "materials.list" => schema::<Vec<cutcraft_import::job::Material>>(),
         "mats.list" => schema::<Vec<cutcraft_import::job::MatProfile>>(),
         "settings.units" => fields(&[("units", S, "inches or millimetres.")]),
+        "settings.appearance" => fields(&[("dark", B, "Dark interface colours.")]),
         "settings.font_size" => fields(&[("points", N, "Base interface font size in points.")]),
         "settings.snap" => schema::<crate::Snap>(),
         "settings.panel" => schema::<crate::PanelLayout>(),

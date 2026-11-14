@@ -242,7 +242,7 @@ impl Desktop {
         let ctx = root.ctx().clone();
         self.sync_presentation_identity();
         self.controls.clear();
-        self.dark = self.remote.preferences["dark"].as_bool().unwrap_or(false);
+        self.dark = self.remote.snapshot.ui.dark;
         if self.remote.result_id != self.last_result {
             self.last_result = self.remote.result_id;
             if self.remote.result["error_code"] == "saved-elsewhere" {
@@ -374,7 +374,7 @@ mod identity_tests {
         let mut desktop = Desktop::default();
         let ctx = egui::Context::default();
         for dark in [false, true, false, true] {
-            desktop.remote.preferences = json!({"dark": dark});
+            desktop.remote.snapshot.ui.dark = dark;
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(

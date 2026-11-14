@@ -398,6 +398,9 @@ pub fn flagged_section(
             let height = font.size + 18.0;
             let (rect, response) =
                 ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+            ui.data_mut(|data| {
+                data.insert_temp(egui::Id::new(("panel-header", key.as_str())), rect)
+            });
             response.widget_info(|| {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::CollapsingHeader,
@@ -600,4 +603,9 @@ pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::window(&ctx.global_style())
         .inner_margin(ctx.global_style().spacing.window_margin)
         .corner_radius(8.0)
+}
+
+/// Header bounds used by the desktop interaction harness.
+pub fn panel_header_rect(ui: &Ui, group: &str) -> Option<Rect> {
+    ui.data(|data| data.get_temp(egui::Id::new(("panel-header", group))))
 }

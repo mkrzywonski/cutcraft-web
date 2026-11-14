@@ -89,7 +89,7 @@ impl Desktop {
             Some(crate::chrome::PanelPass {
                 group,
                 locked,
-                open: self.remote.preferences["folds"][group].as_bool(),
+                open: self.remote.snapshot.ui.panel["open"][group].as_bool(),
             }),
         );
         let issues = self.remote.snapshot.design.as_ref().map_or(0, |d| d.issues);
@@ -116,11 +116,22 @@ impl Desktop {
             },
             |ui| self.group_body(ui, group),
         );
+        if let Some(r) = crate::chrome::panel_header_rect(ui, group) {
+            self.controls.insert(
+                format!("Panel {group}"),
+                [r.min.x, r.min.y, r.max.x, r.max.y],
+            );
+        }
         crate::chrome::set_panel_pass(ui, None);
         for event in crate::chrome::take_panel_events(ui) {
             match event {
                 crate::chrome::PanelEvent::Open(group, open) => {
-                    self.send("fold", json!({"group":group,"open":open}))
+                    let mut opened = self.remote.snapshot.ui.panel["open"]
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default();
+                    opened.insert(group, json!(open));
+                    self.command("settings.panel", json!({"open":opened}));
                 }
                 crate::chrome::PanelEvent::ToggleLock(group) => {
                     let mut locked = list(&self.remote.snapshot.ui.panel["locked"]);

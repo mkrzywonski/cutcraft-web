@@ -1820,11 +1820,11 @@ async fn a_design_request_without_this_protocol_version_is_refused_first() {
     let mut old_browser = upload_star(None);
     old_browser
         .headers_mut()
-        .insert("x-cutcraft-protocol", "7".parse().unwrap());
+        .insert("x-cutcraft-protocol", "8".parse().unwrap());
     let (status, body) = send(&h.app, old_browser).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"], "protocol-version");
-    // Nothing was stored, including when the former M4 browser speaks protocol 7.
+    // Nothing was stored, including when the former M4 browser speaks protocol 8.
     assert!(!h.app.service.people.join("household").exists());
 }
 

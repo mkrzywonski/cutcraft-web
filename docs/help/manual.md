@@ -6,7 +6,7 @@ This manual is included with CutCraft and works without internet access. Externa
 
 ## Open a design
 
-Choose Open in the toolbar or File menu, or drop a file onto the window. Supported design formats are SVG, SVGZ, PDF, compatible Illustrator AI, ASCII DXF, PNG, JPEG, GIF and BMP. Open from library retrieves a saved project; Recent designs lists your uploaded designs. Opening a file uploads a private copy to your CutCraft server and does not change the original on your computer.
+Choose Open in the toolbar or File menu, or drop a file onto the window. Supported vector formats are SVG/SVGZ, PDF, compatible Illustrator AI, EPS, ASCII DXF, .vectorcraft and legacy .drawcraft. Picture formats are PNG, JPG/JPEG, GIF, BMP and Photoshop PSD/PSB. A .cutcraft file opens as a saved project. Silhouette .studio3, DWG and binary DXF are not supported. Open from library retrieves a saved project; Recent designs lists your uploaded designs. Opening a file uploads a private copy to your CutCraft server and does not change the original on your computer.
 
 For text, save an outlined copy from your design editor. Keep the editable original separately. Photos and mockups usually need tracing or other preparation in an editor first. Help > How to save designs for cutting explains file formats and font questions.
 
