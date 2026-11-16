@@ -46,7 +46,7 @@ paired reference screenshot review.
 
 These are required work, not exclusions or waived acceptance:
 
-- Finish advanced preparation controls and isolated font management; exercise all authored
+- Finish advanced preparation controls and shared library font management (web §10 v2.1); exercise all authored
   regression fixtures and Show me cases.
 - Complete region-at-zoom artwork rendering, rulers, gesture/settling parity, occupied test
   overlays, and cut-order playback fidelity.
@@ -460,3 +460,5 @@ Local captures: `/tmp/cutcraft-uncertainty-check.xRFfy2` and
 Font-management work remains open: the pinned VectorCraft global font database also catalogs
 system/service-user fonts. A process per person does not by itself meet bundled-plus-own-font
 isolation; an explicit engine font-path configuration is needed before enabling private uploads.
+**Superseded 2026-11-13 (#159–160):** fonts are shared by the household, so the system font scan is
+acceptable and no engine change is needed.

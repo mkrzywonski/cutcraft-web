@@ -75,7 +75,7 @@ Subsequent work is recorded in [M4 progress](../m4-progress.md):
 | OPEN-07 | Present | "Which units does this drawing use?" with mm/in/cm/ft/m. | DXF fixtures in browser; units invalidation on Update. |
 | OPEN-08 | Backend | EPS cards ("Only the EPS preview could be read", "EPS read as one layer"). | EPS/PSD fixtures. |
 | OPEN-09 | Partial | Linked-picture card exists in engine. | F14 in browser; bundle upload path from desktop. |
-| OPEN-10 | Partial | "Missing font", "Use this substitute", "Use the letter shapes saved in the file". | **No font upload or per-person font management in the desktop** (progress doc gate). F02/F20. |
+| OPEN-10 | Partial | "Missing font", "Use this substitute", "Use the letter shapes saved in the file". | **No font management in the desktop:** library fonts (Upload, Download, Remove, origin), a project's font list, Download original design (web §10 v2.1, #159; progress doc gate). F02/F20. |
 
 ### 3. Tracing and preparation
 

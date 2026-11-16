@@ -1,6 +1,6 @@
 # CutCraft-Web specification
 
-Status: **version 2, design proposal** (2026-10-28). This revision recovers the detailed
+Status: **version 2.1** (2026-11-13; version 2 design proposal 2026-10-28). This revision recovers the detailed
 CutCraft contract before UI implementation continues. Architecture and security decisions from
 version 1 remain; detailed behaviour is now specified rather than delegated to a missing document.
 This is a requirement set, not a claim that every milestone is implemented or accepted.
@@ -76,6 +76,12 @@ From the developer, 2026-10-26:
     x86-64 machines are supported as well: arm64 and amd64 are both built and tested.
 11. **No history from the old repositories.** CutCraft-Web is a new repository that borrows their
     code, with a provenance file, not their revision history.
+
+From the developer, 2026-11-13 (Zulip #159, approved #160):
+
+12. **Fonts are shared by the household, like an operating system's fonts.** The library is a font
+    archive as well as a design archive. There are no per-person font libraries
+    ([§10](#10-designs-fonts-and-files)).
 
 ## 3. Users, hardware and browsers
 
@@ -210,9 +216,9 @@ let one person, or their AI key, reach another person's work or the server's sec
     resolved only within the upload.
   - **The same checks** cover images, geometry, downloads and WebSocket subscriptions.
 - **Areas:**
-  - **Each person's own:** designs, fonts, drafts and settings. No one else can read it.
-  - **Shared by the household:** the project library and material/mat lists. Every user can
-    change them; saved projects retain their own setting snapshots.
+  - **Each person's own:** designs, drafts and settings. No one else can read it.
+  - **Shared by the household:** the project library, its fonts, and the material/mat lists. Every
+    user can change them, with no admin check; saved projects retain their own setting snapshots.
 - **Open mode** (no users yet, as in cameo-pi): one household principal. When the first admin is
   created, the household's area becomes theirs.
 - **Cutting keeps the actor.** A worker reaches the cutter service as its person, with a per-person
@@ -269,8 +275,8 @@ Each setting lives where it belongs:
 | Where | Settings | Stored |
 |---|---|---|
 | **Per project** | Units, snap and its step, the decisions, what to cut, material, mat, placement, the test-cut spot. | In the project (`.cutcraft`). A saved project keeps its material, so editing a material list never changes saved projects. |
-| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with, their fonts. | In their area, backed up. |
-| **Global** | Material and mat lists (developer decision, 2026-10-27). | One household catalog, backed up and used by library Adjust. |
+| **Per person** | Theme, interface font size, the desktop panel arrangement, the units, material and mat a new project starts with. | In their area, backed up. |
+| **Global** | Material and mat lists (developer decision, 2026-10-27). Installed fonts (developer decision, 2026-11-13). | One household catalog and the library's fonts, backed up. The catalog is used by library Adjust. |
 | **Per device** | Zoom and pan, which panel groups are folded, compact-layout presentation preferences. | In that browser only. |
 | **Per session** | The desktop layout's screen (Side by side, Overlay, Cut preview, cut screen), set by `view.show`. It is shared by the person's desktop layouts and MCP, as one window is today. | In the session. |
 
@@ -323,7 +329,7 @@ presented for a phone:**
 
 | Capability | On the phone |
 |---|---|
-| Library | cameo-pi's pages: folders, search, sort, move, rename, Recently deleted, notes, history. |
+| Library | cameo-pi's pages: folders, search, sort, move, rename, Recently deleted, notes, history. Fonts: list, Upload, Download, Remove. |
 | Open and new projects | Upload a design (from the phone's files or photos), or open an uploaded design or a library project. |
 | Make cut-ready | Its report, and its questions as choice screens with *Show me*, which zooms to the objects concerned. |
 | Comparing | One view at a time, swiped or toggled: artwork, cut lines, overlay. This replaces side by side, which doesn't fit a phone. |
@@ -333,7 +339,7 @@ presented for a phone:**
 | Cutting | cameo-pi's pages: cutter choice, test cut, queue, Load the mat, Start, Pause, Stop, the live cut viewer. |
 | Undo and Redo | The shared history ([§7](#7-sessions)). |
 | Save, Save As, Download, Update from Design | As on the desktop. |
-| Settings | The person's settings, fonts, users, backups (admin), AI keys. |
+| Settings | The person's settings, users, backups (admin), AI keys. |
 
 - **Same capabilities is a rule, checked by a test.** Every user-facing registry command must be
   reachable from both layouts, or be listed in `docs/layout-exceptions.md` with the developer's
@@ -378,17 +384,34 @@ Unsupported/later features are handled explicitly, never silently omitted.
 - **Update from Design:** uploading a newer version of a project's design keeps the project's
   decisions where they still apply, as CutCraft's Update from Design does today. There is no
   automatic watch of the person's own computer.
-- **Fonts:**
-  - **Bundled:** the server has VectorCraft's craft fonts.
-  - **The person's own:** each person can upload fonts in Settings, for designs that use them.
-  - **Make cut-ready's font check** runs against the bundled fonts and that person's own, in a
-    font context of their own, never shared between people. A worker per session provides this
-    naturally ([§5](#5-architecture)).
+- **Fonts are shared by the household, like an operating system's fonts** (developer decision,
+  2026-11-13). There are no per-person font libraries.
+  - **Available fonts:** VectorCraft's bundled craft fonts, the fonts of the server's operating
+    system (VectorCraft's normal system font scan), and fonts installed in the library. Make
+    cut-ready's font check uses all of them, for everyone.
+  - **The library is a font archive** as well as a design archive ([§16](#16-the-library)). Any
+    signed-in person can upload, download, replace or remove an installed font; there is no admin
+    check. Each font shows where it came from. Bundled fonts can't be removed.
+  - **Download** lets a person install a font on their own computer, for example to change an old
+    design in VectorCraft.
+  - **A project's details list the fonts it uses,** each marked available (with Download) or "not
+    on this server" (with Upload). A design that cuts from its saved letter shapes, such as one
+    using Arial from another computer, can have its font added so it stays editable over time.
   - **A missing font** says which one, with "Upload a font" or the design guide's advice to save
     text as shapes.
+  - **Every installed font is checked in a preparation worker first,** and never replaces an
+    existing font without saying so ("Replace *name*").
+  - **Embedded fonts stay with their design.** Nothing is installed automatically. Later, not in
+    M4: an explicit "Install this font", offered only when the file contains a complete font whose
+    licence allows installing, or when the person supplies the complete font.
+  - **Saved projects keep their letter shapes, never complete fonts** (SAVE-02, OPEN-10). A project
+    still cuts years later on a server that no longer has the font. CutCraft doesn't edit text, so
+    it never needs the complete font, and `.cutcraft` downloads don't redistribute fonts.
 - **Untrusted input:** every upload is checked before use: size, type, decoded picture size, page
   count ([§18](#18-resources-and-isolation)). It is opened only in a preparation worker.
-- **Downloads:** a project as `.cutcraft`, and its cut lines as SVG.
+- **Downloads:** a project as `.cutcraft`, its original design file, and its cut lines as SVG.
+  VectorCraft can't open `.cutcraft` files, so downloading the original design is how an old
+  project goes back to VectorCraft for changes. Installed fonts download from the library.
 
 ## 11. Saving
 
@@ -523,6 +546,8 @@ picture of the visible region at the current zoom. The browser does the same:
   folder with its details and numbered revisions. "Project" is only the label, so the storage
   stays.
 - **Opening** a project loads it into the session. **Save** adds a revision ([§11](#11-saving)).
+- **Fonts:** the library also holds the household's installed fonts, with Upload, Download and
+  Remove ([§10](#10-designs-fonts-and-files)).
 
 ## 17. Users and security
 
@@ -603,6 +628,8 @@ UI split:
   - **Per person:** each person's area, under their user id, with their name recorded.
   - **Unchanged:** the library, and schema 2's immutable-generation rules and retained-key
     warnings.
+  - **Fonts:** the library's installed fonts are backed up and restored with it. Bundled fonts and
+    the operating system's fonts are not backed up.
   - **Never backed up:** passwords and login sessions, AI keys, the backup's SSH key, the TLS key,
     pairings.
   - **Restoring older backups:** schema 1 and 2 restore as libraries only.
@@ -732,6 +759,11 @@ features deliberately removed before 1.0.5. No other missing reference feature i
 - Shipping the CutCraft desktop app or cameo-pi again.
 
 ## 26. Revision history
+
+- **Version 2.1 (2026-11-13):** fonts are shared by the household and kept in the library, with
+  Upload, Download and Remove; projects list the fonts they use; installed fonts are backed up with
+  the library; Download original design. Replaces per-person fonts and per-person font isolation
+  (§§2, 6, 8, 9, 10, 16, 20). Developer decision, Zulip #159, approved #160.
 
 - **Version 2 proposal (2026-10-28):** audit of the complete original spec and 162 commits through
   1.0.5. Adds the missing normative UI/behaviour contract, original-spec coverage map,
