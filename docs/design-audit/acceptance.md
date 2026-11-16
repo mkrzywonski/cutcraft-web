@@ -27,7 +27,7 @@ a previous import. Negative cases stay blocked even if a neighbouring issue is a
 | Case | Fixture | Initial reference result and required exercise |
 |---|---|---|
 | F01 | `01-no-physical-size.svg` | `confirm_size`, not ready. Confirm vector size, then linked resize; contrast with automatic picture size. |
-| F02 | `02-missing-font.svg` | `font_substitute`, not ready. Show family/replacement; explicit acceptance, or isolated font upload/reopen; preserve holes and words. |
+| F02 | `02-missing-font.svg` | `font_substitute`, not ready. Show family/replacement; explicit acceptance, or library font upload/reopen; preserve holes and words. |
 | F03 | `03-gradient-fill.svg` | `appearance`, not ready. Choose each offered solid colour and exclusion; no silent flatten. |
 | F04 | `04-semi-transparent.svg` | `appearance`, not ready. Cut solid/exclude, with source comparison and undoable result. |
 | F05 | `05-embedded-picture.svg` | `exclude_picture`, not ready. Explicit exclusion permits retained vector art; no invented embedded tracing control. |

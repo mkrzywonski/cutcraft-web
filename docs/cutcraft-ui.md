@@ -108,7 +108,9 @@ an embedded-font entry alone is insufficient. Offer the file's saved letter shap
 route preserves all relevant fonts; otherwise name the substitute and require acceptance, or offer
 font upload/editor outlining. Missing glyphs/failed extraction block rather than vanish. Show
 original comparison only when it is reliable. Fingerprint accepted fonts; saved outlined geometry
-must repeat without reinstalling them. Per-person font isolation is mandatory.
+must repeat without reinstalling them. Fonts are shared by the household (web §10): the check uses
+the bundled, operating-system and library-installed fonts for everyone. Installed fonts are checked
+in a worker first and never silently replace an existing font. Embedded fonts stay with their design.
 
 ## 3. Tracing and preparation
 
@@ -188,8 +190,8 @@ removing these capabilities; browser substitutions are named explicitly here and
 
 | Menu | Entries and behaviour |
 |---|---|
-| File | Open, Open Recent, Save, Save As, Update from Design, Close. Add Library and Download project/cut lines. Quit is intentionally absent: use the browser's tab/window controls. |
-| Edit | Undo, Redo, Materials, Mats, AI Connection. Web account/font/settings pages remain reachable too. |
+| File | Open, Open Recent, Save, Save As, Update from Design, Close. Add Library and Download project/original design/cut lines. Quit is intentionally absent: use the browser's tab/window controls. |
+| Edit | Undo, Redo, Materials, Mats, AI Connection. Web account/settings pages and the library's fonts remain reachable too. |
 | View | Side by side, Overlay, Cut Preview; context-sensitive Zoom In/Out/Fit or Make Design Bigger/Smaller/Fit Design to Mat; Reset Panel Layout; Interface font size (10–24 pt, reset 14); inches/mm; Show Moves Between Cuts; Show Test-Cut Spot. Add the layout override and theme choice. |
 | Cut | Cut Preview, Test Cut, Cut, Stop. No redundant Cutter submenu. |
 | Help | Troubleshooting, Manual, How to Save Designs for Cutting, Set Up AI Tools, About. |
