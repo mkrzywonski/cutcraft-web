@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.21.3 — 2026-11-18
+
+- Tag and list default presets first, add the editor default checkbox, show empty/error states, and use selected units for mat dimensions. Deleting a default clears its saved identity without altering an open design.
+- Add menu shortcut hints and restore default panel folds on Reset. Hide the optional test spot initially while always showing occupied areas on cut screens.
+- Prevent the transparent browser keyboard input from intercepting canvas clicks after editing a field.
+
 ## 0.21.2 — 2026-11-18
 
 - Replace direct use of the unmaintained chrono crate with Jiff for backup scheduling. Keep the selected local clock time across daylight-saving changes and test skipped/repeated times. Update yanked wasmi 2.0.0 packages to 2.0.1 without changing the pinned VectorCraft revision.

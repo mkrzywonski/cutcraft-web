@@ -53,6 +53,7 @@ pub struct Dialog {
     pub original: Option<String>,
     pub search: String,
     pub selected: Option<String>,
+    pub default_preset: bool,
 }
 pub struct Desktop {
     unprepared_cut_preview: bool,
@@ -112,7 +113,7 @@ impl Default for Desktop {
             drag_delta: egui::Vec2::ZERO,
             drag_settling: None,
             target: "design".into(),
-            show_test: true,
+            show_test: false,
             tool_motion: false,
             order: 1.,
             playing: false,

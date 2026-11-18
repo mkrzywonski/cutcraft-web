@@ -187,6 +187,11 @@ if(opened.status!==200)throw Error('Sam opens the library project: '+JSON.string
 await sam.until(async()=>(await sam.state()).snapshot.design?.saved?.job===job,'Sam has the library project open');
 
 await alex.type('Force','12');await alex.until(async()=>(await alex.state()).snapshot.ui.sheet.material.force===12,'Alex edits');
+const foldGap=async()=>{const a=await alex.control('Panel Info'),b=await alex.control('Panel Artwork size');return b[1]-a[1];};
+const openGap=await foldGap();
+await alex.click('Menu View');await alex.click('Reset panel layout');
+await alex.until(async()=>!(await alex.state()).snapshot.ui.panel.open?.Info && !(await alex.state()).pending,'Reset fold preference');await sleep(300);
+check(await foldGap()<openGap,'Reset panel layout visually restores default folded state');
 await alex.click('Save');
 await alex.until(async()=>{const d=(await alex.state()).snapshot.design;return d.saved.revision>revision1&&!d.unsaved;},'Alex saves a new revision');
 const revision2=(await alex.state()).snapshot.design.saved.revision;

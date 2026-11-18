@@ -791,7 +791,7 @@ features deliberately removed before 1.0.5. No other missing reference feature i
   - **One product, self-contained:** the code is imported, the old products retired (§2, §5.2).
   - **The command registry** is the one path, not the Action enum. A browser-safe protocol crate
     (§5, §13).
-  - **Authority:** principals, owned identifiers, per-person areas and fonts (§6).
+  - **Authority:** principals, owned identifiers, per-person areas and shared fonts (§6).
   - **Sessions:** idempotency with incarnations, opening another project with unsaved work,
     shared Undo, draft timing (§7).
   - **Settings** per project, person, device and session. Units move into the project (§8).

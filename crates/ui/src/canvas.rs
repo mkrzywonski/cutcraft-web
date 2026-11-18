@@ -103,7 +103,7 @@ impl Desktop {
         }
     }
     fn occupied_test_bounds(&self) -> Vec<[f64; 4]> {
-        if !self.show_test {
+        if !self.show_test && !matches!(self.screen(), "cut" | "test-cut") {
             return Vec::new();
         }
         let Some(mat) = &self.remote.geometry.mat else {
@@ -1170,6 +1170,12 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        desktop.remote.snapshot.ui.screen = "test-cut".into();
+        assert_eq!(
+            desktop.occupied_test_bounds(),
+            vec![[13., 20., 38.4, 45.4]],
+            "the cutting screen always shows occupied safety areas"
         );
         desktop.show_test = true;
         desktop.remote.geometry.mat.as_mut().unwrap().origin_mm = [0., 0.];

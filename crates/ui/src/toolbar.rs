@@ -5,34 +5,34 @@ impl Desktop {
     pub fn menus(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             let menu = ui.menu_button("File", |ui| {
-                if self.button(ui, "Open…", true) {
+                if self.menu_item(ui, "Open…", true) {
                     self.send("upload", json!({}));
                     ui.close();
                 }
-                if self.button(ui, "Open from library…", true) {
+                if self.menu_item(ui, "Open from library…", true) {
                     self.send("library", json!({}));
                     self.open_dialog("library", "Open from library");
                     ui.close();
                 }
-                if self.button(ui, "Recent designs…", true) {
+                if self.menu_item(ui, "Recent designs…", true) {
                     self.send("uploads", json!({}));
                     self.open_dialog("uploads", "Recent designs");
                     ui.close();
                 }
                 ui.separator();
-                if self.button(ui, "Save", self.has_design()) {
+                if self.menu_item(ui, "Save", self.has_design()) {
                     self.save(false);
                     ui.close();
                 }
-                if self.button(ui, "Save As…", self.has_design()) {
+                if self.menu_item(ui, "Save As…", self.has_design()) {
                     self.save(true);
                     ui.close();
                 }
-                if self.button(ui, "Download project…", self.has_design()) {
+                if self.menu_item(ui, "Download project…", self.has_design()) {
                     self.send("download", json!({"kind":"project"}));
                     ui.close();
                 }
-                if self.button(ui, "Update from Design…", self.has_design()) {
+                if self.menu_item(ui, "Update from Design…", self.has_design()) {
                     self.send("upload", json!({"update":true}));
                     ui.close();
                 }
@@ -43,23 +43,26 @@ impl Desktop {
                         ("cutter-file", "Cutter file (inspection only)"),
                         ("plan", "Cut plan"),
                     ] {
-                        if self.button(ui, label, self.has_design()) {
+                        if self.menu_item(ui, label, self.has_design()) {
                             self.send("download", json!({"kind":kind}));
                             ui.close();
                         }
                     }
                 });
                 ui.separator();
-                if self.button(ui, "Close design", self.has_design()) {
+                if self.menu_item(ui, "Close design", self.has_design()) {
                     self.open_dialog("close", "Close design");
                     ui.close();
                 }
             });
             self.record("Menu File", &menu.response);
             let menu = ui.menu_button("Edit", |ui| {
-                self.action_button(ui, "Undo", "history.undo", json!({}));
-                self.action_button(ui, "Redo", "history.redo", json!({}));
-                if self.button(ui, "History…", true) {
+                for (label, id) in [("Undo", "history.undo"), ("Redo", "history.redo")] {
+                    if self.menu_item(ui, label, self.enabled(id)) {
+                        self.command(id, json!({}));
+                    }
+                }
+                if self.menu_item(ui, "History…", true) {
                     self.open_dialog("history", "History");
                     ui.close();
                 }
@@ -69,12 +72,12 @@ impl Desktop {
                     ("mats", "Mats…"),
                     ("preferences", "Preferences…"),
                 ] {
-                    if self.button(ui, label, true) {
+                    if self.menu_item(ui, label, true) {
                         self.open_dialog(kind, label);
                         ui.close();
                     }
                 }
-                if self.button(ui, "AI connection…", true) {
+                if self.menu_item(ui, "AI connection…", true) {
                     self.send("settings", json!({"section":"keys"}));
                     ui.close();
                 }
@@ -88,7 +91,19 @@ impl Desktop {
                 ] {
                     let selected = self.screen() == screen;
                     if ui
-                        .add_enabled(!self.cut_busy(), egui::Button::selectable(selected, label))
+                        .add_enabled(
+                            !self.cut_busy(),
+                            egui::Button::selectable(selected, label).shortcut_text(
+                                ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                                    Modifiers::COMMAND,
+                                    match screen {
+                                        "side-by-side" => Key::Num1,
+                                        "overlay" => Key::Num2,
+                                        _ => Key::Num3,
+                                    },
+                                )),
+                            ),
+                        )
                         .clicked()
                     {
                         self.command("view.show", json!({"screen":screen}));
@@ -98,10 +113,10 @@ impl Desktop {
                 ui.separator();
                 let zoom = self.view_controls_enabled();
                 let mat = self.screen() == "mat";
-                if self.button(ui, if mat { "Make design bigger" } else { "Zoom in" }, zoom) {
+                if self.menu_item(ui, if mat { "Make design bigger" } else { "Zoom in" }, zoom) {
                     self.zoom_view(true);
                 }
-                if self.button(
+                if self.menu_item(
                     ui,
                     if mat {
                         "Make design smaller"
@@ -112,7 +127,7 @@ impl Desktop {
                 ) {
                     self.zoom_view(false);
                 }
-                if self.button(
+                if self.menu_item(
                     ui,
                     if mat {
                         "Fit design to mat"
@@ -134,37 +149,37 @@ impl Desktop {
                         self.command("settings.units", json!({"units":units}));
                     }
                 }
-                if self.button(ui, "Interface font size and theme…", true) {
+                if self.menu_item(ui, "Interface font size and theme…", true) {
                     self.open_dialog("preferences", "Preferences");
                     ui.close();
                 }
-                if self.button(ui, "Reset panel layout", true) {
+                if self.menu_item(ui, "Reset panel layout", true) {
                     self.command("settings.panel", json!({"order":[],"locked":[],"open":{}}));
                 }
-                if self.button(ui, "Phone layout", true) {
+                if self.menu_item(ui, "Phone layout", true) {
                     self.send("layout", json!({"layout":"compact"}));
                 }
             });
             self.record("Menu View", &menu.response);
             let menu = ui.menu_button("Cut", |ui| {
-                if self.button(ui, "Cut Preview", !self.cut_busy()) {
+                if self.menu_item(ui, "Cut Preview", !self.cut_busy()) {
                     self.command("view.show", json!({"screen":"mat"}));
                     ui.close();
                 }
-                if self.button(ui, "Stop now", self.cut_busy()) {
+                if self.menu_item(ui, "Stop now", self.cut_busy()) {
                     self.send("cutter", json!({"id":self.cutter,"action":"stop"}));
                     ui.close();
                 }
 
-                if self.button(ui, "Cut…", self.ready() && !self.cut_busy()) {
+                if self.menu_item(ui, "Cut…", self.ready() && !self.cut_busy()) {
                     self.enter_cut(false);
                     ui.close();
                 }
-                if self.button(ui, "Test Cut…", self.has_design() && !self.cut_busy()) {
+                if self.menu_item(ui, "Test Cut…", self.has_design() && !self.cut_busy()) {
                     self.enter_cut(true);
                     ui.close();
                 }
-                if self.button(ui, "Cutters and queue…", true) {
+                if self.menu_item(ui, "Cutters and queue…", true) {
                     self.send("settings", json!({"section":"cutters"}));
                     ui.close();
                 }
@@ -177,19 +192,19 @@ impl Desktop {
                     ("ai-help", "Set up AI tools"),
                     ("about", "About CutCraft"),
                 ] {
-                    if self.button(ui, label, true) {
+                    if self.menu_item(ui, label, true) {
                         self.open_dialog(kind, label);
                         ui.close();
                     }
                 }
-                if self.button(ui, "Manual", true) {
+                if self.menu_item(ui, "Manual", true) {
                     self.open_dialog("manual", "User manual");
                     ui.close();
                 }
             });
             self.record("Menu Help", &menu.response);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.button(ui, "Account", true) {
+                if self.menu_item(ui, "Account", true) {
                     self.send("settings", json!({"section":"settings"}));
                 }
                 ui.add(
@@ -208,6 +223,15 @@ impl Desktop {
                 );
             });
         });
+    }
+    fn menu_item(&mut self, ui: &mut Ui, label: &str, enabled: bool) -> bool {
+        let mut button = egui::Button::new(label);
+        if let Some(shortcut) = menu_shortcut(label) {
+            button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+        }
+        let response = ui.add_enabled(enabled, button);
+        self.record(label, &response);
+        response.clicked()
     }
     fn tool(
         &mut self,
@@ -654,6 +678,22 @@ impl Desktop {
         self.unprepared_cut_preview = false;
         self.remote.geometry = saved;
     }
+}
+
+fn menu_shortcut(label: &str) -> Option<egui::KeyboardShortcut> {
+    let (modifiers, key) = match label {
+        "Open…" => (Modifiers::COMMAND, Key::O),
+        "Save" => (Modifiers::COMMAND, Key::S),
+        "Save As…" => (Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
+        "Undo" => (Modifiers::COMMAND, Key::Z),
+        "Redo" => (Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
+        "Zoom in" | "Make design bigger" => (Modifiers::COMMAND, Key::Plus),
+        "Zoom out" | "Make design smaller" => (Modifiers::COMMAND, Key::Minus),
+        "Fit in window" | "Fit design to mat" => (Modifiers::COMMAND, Key::Num0),
+        "Stop now" => (Modifiers::NONE, Key::Escape),
+        _ => return None,
+    };
+    Some(egui::KeyboardShortcut::new(modifiers, key))
 }
 
 #[cfg(test)]

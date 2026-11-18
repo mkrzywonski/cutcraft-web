@@ -34,7 +34,7 @@ Force presses the blade into the material. Speed controls movement. Passes repea
 
 Save updates the selected material preset. Save As creates a separately named preset. Unsaved adjustments remain with the design session across browser reloads and service restarts, until you select another preset or close the design session. Saving a project records its own sheet settings without overwriting the material preset.
 
-Edit > Materials opens the preset library. Single-click selects an item so it can be duplicated or deleted; Edit opens its settings. Help > Troubleshooting explains which settings to try for shallow cuts, tearing, lifting material and other common problems.
+Edit > Materials opens the preset library. The default preset is tagged and listed first. Use as default, or the editor checkbox, chooses the starting preset for new designs. Deleting that preset clears the default; new imports then use session material if available, otherwise the first available material. Saved projects keep their own settings. Single-click selects an item so it can be duplicated or deleted; Edit opens its settings. Help > Troubleshooting explains which settings to try for shallow cuts, tearing, lifting material and other common problems.
 
 ## Choose a mat and place the design
 

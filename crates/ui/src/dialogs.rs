@@ -8,7 +8,8 @@ impl Desktop {
         };
         let mut open = true;
         let mut done = false;
-        let modal=egui::Modal::new(egui::Id::new(("dialog", d.kind.as_str())))
+        let id = egui::Id::new(("dialog", d.kind.as_str()));
+        let modal=egui::Modal::new(id)
             .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(20)).show(ctx,|ui|{
                 ui.set_width(620_f32.min(ctx.content_rect().width()-60.));
                 if matches!(d.kind.as_str(), "materials"|"mats"|"material-edit"|"mat-edit") { ui.set_height((ctx.content_rect().height()-100.).clamp(200.,760.)); }
@@ -17,6 +18,7 @@ impl Desktop {
                     ui.horizontal(|ui|{ui.strong("Cutter active");if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}});
                 }
                 ui.separator();
+                if self.remote.result.get("error_code").is_some() && !self.remote.message.is_empty() {ui.colored_label(egui::Color32::RED,&self.remote.message);}
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height()-150.).max(200.)).show(ui,|ui|{
                     match d.kind.as_str(){
                         "materials"|"mats"=>self.library_dialog(ui,&mut d),
@@ -119,11 +121,26 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
     }
     fn library_dialog(&mut self, ui: &mut Ui, d: &mut Dialog) {
         let material = d.kind == "materials";
-        let entries = if material {
+        let default_name =
+            text(&self.remote.snapshot.ui.defaults[if material { "material" } else { "mat" }])
+                .to_owned();
+        let mut entries = if material {
             self.remote.snapshot.ui.materials.clone()
         } else {
             self.remote.snapshot.ui.mats.clone()
         };
+        entries.sort_by_key(|v| {
+            (
+                text(&v["name"]) != default_name,
+                text(&v["name"]).to_lowercase(),
+            )
+        });
+        if d.selected
+            .as_ref()
+            .is_some_and(|selected| !entries.iter().any(|v| text(&v["name"]) == selected))
+        {
+            d.selected = None;
+        }
         ui.add(egui::TextEdit::singleline(&mut d.search).hint_text("Search by name"));
         ui.horizontal_wrapped(|ui| {
             if self.button(ui, "New…", true) {
@@ -167,11 +184,13 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
             }
         });
         ui.separator();
+        let mut shown = 0;
         for value in entries {
             let name = text(&value["name"]);
             if !name.to_lowercase().contains(&d.search.to_lowercase()) {
                 continue;
             }
+            shown += 1;
             egui::Frame::group(ui.style())
                 .inner_margin(12)
                 .show(ui, |ui| {
@@ -179,6 +198,11 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
                         d.selected.as_deref() == Some(name),
                         egui::RichText::new(name).strong(),
                     );
+                    self.record(&format!("Preset {name}"), &r);
+                    if name == default_name {
+                        let tag = ui.weak("Default");
+                        self.record(&format!("Default preset {name}"), &tag);
+                    }
                     if r.clicked() {
                         d.selected = Some(name.into());
                     }
@@ -191,17 +215,28 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
                             value["blade"], value["force"], value["speed"], value["passes"]
                         ));
                     } else {
+                        let inches = self.remote.snapshot.ui.units == "inches";
+                        let factor = if inches { 25.4 } else { 1. };
                         ui.weak(format!(
-                            "{:.1} × {:.1} mm",
-                            number(&value["outer_mm"][0]),
-                            number(&value["outer_mm"][1])
+                            "{:.2} × {:.2} {}",
+                            number(&value["outer_mm"][0]) / factor,
+                            number(&value["outer_mm"][1]) / factor,
+                            if inches { "in" } else { "mm" }
                         ));
                     }
                 });
             ui.add_space(6.);
         }
+        if shown == 0 {
+            ui.label("No matching presets.");
+        }
     }
     fn edit_dialog(&mut self, material: bool, value: Value, original: Option<String>) {
+        let default_preset = original.as_deref().is_some_and(|name| {
+            name == text(
+                &self.remote.snapshot.ui.defaults[if material { "material" } else { "mat" }],
+            )
+        });
         self.dialog = Some(Dialog {
             kind: if material {
                 "material-edit"
@@ -217,12 +252,22 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
             .into(),
             value,
             original,
+            default_preset,
             ..Default::default()
         });
     }
     fn editor(&mut self, ui: &mut Ui, d: &mut Dialog) {
         let material = d.kind == "material-edit";
-        string_field(ui, "Name", &mut d.value["name"]);
+        ui.label("Name");
+        let mut name = text(&d.value["name"]).to_owned();
+        let response = ui.text_edit_singleline(&mut name);
+        self.record("Preset name", &response);
+        if response.changed() {
+            d.value["name"] = json!(name);
+        }
+        let default = ui.checkbox(&mut d.default_preset, "Default for new designs");
+        self.record("Default for new designs", &default);
+        let inches = self.remote.snapshot.ui.units == "inches";
         if material {
             for (key, label, min, max) in [
                 ("blade", "Blade depth", 1., 10.),
@@ -283,13 +328,13 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
             ] {
                 ui.label(label);
                 for i in 0..n {
-                    numeric_field(
+                    draft_length(
                         ui,
-                        &format!("{label} {} (mm)", i + 1),
+                        &format!("{label} {}", i + 1),
                         &mut d.value[key][i],
                         0.,
                         2000.,
-                        false,
+                        inches,
                     );
                 }
             }
@@ -325,9 +370,9 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
         ui.horizontal(|ui| {
             if self.button(ui, "Save changes", !self.remote.pending) {
                 let params = if material {
-                    json!({"material":d.value,"rename_from":d.original})
+                    json!({"material":d.value,"rename_from":d.original,"default":d.default_preset})
                 } else {
-                    json!({"mat":d.value,"rename_from":d.original})
+                    json!({"mat":d.value,"rename_from":d.original,"default":d.default_preset})
                 };
                 self.command(
                     if material {
@@ -392,6 +437,104 @@ fn help(ui: &mut Ui, source: &str) {
             });
         } else {
             ui.add_space(6.);
+        }
+    }
+}
+
+fn draft_length(ui: &mut Ui, label: &str, value: &mut Value, min: f64, max: f64, inches: bool) {
+    let factor = if inches { 25.4 } else { 1. };
+    let mut n = number(value) / factor;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if ui
+            .add(
+                egui::DragValue::new(&mut n)
+                    .range(min / factor..=max / factor)
+                    .speed(0.1 / factor)
+                    .suffix(if inches { " in" } else { " mm" })
+                    .custom_parser(move |s| {
+                        crate::panels::parse_length(s, inches).map(|mm| mm / factor)
+                    }),
+            )
+            .changed()
+        {
+            *value = json!(n * factor);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn reopened_editor_accepts_name_focus_after_library_selection() {
+        let mut desktop = Desktop::default();
+        let ctx = Context::default();
+        let frame = |desktop: &mut Desktop, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 900.),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| desktop.frame(ui));
+            out.textures_delta.clear();
+        };
+        for _ in 0..2 {
+            desktop.open_dialog("materials", "Materials");
+            for _ in 0..3 {
+                frame(&mut desktop, vec![]);
+            }
+            desktop.edit_dialog(true, json!({"name":"Material"}), Some("Material".into()));
+            for _ in 0..3 {
+                frame(&mut desktop, vec![]);
+            }
+            let rect = desktop.controls["Preset name"];
+            let pos = egui::pos2((rect[0] + rect[2]) / 2., (rect[1] + rect[3]) / 2.);
+            frame(&mut desktop, vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                frame(
+                    &mut desktop,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            assert!(
+                ctx.text_edit_focused(),
+                "clicking the reopened name must focus it"
+            );
+            frame(
+                &mut desktop,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            desktop.dialog = None;
+            frame(&mut desktop, vec![]);
+        }
+    }
+
+    #[test]
+    fn editing_default_preserves_its_flag_but_new_and_duplicate_start_unchecked() {
+        let mut desktop = Desktop::default();
+        desktop.remote.snapshot.ui.defaults = json!({"material":"Vinyl","mat":"My mat"});
+        for (material, name) in [(true, "Vinyl"), (false, "My mat")] {
+            desktop.edit_dialog(material, json!({"name":name}), Some(name.into()));
+            assert!(desktop.dialog.as_ref().unwrap().default_preset);
+            desktop.edit_dialog(material, json!({"name":format!("{name} copy")}), None);
+            assert!(!desktop.dialog.as_ref().unwrap().default_preset);
+            desktop.edit_dialog(material, json!({"name":"Other"}), Some("Other".into()));
+            assert!(!desktop.dialog.as_ref().unwrap().default_preset);
         }
     }
 }

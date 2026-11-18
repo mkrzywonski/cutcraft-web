@@ -474,3 +474,29 @@ packages advance to 2.0.1; the full VectorCraft commit pin is unchanged. No advi
 The two targeted schedule tests pass. Full local-worktree verification (including the pending
 preset UI batch) passed fmt, native/wasm Clippy, all 494 Rust tests, workspace build and cargo deny
 (`/tmp/codex-m4-final-base.log`). This maintenance commit is separate from the desktop changes.
+
+## Preset editors, panel reset and browser pointer focus (0.21.3)
+
+Default materials/mats are tagged and listed first. Their editors expose Default for new designs;
+New/Duplicate start unchecked, editing preserves the choice, and rename follows it. Deleting the
+person's default clears the saved choice, including after restart, without changing an open
+project. Missing defaults fall back during import. Mat draft dimensions and list summaries use
+the selected units. Empty searches and command errors are visible. Menus show platform shortcut
+hints. Reset panel layout restores the actual default fold state, not only its saved JSON.
+The optional test-spot overlay starts hidden; cutting screens always show occupied test areas.
+
+Browser acceptance exposed a separate input defect: eframe's transparent keyboard input could
+intercept a canvas click at its retained cursor location. The input now ignores pointer hits while
+remaining focusable for typing. The real browser test checks that hit testing reaches the canvas
+and then renames the preset; no extra click/retry or direct dispatcher shortcut is used.
+
+The full checks for this code passed all 494 Rust tests, fmt, native/wasm Clippy, workspace build
+and dependency policy (`/tmp/codex-m4-final-base.log`). After the version-only bump, the desktop
+bundle/server were rebuilt and the full desktop and compact browser workflows passed
+(`/tmp/codex-m4-presets-final-desktop.log`, `/tmp/codex-m4-presets-compact.log`). The preferences
+and save-conflict browser run passed as well, including visual Reset and two-account/reload
+checks (`/tmp/codex-m4-presets-final-preferences.log`); its Start-fault cases were explicitly
+skipped. An earlier combined browser process ended before completion and is not acceptance.
+The menu, renamed editor and occupied-test captures were inspected; local authored-fixture
+captures are in `/tmp/cutcraft-desktop-check.tGm3Jk` and `/tmp/cutcraft-desktop-check.P7PCyU`.
+No hardware used. Remaining M4 gaps, including shared fonts and review #157, are still open.

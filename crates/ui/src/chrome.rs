@@ -389,9 +389,7 @@ pub fn flagged_section(
             if let Some(pass) = pass
                 && ui.data(|d| d.get_temp::<Option<bool>>(applied)) != Some(pass.open)
             {
-                if let Some(open) = pass.open {
-                    state.set_open(open);
-                }
+                state.set_open(pass.open.unwrap_or(default_open));
                 ui.data_mut(|d| d.insert_temp(applied, pass.open));
             }
             let font = egui::TextStyle::Button.resolve(ui.style());

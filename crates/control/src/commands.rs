@@ -2620,6 +2620,20 @@ impl Controller {
                     .store
                     .save_mats(&mats)
                     .map_err(CommandError::failed)?;
+                if state
+                    .new_design
+                    .mat
+                    .as_deref()
+                    .is_some_and(|saved| saved.eq_ignore_ascii_case(&p.name))
+                {
+                    let mut defaults = state.new_design.clone();
+                    defaults.mat = None;
+                    self.0
+                        .store
+                        .save_new_design(defaults.clone())
+                        .map_err(CommandError::failed)?;
+                    state.new_design = defaults;
+                }
                 state.mats = mats;
                 state.revision += 1;
                 drop(state);
@@ -3718,6 +3732,20 @@ impl Controller {
             .store
             .save_materials(&library)
             .map_err(CommandError::failed)?;
+        if state
+            .new_design
+            .material
+            .as_deref()
+            .is_some_and(|saved| saved.eq_ignore_ascii_case(name))
+        {
+            let mut defaults = state.new_design.clone();
+            defaults.material = None;
+            self.0
+                .store
+                .save_new_design(defaults.clone())
+                .map_err(CommandError::failed)?;
+            state.new_design = defaults;
+        }
         state.materials = library;
         state.revision += 1;
         drop(state);
@@ -5846,6 +5874,53 @@ mod tests {
         let view = wait_for(&controller, CutState::Interrupted);
         assert!(view.interrupted && !view.completed);
         assert!(view.message.unwrap().contains("load fresh material"));
+    }
+
+    #[test]
+    fn deleting_default_presets_clears_saved_choices_without_changing_open_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("design.svg");
+        std::fs::write(&source, DESIGN).unwrap();
+        let store = crate::SettingsStore::new(dir.path().join("settings"));
+        let controller = Controller::build(store.clone(), Roots::default(), false);
+        let snapshot = controller.snapshot().unwrap();
+        let material = snapshot.materials.last().unwrap().name.clone();
+        let mat = snapshot.mats.last().unwrap().name.clone();
+        run(
+            &controller,
+            "settings.new_design",
+            json!({"material": material, "mat": mat}),
+        )
+        .unwrap();
+        run(&controller, "design.open", json!({"path": source})).unwrap();
+        let before =
+            serde_json::to_value(&controller.snapshot().unwrap().design.unwrap().project).unwrap();
+        run(
+            &controller,
+            "materials.delete",
+            json!({"name": material.to_lowercase()}),
+        )
+        .unwrap();
+        run(
+            &controller,
+            "mats.delete",
+            json!({"name": mat.to_lowercase()}),
+        )
+        .unwrap();
+        let after = controller.snapshot().unwrap();
+        assert_eq!(after.new_design.material, None);
+        assert_eq!(after.new_design.mat, None);
+        assert_eq!(
+            serde_json::to_value(&after.design.unwrap().project).unwrap(),
+            before
+        );
+        let reloaded = Controller::build(store, Roots::default(), false);
+        assert_eq!(reloaded.snapshot().unwrap().new_design.material, None);
+        assert_eq!(reloaded.snapshot().unwrap().new_design.mat, None);
+        run(&reloaded, "design.open", json!({"path": source})).unwrap();
+        let sheet = reloaded.snapshot().unwrap().design.unwrap().project.sheets[0].clone();
+        assert_ne!(sheet.material.name, material);
+        assert_ne!(sheet.mat_profile().name, mat);
     }
 
     #[test]

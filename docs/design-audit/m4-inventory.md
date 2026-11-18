@@ -23,6 +23,18 @@ Subsequent work is recorded in [M4 progress](../m4-progress.md):
   its available height (`panels.rs::panel`); comparison primary-drag pans even with Space held.
   Neither observation alone establishes full panel or gesture acceptance.
 
+Later completed batches (see progress entries for exact test logs and limits):
+
+- VIEW-01: region-at-zoom rendering and image retention now have transport and browser coverage.
+- VIEW-03/MAT-06: feed/start annotations, per-edge ruler origins and the editable mat diagram are implemented.
+- VIEW-04: eight media handles, four anchored design corners, typed dimensions and settling after drop are implemented and browser-tested (0.18.4, 0.20.0).
+- VIEW-02: Show me includes withheld source objects without cut lines, with browser coverage (0.21.0). Keyboard/touch inspection remains open.
+- PANEL-03/UI-05: folds and appearance are per person on the server (0.21.1), including account isolation and reload coverage. Visual Reset has browser coverage (0.21.3).
+- PLAN-06/CUT-06: sender-byte-based estimated progress and distance-based order playback are implemented (0.19.0).
+- CUT-07: unresolved Start survives reload; changed-fence recovery is read-only and tested (0.20.1). Review #157's independent refresh concern remains open.
+- MAT-05/MAT-07: default tagging/order, editor checkbox, selection without editing, rename and delete fallback have browser coverage (0.21.3). Mat lengths follow the selected units.
+- HELP-01: Manual is bundled, opens offline and is reachable from About (0.21.0).
+
 ## How to read the status
 
 | Status | Meaning |
