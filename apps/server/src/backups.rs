@@ -634,24 +634,28 @@ fn minutes_of(at: &str) -> Option<u32> {
 
 /// The latest scheduled time at or before `now` (seconds), in local time.
 fn last_scheduled(settings: &Settings, now: u64) -> Option<u64> {
-    use chrono::{Datelike, Local, TimeZone, Timelike};
+    last_scheduled_in(settings, now, jiff::tz::TimeZone::system())
+}
+
+fn last_scheduled_in(settings: &Settings, now: u64, zone: jiff::tz::TimeZone) -> Option<u64> {
     let minutes = minutes_of(&settings.at)?;
-    let local = Local.timestamp_opt(now as i64, 0).single()?;
-    let today = local
-        .with_hour(minutes / 60)?
-        .with_minute(minutes % 60)?
-        .with_second(0)?;
-    let mut at = if today <= local {
-        today
-    } else {
-        today - chrono::Duration::days(1)
-    };
-    if settings.every == Every::Weekly {
-        while at.weekday().num_days_from_monday() != u32::from(settings.weekday.min(6)) {
-            at -= chrono::Duration::days(1);
+    let instant = jiff::Timestamp::from_second(now.try_into().ok()?).ok()?;
+    let mut date = instant.to_zoned(zone.clone()).date();
+    loop {
+        let at = date
+            .at((minutes / 60) as i8, (minutes % 60) as i8, 0, 0)
+            .to_zoned(zone.clone())
+            .ok()?
+            .timestamp();
+        if at <= instant
+            && (settings.every != Every::Weekly
+                || date.weekday().to_monday_zero_offset() == settings.weekday.min(6) as i8)
+        {
+            return at.as_second().try_into().ok();
         }
+        // Subtract a calendar day, not 24 hours: keep the chosen wall-clock time across DST.
+        date = date.yesterday().ok()?;
     }
-    Some(at.timestamp() as u64)
 }
 
 impl Service {
@@ -2040,8 +2044,10 @@ impl Remote {
             }
         }
         let date = |at| {
-            chrono::DateTime::from_timestamp(at as i64, 0)
-                .map(|d| d.format("%Y-%m-%d").to_string())
+            i64::try_from(at)
+                .ok()
+                .and_then(|at| jiff::Timestamp::from_second(at).ok())
+                .map(|d| d.to_zoned(jiff::tz::TimeZone::UTC).date().to_string())
                 .unwrap_or_default()
         };
         for r in &manifest.removed {
@@ -2317,6 +2323,42 @@ mod tests {
         // A file from 0.16–0.19 still reads, so the password can be moved.
         let old: Settings = serde_json::from_str(r#"{"password": "p"}"#).unwrap();
         assert_eq!(old.password.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn schedules_keep_local_time_across_daylight_saving_changes() {
+        let zone = jiff::tz::TimeZone::get("America/New_York").unwrap();
+        let seconds = |s: &str| s.parse::<jiff::Timestamp>().unwrap().as_second() as u64;
+        let settings = Settings {
+            every: Every::Daily,
+            at: "03:00".into(),
+            ..Settings::default()
+        };
+        for (now, expected) in [
+            ("2026-03-08T06:00:00Z", "2026-03-07T08:00:00Z"),
+            ("2026-03-08T08:00:00Z", "2026-03-08T07:00:00Z"),
+            ("2026-11-01T07:00:00Z", "2026-10-31T07:00:00Z"),
+        ] {
+            assert_eq!(
+                last_scheduled_in(&settings, seconds(now), zone.clone()),
+                Some(seconds(expected))
+            );
+        }
+        assert_eq!(last_scheduled_in(&settings, u64::MAX, zone.clone()), None);
+        // A missing time moves forward through the gap; a repeated time chooses its first occurrence.
+        for (at, now, expected) in [
+            ("02:30", "2026-03-08T08:00:00Z", "2026-03-08T07:30:00Z"),
+            ("01:30", "2026-11-01T07:00:00Z", "2026-11-01T05:30:00Z"),
+        ] {
+            let settings = Settings {
+                at: at.into(),
+                ..settings.clone()
+            };
+            assert_eq!(
+                last_scheduled_in(&settings, seconds(now), zone.clone()),
+                Some(seconds(expected))
+            );
+        }
     }
 
     #[test]

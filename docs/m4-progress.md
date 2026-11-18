@@ -462,3 +462,15 @@ system/service-user fonts. A process per person does not by itself meet bundled-
 isolation; an explicit engine font-path configuration is needed before enabling private uploads.
 **Superseded 2026-11-13 (#159–160):** fonts are shared by the household, so the system font scan is
 acceptable and no engine change is needed.
+
+## Dependency maintenance during M4 acceptance (0.21.2)
+
+Fresh dependency checks reported direct `chrono` use as unmaintained and the locked wasmi
+2.0.0 packages as yanked. Backup scheduling now uses Jiff. Calendar-day arithmetic retains
+local clock time across daylight-saving changes; deterministic tests cover both transitions,
+nonexistent and repeated clock times, and an out-of-range timestamp. The wasm interpreter
+packages advance to 2.0.1; the full VectorCraft commit pin is unchanged. No advisory is suppressed.
+
+The two targeted schedule tests pass. Full local-worktree verification (including the pending
+preset UI batch) passed fmt, native/wasm Clippy, all 494 Rust tests, workspace build and cargo deny
+(`/tmp/codex-m4-final-base.log`). This maintenance commit is separate from the desktop changes.

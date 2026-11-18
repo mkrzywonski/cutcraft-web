@@ -32,7 +32,7 @@ base64 = { workspace = true }
 russh = { workspace = true }
 russh-sftp = { workspace = true }
 age = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 futures-util = { workspace = true }
 getrandom.workspace = true
 serde.workspace = true

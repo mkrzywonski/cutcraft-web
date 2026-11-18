@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.21.2 — 2026-11-18
+
+- Replace direct use of the unmaintained chrono crate with Jiff for backup scheduling. Keep the selected local clock time across daylight-saving changes and test skipped/repeated times. Update yanked wasmi 2.0.0 packages to 2.0.1 without changing the pinned VectorCraft revision.
+
 ## 0.21.1 — 2026-11-13
 
 - Save interface appearance and panel fold state per person on the server, across browsers and worker restarts. Use shared validated settings commands instead of browser-only state. Require protocol 9 for the appearance action. Complete the supported-format list in the bundled manual.
