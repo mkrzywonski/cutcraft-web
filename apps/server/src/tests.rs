@@ -1302,6 +1302,33 @@ async fn an_ai_tool_works_through_mcp_with_a_key() {
 
     assert!(names.contains(&"design_status") && names.contains(&"design_cut_copy"));
     open_star(&h.app, None).await;
+    assert!(names.contains(&"design_original"));
+    let (_, _, original) = call(&mcp_router, tool(89, "design_original", json!({}))).await;
+    let source = &original["result"]["structuredContent"]["result"];
+    assert_eq!(source["filename"], "original.svg", "{original}");
+    let response = send_raw(
+        &h.app,
+        design(
+            "GET",
+            "/api/v1/design/download?kind=original",
+            Body::empty(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"original.svg\""
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    use base64::Engine;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(source["dataBase64"].as_str().unwrap())
+            .unwrap(),
+        bytes.as_ref()
+    );
     let (_, _, status) = call(&mcp_router, tool(90, "design_status", json!({}))).await;
     let snapshot = &status["result"]["structuredContent"]["result"];
     let args = json!({"key":"mcp-copy", "incarnation":snapshot["incarnation"], "revision":snapshot["revision"]});
@@ -1857,6 +1884,30 @@ async fn two_people_have_separate_sessions_and_private_areas() {
         alexs["design"].is_null(),
         "Alex's session is Alex's own: {alexs}"
     );
+
+    for (session, expected) in [
+        (Some(sam.as_str()), StatusCode::OK),
+        (Some(alex.as_str()), StatusCode::UNPROCESSABLE_ENTITY),
+        (None, StatusCode::UNAUTHORIZED),
+    ] {
+        let response = send_raw(
+            &h.app,
+            design(
+                "GET",
+                "/api/v1/design/download?kind=original",
+                Body::empty(),
+                session,
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), expected);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        if expected == StatusCode::OK {
+            assert_eq!(bytes.as_ref(), STAR.as_bytes());
+        } else {
+            assert!(!String::from_utf8_lossy(&bytes).contains(STAR));
+        }
+    }
 
     // Each person's upload is in their own area, by their account's id.
     let people = &h.app.service.people;

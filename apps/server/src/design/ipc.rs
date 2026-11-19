@@ -134,3 +134,28 @@ impl Pipe {
         let _ = self.writer.send(Write::Close).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    #[test]
+    fn maximum_original_download_fits_the_worker_frame_limit() {
+        // Byte arrays encoded as JSON integers can exceed this boundary for a valid upload.
+        let data_base64 = base64::engine::general_purpose::STANDARD
+            .encode(vec![255; crate::design::UPLOAD_LIMIT]);
+        let frame = serde_json::to_vec(&Response {
+            id: 1,
+            reply: WorkerReply::Original {
+                filename: "original.svg".into(),
+                data_base64,
+            },
+        })
+        .unwrap();
+        assert!(
+            frame.len() + 1 < MAX_FRAME,
+            "maximum upload must be downloadable"
+        );
+    }
+}

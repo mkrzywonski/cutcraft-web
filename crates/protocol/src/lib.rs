@@ -442,6 +442,11 @@ pub mod worker {
             mime: String,
             bytes: Vec<u8>,
         },
+        /// Base64 keeps a maximum-size source under the bounded worker JSON frame limit.
+        Original {
+            filename: String,
+            data_base64: String,
+        },
         Command(CommandReply),
         Cancel {
             requested: bool,

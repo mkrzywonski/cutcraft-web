@@ -852,6 +852,22 @@ impl Worker {
         reply
     }
     fn download(&self, kind: &str) -> Result<WorkerReply, String> {
+        if kind == "original" {
+            let output = self
+                .controller
+                .execute(Origin::User, "design.original", json!({}), None)
+                .map_err(|e| e.message)?;
+            return Ok(WorkerReply::Original {
+                filename: output.value["filename"]
+                    .as_str()
+                    .ok_or("Missing source filename.")?
+                    .to_owned(),
+                data_base64: output.value["dataBase64"]
+                    .as_str()
+                    .ok_or("Missing source bytes.")?
+                    .to_owned(),
+            });
+        }
         if kind == "project" {
             let WorkerReply::Export { project, .. } = self.export()? else {
                 return Err("Project unavailable.".into());
@@ -2004,6 +2020,42 @@ mod tests {
         let file: ProjectFile = serde_json::from_str(&project).unwrap();
         assert!(!file.project.prepared.cut_ready);
         assert!(!file.project.prepared.pending.is_empty());
+        let original = file.source.bytes().unwrap();
+        std::fs::remove_file(dir.path().join("designs/star.svg")).unwrap();
+        use base64::Engine;
+        let WorkerReply::Original {
+            data_base64,
+            filename,
+        } = worker.answer(WorkerRequest::Download {
+            kind: "original".into(),
+        })
+        else {
+            panic!("original download")
+        };
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(data_base64)
+                .unwrap(),
+            original
+        );
+        assert_eq!(filename, "original.svg");
+        assert_eq!(
+            worker.controller.snapshot().unwrap().revision,
+            snapshot.revision
+        );
+        drop(worker);
+        let mut recovered = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let WorkerReply::Original { data_base64, .. } = recovered.answer(WorkerRequest::Download {
+            kind: "original".into(),
+        }) else {
+            panic!("original after restart")
+        };
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(data_base64)
+                .unwrap(),
+            original
+        );
     }
     #[test]
     fn desktop_screen_is_shared_and_updates_keep_sheet_settings() {

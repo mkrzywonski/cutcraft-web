@@ -1757,6 +1757,32 @@ async fn save_inner(app: App, p: Principal, body: SaveBody) -> Result<Response, 
     }
 }
 
+/// Original bytes from this person's current worker, shared with the browser download route.
+pub(crate) async fn original_design(
+    app: &App,
+    principal: &Principal,
+) -> Result<serde_json::Value, ApiError> {
+    match app
+        .design
+        .ask(
+            principal,
+            WorkerRequest::Download {
+                kind: "original".into(),
+            },
+        )
+        .await?
+    {
+        WorkerReply::Original {
+            filename,
+            data_base64,
+        } => Ok(
+            serde_json::json!({"filename":filename,"mime_type":"application/octet-stream","dataBase64":data_base64}),
+        ),
+        WorkerReply::Failed { message } => Err(ApiError::new(422, "export", message)),
+        _ => Err(unexpected()),
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct DownloadQuery {
     kind: String,
@@ -1769,24 +1795,52 @@ pub async fn download(
     Query(q): Query<DownloadQuery>,
 ) -> Result<Response, ApiError> {
     let p = who(&caller, &headers, &uri)?;
-    match app
+    use base64::Engine;
+    let (mime, bytes, filename) = match app
         .design
         .ask(&p, WorkerRequest::Download { kind: q.kind })
         .await?
     {
-        WorkerReply::Download { mime, bytes } => Ok((
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CONTENT_DISPOSITION, "attachment".into()),
-                (header::CACHE_CONTROL, "no-store".into()),
-            ],
-            bytes,
-        )
-            .into_response()),
-        WorkerReply::Failed { message } => Err(ApiError::new(422, "export", message)),
-        _ => Err(unexpected()),
-    }
+        WorkerReply::Download { mime, bytes } => (mime, bytes, None),
+        WorkerReply::Original {
+            filename,
+            data_base64,
+        } => (
+            "application/octet-stream".into(),
+            base64::engine::general_purpose::STANDARD
+                .decode(data_base64)
+                .map_err(|_| unexpected())?,
+            Some(filename),
+        ),
+        WorkerReply::Failed { message } => return Err(ApiError::new(422, "export", message)),
+        _ => return Err(unexpected()),
+    };
+    let disposition = filename
+        .map(|name| {
+            let safe: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || " .-_()".contains(c) {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            format!("attachment; filename=\"{safe}\"")
+        })
+        .unwrap_or_else(|| "attachment".into());
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CACHE_CONTROL, "no-store".into()),
+        ],
+        bytes,
+    )
+        .into_response())
 }
+
 pub async fn update(
     State(app): State<App>,
     axum::Extension(caller): axum::Extension<Caller>,

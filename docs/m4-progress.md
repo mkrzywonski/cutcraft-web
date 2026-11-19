@@ -521,3 +521,28 @@ Local authored-fixture captures: `/tmp/cutcraft-uncertainty-check.odkabv`. No ph
 M4 is still open: shared font archive and project-font/original-download UI, remaining advanced
 preparation controls, final cut outcomes/logs, canceling an unstarted review while retaining safe
 mat context, and the complete fixture/reference acceptance matrix remain to be finished.
+
+## Download the original source (0.22.0)
+
+File → Download original design now sits beside Download project. The shared read command
+`design.original`, the private-session download route and MCP `design_original` return the bytes
+originally opened or embedded, without preparation, planning or a project edit. They work while
+issues remain and after the on-disk source changes/disappears or the worker restarts. Downloads
+use a safe `original.<extension>` attachment name; the manual distinguishes source bytes from
+CutCraft adjustments. The compact library already provides Original design on project details.
+
+An additive worker reply carries the source as base64 rather than a JSON number array, keeping
+all 64 MiB of an allowed upload below the 128 MiB IPC frame limit. No browser protocol version
+change is required. A maximum-size regression exercises the actual serialized worker response.
+Tests also cover exact bytes, unchanged revision, missing disk source, restart, HTTP/MCP parity,
+attachment headers and account/signed-out isolation. All 496 Rust tests, fmt, native/wasm Clippy,
+workspace build and dependency policy pass (`/tmp/codex-m4-original-final-base.log`). The full
+desktop browser workflow passes, including a real download compared with its authored source
+before answering preparation issues (`/tmp/codex-m4-original-final-browser.log`). Local captures
+and download: `/tmp/cutcraft-desktop-check.XMCbc0`. No hardware used.
+
+One earlier browser run hit a resize/Undo timing failure; the harness now waits for the restored
+handle to be drawn, not only for the server geometry to arrive, before the next gesture. The
+final full run passed. Other export kinds still use the legacy JSON-byte-array worker reply;
+large project/vector export bounds need an explicit audit before M4 closes. Shared fonts and
+the remaining preparation, terminal-outcome and acceptance work are still open.

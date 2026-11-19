@@ -32,6 +32,10 @@ impl Desktop {
                     self.send("download", json!({"kind":"project"}));
                     ui.close();
                 }
+                if self.menu_item(ui, "Download original design…", self.has_design()) {
+                    self.send("download", json!({"kind":"original"}));
+                    ui.close();
+                }
                 if self.menu_item(ui, "Update from Design…", self.has_design()) {
                     self.send("upload", json!({"update":true}));
                     ui.close();

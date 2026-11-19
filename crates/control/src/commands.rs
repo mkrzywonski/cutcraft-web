@@ -910,6 +910,16 @@ fn registry() -> Vec<Spec> {
             "Plan the sheet: plan id, validity, bounds, size, cut and travel length, estimate, cut counts and diagnostics. Nothing is sent to a cutter."
         ),
         spec!(
+            "design.original",
+            "Download original design",
+            Some("File"),
+            None,
+            Read,
+            Design,
+            NoParams,
+            "The original uploaded or embedded design bytes, base64, with a safe download name. Reads the opened snapshot, never a changed file on disk. Does not need a cut-ready design."
+        ),
+        spec!(
             "export",
             "Export…",
             Some("File"),
@@ -2097,6 +2107,20 @@ impl Controller {
                 let design = self.design()?;
                 let plan = plan(&design, 1)?;
                 value(plan_summary(&plan, 1))
+            }
+            "design.original" => {
+                decode::<NoParams>(params)?;
+                let design = self.design()?;
+                let extension = std::path::Path::new(&design.path)
+                    .extension()
+                    .and_then(|v| v.to_str())
+                    .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric()))
+                    .unwrap_or("bin");
+                value(json!({
+                    "filename":format!("original.{extension}"),
+                    "mime_type":"application/octet-stream",
+                    "dataBase64":base64::engine::general_purpose::STANDARD.encode(design.bytes.as_slice()),
+                }))
             }
             "export" => {
                 let p: ExportParams = decode(params)?;
@@ -4016,6 +4040,15 @@ pub(crate) fn result_schema(id: &str) -> Value {
             ("compensation", S, "Blade compensation in use."),
             ("diagnostics", A, "Plan findings with stable codes."),
         ]),
+        "design.original" => fields(&[
+            (
+                "filename",
+                S,
+                "Safe download name with the source extension.",
+            ),
+            ("mime_type", S, "Attachment content type."),
+            ("dataBase64", S, "The original design bytes, unchanged."),
+        ]),
         "export" => fields(&[
             ("mime_type", S, "Content type."),
             ("plan_id", S, "The plan exported."),
@@ -5874,6 +5907,37 @@ mod tests {
         let view = wait_for(&controller, CutState::Interrupted);
         assert!(view.interrupted && !view.completed);
         assert!(view.message.unwrap().contains("load fresh material"));
+    }
+
+    #[test]
+    fn original_download_uses_opened_bytes_without_readiness_or_disk_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.svg");
+        let bytes = DESIGN.replace("width=\"100mm\" height=\"100mm\"", "");
+        std::fs::write(&source, &bytes).unwrap();
+        let controller = Controller::build(
+            crate::SettingsStore::new(dir.path().join("settings")),
+            Roots::default(),
+            false,
+        );
+        run(&controller, "design.open", json!({"path":source})).unwrap();
+        let before = controller.snapshot().unwrap();
+        assert!(!before.design.as_ref().unwrap().project.prepared.cut_ready);
+        std::fs::write(&source, "changed on disk").unwrap();
+        let result = run(&controller, "design.original", json!({})).unwrap();
+        assert_eq!(result["filename"], "original.svg");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(result["dataBase64"].as_str().unwrap())
+                .unwrap(),
+            bytes.as_bytes()
+        );
+        assert_eq!(controller.snapshot().unwrap().revision, before.revision);
+        std::fs::remove_file(source).unwrap();
+        assert_eq!(
+            run(&controller, "design.original", json!({})).unwrap(),
+            result
+        );
     }
 
     #[test]

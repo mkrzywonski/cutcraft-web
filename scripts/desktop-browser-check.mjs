@@ -60,6 +60,12 @@ const background=fileURLToPath(new URL('../examples/issues/08-background-rectang
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[background]});
 await until(async()=>{const s=await state();return s.snapshot.ui.report?.pending?.length && Object.keys(s.geometry.source_bounds_mm||{}).length && !s.pending;},'Background issue and source bounds');
 const issueState=await state();
+await cdp('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:artifacts});
+await click('Menu File');await click('Download original design…');
+await until(async()=>{try{return (await fs.readFile(`${artifacts}/original.svg`)).equals(await fs.readFile(background));}catch{return false;}},'Original download matches uploaded bytes before resolving issues');
+if((await state()).snapshot.revision!==issueState.snapshot.revision)throw Error('Original download changed the project');
+console.log('PASS: original design downloads unchanged while preparation still has an issue');
+
 const backgroundId=issueState.snapshot.ui.report.pending[0].source_ids[0];
 if(issueState.geometry.lines.some(line=>line.source_ids.includes(backgroundId)))throw Error('Unanswered background unexpectedly has cut lines');
 await click('Show me');
@@ -166,6 +172,7 @@ for(const [handle,dx,dy,fixed] of [['nw',10,10,[2,3]],['ne',-10,10,[0,3]],['sw',
  for(const axis of fixed)if(Math.abs(after.geometry.art_box_mm[axis]-b[axis])>.001)throw Error(handle+' moved its fixed corner');
  if(after.snapshot.ui.history.undo.length!==before.snapshot.ui.history.undo.length+1)throw Error(handle+' produced more than one Undo');
  await click('Undo');await until(async()=>{const s=await state();return !s.pending&&Math.abs(s.snapshot.ui.size_mm[0]-25.4)<.001&&s.geometry.art_box_mm.every((v,i)=>Math.abs(v-b[i])<.001);},'Undo '+handle);
+ await until(async()=>{const shown=await page(`CutCraft.controls()["Resize ${handle}"]`);return shown?.every((v,i)=>Math.abs(v-r[i])<.25);},'Undo drawn on canvas '+handle);
 }
 await sleep(250);
 const dimensionBefore=(await state()).geometry.art_box_mm;

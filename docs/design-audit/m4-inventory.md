@@ -33,6 +33,7 @@ Later completed batches (see progress entries for exact test logs and limits):
 - PLAN-06/CUT-06: sender-byte-based estimated progress and distance-based order playback are implemented (0.19.0).
 - CUT-07: unresolved Start survives reload; changed-fence recovery is read-only and tested (0.20.1). Review #157's independent refresh concern is addressed with background receipt recovery and transport/browser checks (0.21.4).
 - MAT-05/MAT-07: default tagging/order, editor checkbox, selection without editing, rename and delete fallback have browser coverage (0.21.3). Mat lengths follow the selected units.
+- UI-02/OPEN-10: original-source download is implemented in the File menu, shared read command and MCP, with browser byte comparison, account isolation and maximum-size IPC coverage (0.22.0). Font archive/project-font UI remains open.
 - HELP-01: Manual is bundled, opens offline and is reachable from About (0.21.0).
 
 ## How to read the status

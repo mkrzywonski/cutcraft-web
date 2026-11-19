@@ -83,3 +83,7 @@ Use Ctrl on Windows/Linux and Command on macOS: O opens, S saves, Shift+S opens 
 ## More help
 
 Help > Troubleshooting covers physical cutting problems. Help > How to save designs for cutting covers fonts, pictures and export from a design editor. Help > Set up AI tools describes the shared command interface. About lists the application version and bundled font licences.
+
+## Taking a design back to an editor
+
+File > Download original design downloads the source as `original` with its original extension, for opening in VectorCraft or another editor. These are the exact bytes opened or embedded in the project, even if preparation has unresolved issues. CutCraft adjustments are saved in the CutCraft project; they do not rewrite the source. After editing externally, use Update from Design to upload your revised source. The library project details also offer Original design beside CutCraft project. AI tools can use `design_original` for the same current-session download.

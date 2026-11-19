@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.22.0 — 2026-11-18
+
+- Add File > Download original design, backed by the shared design.original command and design_original MCP tool. Downloads preserve the opened source bytes even before preparation is complete or after the source file changes, without changing the project.
+
 ## 0.21.4 — 2026-11-18
 
 - Keep project geometry and live updates working while an unresolved Start receipt is checked. Run one background lookup at a time and bound receipt reads to ten seconds; lookup failures retain uncertainty and never resend Start.

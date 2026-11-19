@@ -186,7 +186,7 @@ async function dispatch({action,params:p}){
    case 'login':await api('/api/v1/login','POST',{name:p.username,password:p.password});break;
    case 'password':await api('/api/v1/me/password','POST',p);break;
    case 'logout':await api('/api/v1/logout','POST',{});clearPrivate();break;
-   case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
+   case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=r.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] || (p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`);a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
    case 'prepare-cut':{
      model.selectedCutter=p.cutter;
      const view=model.state.cutters?.find(c=>c.id===p.cutter)?.view;

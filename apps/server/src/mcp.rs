@@ -66,6 +66,15 @@ fn folder(description: &str) -> Value {
 
 const TOOLS: &[ToolSpec] = &[
     ToolSpec {
+        name: "design_original",
+        title: "Download the original design",
+        description: "The unchanged source bytes of your current design session, base64 with a safe filename. Works before Make cut-ready is resolved, and reads the opened snapshot even if its file changed. The shared design.original command; no project edit or cutter motion.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({}),
+        required: &[],
+    },
+    ToolSpec {
         name: "preparation_cancel",
         title: "Cancel preparation",
         description: "Cancel a specific in-flight open or Make cut-ready request in your session. Give its key from design_status.busy_key. A completed operation cannot be undone by cancellation.",
@@ -454,11 +463,17 @@ impl Tools {
     pub(crate) async fn invoke(&self, name: &str, args: Value, caller: Caller) -> Out {
         if matches!(
             name,
-            "design_status" | "design_cut_copy" | "preparation_cancel"
+            "design_status" | "design_cut_copy" | "preparation_cancel" | "design_original"
         ) {
             let principal = caller
                 .principal()
                 .ok_or_else(|| ApiError::new(401, "login", "Log in first."))?;
+            if name == "design_original" {
+                if !args.as_object().is_some_and(|v| v.is_empty()) {
+                    return Err(ApiError::bad_request("No parameters are needed."));
+                }
+                return crate::design::original_design(&self.app, &principal).await;
+            }
             if name == "preparation_cancel" {
                 return crate::design::cancel_preparation(
                     &self.app,
