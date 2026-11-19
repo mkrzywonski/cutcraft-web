@@ -1029,6 +1029,9 @@ fn help_shown(state: &mut Snapshot, topic: HelpTopic) -> &mut bool {
 /// Do two decisions answer the same question, so the later replaces the earlier?
 pub(crate) fn answers_same_question(a: &Decision, b: &Decision) -> bool {
     match (a, b) {
+        (Decision::PreparationStep { step: a, .. }, Decision::PreparationStep { step: b, .. }) => {
+            a == b
+        }
         (Decision::DxfUnits { .. }, Decision::DxfUnits { .. })
         | (Decision::Page { .. }, Decision::Page { .. })
         | (Decision::ImportRoute { .. }, Decision::ImportRoute { .. })

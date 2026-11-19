@@ -46,20 +46,17 @@ paired reference screenshot review.
 
 These are required work, not exclusions or waived acceptance:
 
-- Finish advanced preparation controls and shared library font management (web §10 v2.1); exercise all authored
-  regression fixtures and Show me cases.
-- Complete region-at-zoom artwork rendering, rulers, gesture/settling parity, occupied test
-  overlays, and cut-order playback fidelity.
-- Finish cutter recovery/finished states and preparation replacement after settings edits;
-  verify actor changes, unknown Start outcomes, reload during cuts, and immediate Stop.
-- Complete picker/save conflicts/default editing, account integration, error presentation,
-  keyboard accessibility and large-font/narrow-desktop layouts.
-- Verify settings scope, new-design defaults, preset adoption, two-device updates and
-  two-person isolation through browser interactions.
-- Finish asset versioning/compression, command parity inventory, dependency policy,
-  compact-layout regression checks and clean-checkout packaging.
-- Paired reference screenshots and the complete acceptance catalogue; independent review
-  of exact commits. Pi performance, Safari, hardware and release gates remain unverified.
+- Shared library font management (web §10 v2.1), including project font status, upload/download
+  and backup/restore integration.
+- Durable, authorized Done/Stopped/Interrupted/Refused presentation and bounded cut logs/problem
+  reports; exiting an unstarted review must cancel it while retaining safe loaded-mat context.
+- Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
+- Large-export bounds audit and asset content hashing/compression/cache behavior.
+- Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
+  clean-checkout packaging and independent review of exact commits. The targeted browser tests
+  below cover many paths but do not replace this catalogue.
+- Pi performance, Safari, hardware and release gates remain unverified and must be reported
+  separately from simulator/build evidence.
 
 Do not start M5 or merge this branch as a completed M4 while these requirements remain.
 No real cutter has been moved for this implementation.
@@ -546,3 +543,30 @@ handle to be drawn, not only for the server geometry to arrive, before the next 
 final full run passed. Other export kinds still use the legacy JSON-byte-array worker reply;
 large project/vector export bounds need an explicit audit before M4 closes. Shared fonts and
 the remaining preparation, terminal-outcome and acceptance work are still open.
+
+## Advanced preparation (0.23.0)
+
+Issues now exposes Advanced switches for text-to-shapes, stroke-to-shapes, overlap
+joining and script welding. These are typed `prepare.decide` recipe decisions, available
+to MCP through the existing shared command. Choosing again replaces the previous value;
+Undo/Redo, project serialization and Clear answers use the same path. Disabling text or
+stroke conversion produces a source-addressed blocking issue rather than silently leaving
+artwork out. Actual centreline cuts remain usable.
+
+Welding can be disabled globally or only for text. Each glyph's own fill and outlined stroke
+still combine, preserving its outer extent and counters. Exact repeated regions still
+collapse with combined source provenance; nearly repeated separate contours require the
+existing explicit warning answer. Clipping and duplicate-cut safety checks stay active.
+
+Regression tests cover separate text versus welded shapes, counters, fill/outline handling,
+required-conversion blockers, centreline preservation, deterministic replay, duplicate
+answers, exact/near repeats, Undo/Redo and saved projects retaining material force. Browser
+acceptance uses the authored thick-line fixture to disable/re-enable conversion and clear
+the recipe through actual controls. No hardware used.
+
+Validation: fmt, native/wasm Clippy, all **500** Rust tests, workspace build and cargo-deny
+pass (`/tmp/codex-m4-preparation-final-base.log`). Full desktop browser acceptance passes
+(`/tmp/codex-m4-preparation-final-browser.log`, captures `/tmp/cutcraft-desktop-check.NczT6z`),
+including Advanced controls, two tests then a design on one simulated mat, reload, Stop and
+600px/24pt controls. The Advanced screenshot was inspected. Compact regression follows in
+the same log; no platform/hardware acceptance is implied.

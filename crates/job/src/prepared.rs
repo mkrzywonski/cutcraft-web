@@ -122,6 +122,11 @@ impl DxfUnit {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "decision", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Decision {
+    /// Enable or disable one preparation step, replaying from the immutable source.
+    PreparationStep {
+        step: PreparationStep,
+        enabled: bool,
+    },
     /// Interpret a unitless DXF drawing at one drawing unit per selected physical unit.
     DxfUnits { unit: DxfUnit },
     /// Cut this page (`page/N`).
@@ -181,6 +186,18 @@ pub enum Decision {
         stroke: usize,
         role: StrokeRole,
     },
+}
+
+/// Optional preparation controls. Required conversions remain blocking when disabled.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PreparationStep {
+    TextToShapes,
+    StrokesToShapes,
+    JoinOverlaps,
+    WeldText,
 }
 
 /// Image Trace settings as the person sees them.

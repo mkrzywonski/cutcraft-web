@@ -76,6 +76,23 @@ if((await state()).snapshot.revision!==issueState.snapshot.revision)throw Error(
 await click('Menu File');await click('Close design');await until(async()=>!!await page('CutCraft.controls()["Save first"]'),'Close confirmation');await click('Close design');
 await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close issue fixture');
 console.log('PASS: Show me locates a withheld source object without creating cut geometry or an edit');
+// Advanced preparation edits the same recipe as MCP; conversion off must block cutting.
+const thickLine=fileURLToPath(new URL('../examples/issues/21-thick-line.svg',import.meta.url));
+await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[thickLine]});
+await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open thick-line fixture');
+await click('Advanced preparation');
+await click('Turn thick lines into shapes');
+await until(async()=>{const s=await state();return !s.pending && s.snapshot.ui.report?.diagnostics?.some(d=>d.code==='stroke.conversion_disabled') && !s.snapshot.design.cut_ready;},'Disabled stroke conversion blocks cutting');
+const advanced=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/advanced-preparation.png`,Buffer.from(advanced.data,'base64'));
+await click('Turn thick lines into shapes');
+await until(async()=>{const s=await state();return !s.pending && s.snapshot.design.cut_ready && s.snapshot.ui.report.recipe.decisions.filter(d=>d.decision==='preparation_step').length===1;},'Re-enabling conversion replaces the old choice');
+await click('Clear answers');
+await until(async()=>{const s=await state();return !s.pending && s.snapshot.ui.report.recipe.decisions.length===0;},'Clear answers restores defaults');
+await click('Advanced preparation');
+await click('Menu File');await click('Close design');
+await until(async()=>!!await page('CutCraft.controls()["Save first"]'),'Close preparation confirmation');await click('Close design');
+await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close preparation fixture');
+console.log('PASS: real Advanced preparation checkbox blocks/restores cut readiness and Clear answers resets the recipe');
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[fixture]});
 await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open authored design');
 await sleep(300);

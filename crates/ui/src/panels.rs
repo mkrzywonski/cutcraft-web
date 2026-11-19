@@ -278,6 +278,31 @@ impl Desktop {
                         });
                 }
                 if group == "Issues" {
+                    let advanced = egui::CollapsingHeader::new("Advanced preparation")
+                        .id_salt("preparation-steps")
+                        .show(ui, |ui| {
+                            for (step, label) in [
+                                ("text_to_shapes", "Turn text into shapes"),
+                                ("strokes_to_shapes", "Turn thick lines into shapes"),
+                                ("join_overlaps", "Join overlapping pieces"),
+                                ("weld_text", "Join touching letters"),
+                            ] {
+                                let mut enabled = list(&data.report["recipe"]["decisions"])
+                                    .iter()
+                                    .find(|d| d["decision"] == "preparation_step" && d["step"] == step)
+                                    .and_then(|d| d["enabled"].as_bool())
+                                    .unwrap_or(true);
+                                let response = ui.add_enabled(!self.remote.pending, egui::Checkbox::new(&mut enabled, label));
+                                self.record(label, &response);
+                                if response.changed() {
+                                    self.command("prepare.decide", json!({"decision":{
+                                        "decision":"preparation_step", "step":step, "enabled":enabled
+                                    }}));
+                                }
+                            }
+                            ui.small("Clear Join touching letters to keep script pieces separate. Required conversions left off appear as Issues. Undo restores the previous choices.");
+                        });
+                    self.record("Advanced preparation", &advanced.header_response);
                     ui.horizontal_wrapped(|ui| {
                         self.action_button(ui, "Run again", "prepare.run", json!({}));
                         self.action_button(ui, "Clear answers", "prepare.reset", json!({}));

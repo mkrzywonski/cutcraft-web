@@ -4768,6 +4768,48 @@ mod tests {
     }
 
     #[test]
+    fn advanced_preparation_replays_undoes_and_round_trips_with_sheet_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (controller, read, write) = headless(dir.path());
+        let source = read.join("overlaps.svg");
+        std::fs::write(&source, r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><rect x="10" y="10" width="20" height="20"/><rect x="20" y="10" width="20" height="20"/></svg>"#).unwrap();
+        run(&controller, "design.open", json!({"path":source})).unwrap();
+        run(&controller, "sheet.adjust", json!({"force":12})).unwrap();
+        let decide = |enabled| json!({"decision":{"decision":"preparation_step","step":"join_overlaps","enabled":enabled}});
+        let report = || run(&controller, "prepare.report", json!({})).unwrap();
+        run(&controller, "prepare.decide", decide(false)).unwrap();
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 2);
+        run(&controller, "history.undo", json!({})).unwrap();
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 1);
+        run(&controller, "history.redo", json!({})).unwrap();
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 2);
+        run(&controller, "prepare.decide", decide(true)).unwrap();
+        assert_eq!(report()["recipe"]["decisions"].as_array().unwrap().len(), 1);
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 1);
+        run(&controller, "prepare.decide", decide(false)).unwrap();
+        let saved = write.join("prepared.cutcraft");
+        run(&controller, "project.save", json!({"path":saved})).unwrap();
+        let reopened = read.join("prepared.cutcraft");
+        std::fs::copy(&saved, &reopened).unwrap();
+        run(&controller, "project.open", json!({"path":reopened})).unwrap();
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            controller
+                .snapshot()
+                .unwrap()
+                .design
+                .unwrap()
+                .project
+                .sheets[0]
+                .material
+                .force,
+            12
+        );
+        run(&controller, "prepare.reset", json!({})).unwrap();
+        assert_eq!(report()["pieces"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
     fn outlines_on_filled_shapes_are_a_design_wide_answer_with_undo() {
         let dir = tempfile::tempdir().unwrap();
         let (controller, read, _) = headless(dir.path());

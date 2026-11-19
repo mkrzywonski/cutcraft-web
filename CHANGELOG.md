@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.23.0 — 2026-11-19
+
+- Add Advanced preparation switches for text and stroke conversion, overlap joining, and script welding. Choices use the shared recipe, Undo/Redo and saved projects; disabled required conversions raise blocking issues.
+
 ## 0.22.0 — 2026-11-18
 
 - Add File > Download original design, backed by the shared design.original command and design_original MCP tool. Downloads preserve the opened source bytes even before preparation is complete or after the source file changes, without changing the project.

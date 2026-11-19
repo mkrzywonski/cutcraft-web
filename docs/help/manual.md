@@ -87,3 +87,14 @@ Help > Troubleshooting covers physical cutting problems. Help > How to save desi
 ## Taking a design back to an editor
 
 File > Download original design downloads the source as `original` with its original extension, for opening in VectorCraft or another editor. These are the exact bytes opened or embedded in the project, even if preparation has unresolved issues. CutCraft adjustments are saved in the CutCraft project; they do not rewrite the source. After editing externally, use Update from Design to upload your revised source. The library project details also offer Original design beside CutCraft project. AI tools can use `design_original` for the same current-session download.
+
+### Advanced preparation
+
+In **Issues → Advanced preparation**, choose whether to turn text and thick lines into
+shapes, join overlapping pieces, and join touching letters. Clear **Join touching letters**
+to keep script pieces separate. Each letter still keeps its own outline and holes.
+Turning off a required text or stroke conversion raises an issue and prevents cutting;
+turn it back on or explicitly exclude the affected artwork. Cut-along-line choices still work.
+These choices replay from the original design, preserve sheet settings, and are saved in
+the project. **Undo** restores the previous recipe; **Clear answers** restores the defaults.
+Clipping and duplicate-cut safety checks remain active.

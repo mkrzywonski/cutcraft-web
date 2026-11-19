@@ -10,8 +10,9 @@ use std::{
 
 use cutcraft_job::{
     Change, Colour, Contour, CutLine, Decision, Diagnostic, FontUse, ImportRoute, Page,
-    PendingDecision, Piece, PreparedDesign, Recipe, Severity, StrokeRole, TraceColours,
-    TraceSettings, prepared::PREPARED_SCHEMA_VERSION, prepared::RECIPE_SCHEMA_VERSION,
+    PendingDecision, Piece, PreparationStep, PreparedDesign, Recipe, Severity, StrokeRole,
+    TraceColours, TraceSettings, prepared::PREPARED_SCHEMA_VERSION,
+    prepared::RECIPE_SCHEMA_VERSION,
 };
 use kurbo::{BezPath, CubicBez, ParamCurve, Point, Rect, Shape};
 use sha2::{Digest, Sha256};
@@ -456,6 +457,7 @@ fn prepare_imported(
 
 /// Recipe decisions indexed by what they answer. Duplicates are an error.
 struct Answers {
+    steps: BTreeMap<PreparationStep, bool>,
     dxf_unit: Option<cutcraft_job::DxfUnit>,
     route: Option<ImportRoute>,
     overflow: BTreeSet<String>,
@@ -480,6 +482,10 @@ struct Answers {
 }
 
 impl Answers {
+    fn enabled(&self, step: PreparationStep) -> bool {
+        self.steps.get(&step).copied().unwrap_or(true)
+    }
+
     fn new(recipe: &Recipe) -> Result<Self, String> {
         if recipe.schema_version != RECIPE_SCHEMA_VERSION {
             return Err(format!(
@@ -488,6 +494,7 @@ impl Answers {
             ));
         }
         let mut answers = Self {
+            steps: BTreeMap::new(),
             dxf_unit: None,
             route: None,
             overflow: BTreeSet::new(),
@@ -513,6 +520,11 @@ impl Answers {
         let duplicate = |what: &str| format!("The recipe answers {what} more than once.");
         for decision in &recipe.decisions {
             match decision {
+                Decision::PreparationStep { step, enabled } => {
+                    if answers.steps.insert(*step, *enabled).is_some() {
+                        return Err(duplicate("the preparation step"));
+                    }
+                }
                 Decision::DxfUnits { unit } => {
                     if answers.dxf_unit.replace(*unit).is_some() {
                         return Err(duplicate("DXF units"));
@@ -733,6 +745,7 @@ struct Used {
 
 /// One included source object with cuttable geometry, in page points (y down).
 struct Leaf {
+    is_text: bool,
     order: usize,
     source_id: String,
     layer: String,
@@ -771,6 +784,7 @@ struct Collected {
     leaves: Vec<Leaf>,
     unsupported: Vec<String>,
     text_appearance: Vec<String>,
+    text_disabled: Vec<String>,
     text_inline: Vec<String>,
     text_paint: Vec<String>,
     clip_unsupported: Vec<String>,
@@ -794,6 +808,7 @@ impl Collected {
         let to_page = kurbo::Affine::translate(-scope.page.origin().to_vec2());
         path.transform(to_page);
         self.leaves.push(Leaf {
+            is_text: false,
             order: self.leaves.len(),
             source_id: id.into(),
             layer: scope.layer.into(),
@@ -1404,6 +1419,11 @@ impl<'a> Run<'a> {
         }
         for (code, message, ids) in [
             (
+                "text.conversion_disabled",
+                "Text cannot be cut until Turn text into shapes is enabled under Advanced preparation, or the text is excluded.",
+                found.text_disabled,
+            ),
+            (
                 "geometry.unsupported",
                 "This kind of object cannot be prepared yet.",
                 found.unsupported,
@@ -1607,6 +1627,10 @@ impl<'a> Run<'a> {
         scope: &Scope,
         found: &mut Collected,
     ) {
+        if !self.answers.enabled(PreparationStep::TextToShapes) {
+            found.text_disabled.push(id.into());
+            return;
+        }
         if self.font_blocked.iter().any(|b| b == id) {
             return;
         }
@@ -1659,6 +1683,7 @@ impl<'a> Run<'a> {
         found.outlined.push(id.into());
         for (path, fill, strokes) in leaves {
             found.push_leaf(id, scope, path, FillRule::NonZero, fill, strokes);
+            found.leaves.last_mut().expect("just added a glyph").is_text = true;
         }
     }
 
@@ -1837,6 +1862,7 @@ impl<'a> Run<'a> {
         let mut invalid = Vec::new();
         let mut absorbed = Vec::new();
         let mut outline_failed = Vec::new();
+        let mut strokes_disabled = Vec::new();
         let mut shape_chosen = Vec::new();
         let mut joined_chosen = Vec::new();
         let mut joined_fill: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1844,14 +1870,19 @@ impl<'a> Run<'a> {
         let mut outlined: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut unsupported_lines = Vec::new();
         let mut cut_along = Vec::new();
-        let mut parts: BTreeMap<(String, Colour), Vec<Part>> = BTreeMap::new();
-        let mut group_order: BTreeMap<(String, Colour), usize> = BTreeMap::new();
+        let mut parts: BTreeMap<(String, Colour, Option<usize>), Vec<Part>> = BTreeMap::new();
+        let mut group_order: BTreeMap<(String, Colour, Option<usize>), usize> = BTreeMap::new();
         let mut lines: Vec<(usize, String, Colour, String, SubPath)> = Vec::new();
         let mut background_seen = false;
         let page_edge =
             rect_region(page_box.inflate(PAGE_EDGE_TOLERANCE_PT, PAGE_EDGE_TOLERANCE_PT));
 
         for leaf in &leaves {
+            // Keep every glyph/object separate when requested, but still unite its own fill
+            // and outline. This avoids introducing internal double cuts or losing counters.
+            let separate = (!self.answers.enabled(PreparationStep::JoinOverlaps)
+                || (leaf.is_text && !self.answers.enabled(PreparationStep::WeldText)))
+            .then_some(leaf.order);
             let region = match &leaf.fill {
                 Some(_) => match try_normalize(&leaf.path, leaf.rule) {
                     Ok(region) => Some(region),
@@ -1954,7 +1985,7 @@ impl<'a> Run<'a> {
             }
             if let (Some(region), Some(colour)) = (&region, &leaf.fill) {
                 produced = true;
-                let key = (leaf.layer.clone(), colour.clone());
+                let key = (leaf.layer.clone(), colour.clone(), separate);
                 group_order.entry(key.clone()).or_insert(leaf.order);
                 let entry = parts.entry(key).or_default();
                 for piece in split_pieces(region) {
@@ -2007,6 +2038,10 @@ impl<'a> Run<'a> {
                 }
                 match role {
                     StrokeRole::Shape | StrokeRole::PartOfShape => {
+                        if !self.answers.enabled(PreparationStep::StrokesToShapes) {
+                            strokes_disabled.push(leaf.source_id.clone());
+                            continue;
+                        }
                         if stroke.brush.is_some() {
                             unsupported_lines.push(leaf.source_id.clone());
                             continue;
@@ -2039,7 +2074,7 @@ impl<'a> Run<'a> {
                             (Some(fill), true) => fill.clone(),
                             _ => colour.clone(),
                         };
-                        let key = (leaf.layer.clone(), piece_colour);
+                        let key = (leaf.layer.clone(), piece_colour, separate);
                         group_order.entry(key.clone()).or_insert(leaf.order);
                         let entry = parts.entry(key).or_default();
                         for piece in split_pieces(&outline) {
@@ -2163,7 +2198,7 @@ impl<'a> Run<'a> {
         let mut specks = Vec::new();
         let mut groups: Vec<_> = parts.into_iter().collect();
         groups.sort_by_key(|(key, _)| group_order[key]);
-        for ((layer, colour), group) in groups {
+        for ((layer, colour, _), group) in groups {
             if let [part] = &group[..] {
                 self.push_piece(&layer, &colour, vec![part.source_id.clone()], &part.path);
                 continue;
@@ -2249,6 +2284,11 @@ impl<'a> Run<'a> {
             }
         }
 
+        if !self.answers.enabled(PreparationStep::JoinOverlaps)
+            || !self.answers.enabled(PreparationStep::WeldText)
+        {
+            absorbed.extend(self.deduplicate_separate_pieces());
+        }
         let duplicates = self.push_cut_lines(lines);
         absorbed.extend(duplicates);
         self.report_features();
@@ -2390,6 +2430,11 @@ impl<'a> Run<'a> {
             "Overlapping shapes of the same colour could not be joined reliably; they would cut through each other.",
         );
         block(
+            strokes_disabled,
+            "stroke.conversion_disabled",
+            "These strokes need Turn thick lines into shapes enabled under Advanced preparation, or an explicit Cut along line choice.",
+        );
+        block(
             outline_failed,
             "stroke.outline_failed",
             "This line could not be turned into a shape. Choose Cut along line, or outline it in an editor.",
@@ -2505,7 +2550,10 @@ impl<'a> Run<'a> {
                 }
                 let close = |x: f64, y: f64| (x - y).abs() <= NEAR_DUPLICATE_MM;
                 let similar = (a.length - b.length).abs() <= a.length.max(b.length) * 0.02;
-                if (a.line || b.line)
+                if (a.line
+                    || b.line
+                    || !self.answers.enabled(PreparationStep::JoinOverlaps)
+                    || !self.answers.enabled(PreparationStep::WeldText))
                     && a.colour == b.colour
                     && close(a.bounds.x1, b.bounds.x1)
                     && close(a.bounds.y0, b.bounds.y0)
@@ -2548,6 +2596,31 @@ impl<'a> Run<'a> {
                 holes: holes.iter().map(|h| contour(h, true)).collect(),
             });
         }
+    }
+
+    /// Optional welding must not disable exact-duplicate cleanup. Combine provenance only
+    /// for identical whole regions within the same layer/colour; never discard a real hole.
+    fn deduplicate_separate_pieces(&mut self) -> Vec<String> {
+        let mut seen = BTreeMap::new();
+        let mut removed = Vec::new();
+        let pieces = std::mem::take(&mut self.pieces);
+        for mut piece in pieces {
+            let path = PathData::from_bezpath(&piece_bez(&piece));
+            let mut contours: Vec<_> = path.subpaths.iter().map(canonical).collect();
+            contours.sort();
+            let key = (piece.layer.clone(), piece.colour.clone(), contours);
+            if let Some(&index) = seen.get(&key) {
+                let previous: &mut Piece = &mut self.pieces[index];
+                removed.extend(piece.source_ids.iter().cloned());
+                previous.source_ids =
+                    dedup_sorted(previous.source_ids.iter().chain(&piece.source_ids).cloned());
+            } else {
+                seen.insert(key, self.pieces.len());
+                piece.id = format!("piece/{}", self.pieces.len());
+                self.pieces.push(piece);
+            }
+        }
+        removed
     }
 
     /// Add cut lines, skipping exact duplicates of a cut already planned in the same colour.
@@ -3935,6 +4008,138 @@ mod tests {
         let glyphs = ok(&text("Ab 雅楽"));
         assert!(!glyphs.cut_ready && glyphs.pieces.is_empty());
         assert_eq!(codes(&glyphs), ["font.missing_glyphs"]);
+    }
+
+    #[test]
+    fn preparation_steps_preserve_holes_and_each_glyphs_own_outline() {
+        let source = svg(
+            r#"<text x="10" y="50" font-family="Inter" font-size="20" stroke="black" stroke-width="0.5">O</text>
+            <text x="20" y="50" font-family="Inter" font-size="20" stroke="black" stroke-width="0.5">O</text>
+            <rect x="10" y="70" width="20" height="20"/>
+            <rect x="20" y="70" width="20" height="20"/>"#,
+        );
+        let off = |step| Decision::PreparationStep {
+            step,
+            enabled: false,
+        };
+        let welded = prepare(&source, vec![]).unwrap();
+        assert_eq!(welded.pieces.len(), 2);
+        let separate = prepare(&source, vec![off(PreparationStep::WeldText)]).unwrap();
+        assert!(separate.cut_ready, "{:?}", separate.diagnostics);
+        assert_eq!(
+            separate.pieces.len(),
+            3,
+            "two letters but rectangles still join"
+        );
+        assert_eq!(
+            separate.pieces.iter().map(|p| p.holes.len()).sum::<usize>(),
+            2
+        );
+        let all = prepare(&source, vec![off(PreparationStep::JoinOverlaps)]).unwrap();
+        assert_eq!(all.pieces.len(), 4);
+        assert!(all.cut_ready);
+        let replay = prepare(&source, all.recipe.decisions.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&all).unwrap(),
+            serde_json::to_value(&replay).unwrap()
+        );
+        assert!(
+            prepare(
+                &source,
+                vec![
+                    off(PreparationStep::WeldText),
+                    off(PreparationStep::WeldText)
+                ]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn separate_pieces_still_remove_exact_duplicates_and_report_near_repeats() {
+        let off = Decision::PreparationStep {
+            step: PreparationStep::JoinOverlaps,
+            enabled: false,
+        };
+        let exact = prepare(
+            &svg(r#"<rect x="10" y="10" width="20" height="20"/>
+            <path d="M30 30 H10 V10 H30 Z"/>"#),
+            vec![off.clone()],
+        )
+        .unwrap();
+        assert!(exact.cut_ready);
+        assert_eq!(exact.pieces.len(), 1);
+        assert_eq!(exact.pieces[0].source_ids.len(), 2);
+        assert_eq!(change(&exact, "duplicate.removed").count, 1);
+        let near = prepare(
+            &svg(r#"<rect x="10" y="10" width="20" height="20"/>
+            <rect x="10.1" y="10" width="20" height="20"/>"#),
+            vec![off],
+        )
+        .unwrap();
+        assert_eq!(near.pieces.len(), 2);
+        assert!(!near.cut_ready);
+        assert!(
+            near.pending
+                .iter()
+                .any(|q| q.choices.contains(&Decision::AcceptWarning {
+                    warning: "duplicate.near".into()
+                }))
+        );
+    }
+
+    #[test]
+    fn disabling_required_conversions_blocks_instead_of_silently_dropping_art() {
+        for (step, source, code) in [
+            (
+                PreparationStep::TextToShapes,
+                r#"<text x="10" y="50" font-family="Inter" font-size="20">Hi</text>"#,
+                "text.conversion_disabled",
+            ),
+            (
+                PreparationStep::StrokesToShapes,
+                r#"<path d="M10 10 L40 40" fill="none" stroke="black" stroke-width="3"/>"#,
+                "stroke.conversion_disabled",
+            ),
+        ] {
+            let bytes = svg(source);
+            let off = Decision::PreparationStep {
+                step,
+                enabled: false,
+            };
+            let blocked = prepare(&bytes, vec![off]).unwrap();
+            assert!(!blocked.cut_ready);
+            assert!(codes(&blocked).contains(&code));
+            assert!(
+                !blocked
+                    .diagnostics
+                    .iter()
+                    .find(|d| d.code == code)
+                    .unwrap()
+                    .source_ids
+                    .is_empty()
+            );
+            let restored = prepare(
+                &bytes,
+                vec![Decision::PreparationStep {
+                    step,
+                    enabled: true,
+                }],
+            )
+            .unwrap();
+            assert!(restored.cut_ready, "{:?}", restored.diagnostics);
+        }
+        // Actual cut lines do not require conversion and remain usable with this switch off.
+        let line = prepare(
+            &svg(r#"<path d="M10 10 L40 40" fill="none" stroke="black" stroke-width="0.01"/>"#),
+            vec![Decision::PreparationStep {
+                step: PreparationStep::StrokesToShapes,
+                enabled: false,
+            }],
+        )
+        .unwrap();
+        assert!(line.cut_ready);
+        assert_eq!(line.cut_lines.len(), 1);
     }
 
     #[test]

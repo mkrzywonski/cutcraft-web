@@ -8,8 +8,8 @@ pub mod project_file;
 
 pub use prepared::{
     Change, Colour, Contour, CutLine, Decision, Diagnostic, DxfUnit, FontUse, ImportRoute, Page,
-    PendingDecision, Piece, PreparedDesign, Recipe, Severity, StrokeRole, TraceColours,
-    TraceSettings,
+    PendingDecision, Piece, PreparationStep, PreparedDesign, Recipe, Severity, StrokeRole,
+    TraceColours, TraceSettings,
 };
 pub use project::{
     CompletedSheet, CutRecord, GroupBy, MachineProfile, Mat, MatProfile, Material, OffsetMethod,

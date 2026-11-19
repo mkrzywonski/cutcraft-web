@@ -248,3 +248,14 @@ only browser assertions, but most "Partial" rows still need product work.
 4. **Fonts and Advanced preparation** (OPEN-10, PREP-01, PREP-06).
 5. **HELP-02 logs/problem report**, Manual offline.
 6. **Paired screenshots and independent review.**
+
+### Follow-up: Advanced preparation (0.23.0)
+
+PREP-01/PREP-06: Issues → Advanced preparation provides text and stroke conversion,
+overlap joining, and touching-letter welding switches through `prepare.decide`. Disabling
+a required conversion blocks cutting with source IDs for Show me. Disabling welding retains
+glyph counters and own outlines, removes exact repeats and warns about near repeats.
+Recipe replay, replacement, Undo/Redo, project persistence and sheet-setting retention have
+regression coverage. The browser check exercises conversion blocking/recovery and Clear
+answers. Clipping and duplicate-cut safety remain mandatory. See `docs/m4-progress.md`
+for validation evidence; this closes these missing controls, not all M4 acceptance.
