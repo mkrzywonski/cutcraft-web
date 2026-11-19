@@ -51,7 +51,7 @@ These are required work, not exclusions or waived acceptance:
 - Durable, authorized Done/Stopped/Interrupted/Refused presentation and bounded cut logs/problem
   reports; exiting an unstarted review must cancel it while retaining safe loaded-mat context.
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
-- Large-export bounds audit and asset content hashing/compression/cache behavior.
+- Asset content hashing/compression/cache behavior.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
   below cover many paths but do not replace this catalogue.
@@ -570,3 +570,20 @@ pass (`/tmp/codex-m4-preparation-final-base.log`). Full desktop browser acceptan
 including Advanced controls, two tests then a design on one simulated mat, reload, Stop and
 600px/24pt controls. The Advanced screenshot was inspected. Compact regression follows in
 the same log; no platform/hardware acceptance is implied.
+
+## Bounded large downloads (0.23.1)
+
+Project, SVG and plan downloads now travel through the worker as text, rather than JSON
+arrays of byte values. PNG and cutter files use base64. This removes the expansion that
+could exceed the 128 MiB IPC frame limit for a source within the 64 MiB upload allowance.
+Read-only export replies are checked with framing headroom before sending; an oversized
+export returns a normal error while retaining the open design, instead of dropping the
+worker connection. This is a transfer limit, not a claim that arbitrary geometry fits in memory.
+
+Regression tests check maximum-size source/project envelopes and binary content, escaped
+text bounds, all five export formats, unchanged design revision, and authenticated owner /
+other-user / signed-out access. All 503 Rust tests, fmt, native/wasm Clippy, workspace build
+and cargo-deny pass. Desktop presentation acceptance passes, including actual original
+download, Advanced controls and 600px/24pt layout. Evidence: `/tmp/codex-m4-export-final.log`;
+captures `/tmp/cutcraft-desktop-check.jRmHer`. The preceding 0.23.0 compact browser suite also
+completed successfully in `/tmp/codex-m4-preparation-final-browser.log`. No hardware used.

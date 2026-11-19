@@ -1801,7 +1801,20 @@ pub async fn download(
         .ask(&p, WorkerRequest::Download { kind: q.kind })
         .await?
     {
-        WorkerReply::Download { mime, bytes } => (mime, bytes, None),
+        WorkerReply::Download {
+            mime,
+            content,
+            base64,
+        } => {
+            let bytes = if base64 {
+                base64::engine::general_purpose::STANDARD
+                    .decode(content)
+                    .map_err(|_| unexpected())?
+            } else {
+                content.into_bytes()
+            };
+            (mime, bytes, None)
+        }
         WorkerReply::Original {
             filename,
             data_base64,

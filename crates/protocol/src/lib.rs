@@ -438,9 +438,12 @@ pub mod worker {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "reply", rename_all = "snake_case")]
     pub enum WorkerReply {
+        /// Text travels as text; only binary exports use base64. JSON byte arrays expand
+        /// valid large projects beyond the worker frame limit.
         Download {
             mime: String,
-            bytes: Vec<u8>,
+            content: String,
+            base64: bool,
         },
         /// Base64 keeps a maximum-size source under the bounded worker JSON frame limit.
         Original {

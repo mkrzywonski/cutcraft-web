@@ -8,6 +8,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 const MAX_FRAME: usize = 128 * 1024 * 1024;
+/// Export is read-only: an oversized reply can be refused without losing the worker or
+/// pretending a mutation failed. Reserve enough framing space for any correlation id.
+pub(super) fn bounded_export(reply: WorkerReply) -> WorkerReply {
+    bound_export(reply, MAX_FRAME)
+}
+
+fn bound_export(reply: WorkerReply, limit: usize) -> WorkerReply {
+    match serde_json::to_vec(&reply) {
+        Ok(bytes) if bytes.len().saturating_add(64) <= limit => reply,
+        _ => WorkerReply::Failed {
+            message: "This export is too large to transfer. The design is still open; use a smaller design or a different export format.".into(),
+        },
+    }
+}
+
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<WorkerReply>>>>;
 enum Write {
     Call(Box<Call>),
@@ -157,5 +172,47 @@ mod tests {
             frame.len() + 1 < MAX_FRAME,
             "maximum upload must be downloadable"
         );
+    }
+    #[test]
+    fn maximum_source_project_and_binary_downloads_fit_without_integer_arrays() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(vec![255; crate::design::UPLOAD_LIMIT]);
+        for (content, binary) in [
+            (format!(r#"{{"source":{{"base64":"{encoded}"}}}}"#), false),
+            (encoded, true),
+        ] {
+            let reply = bounded_export(WorkerReply::Download {
+                mime: "application/octet-stream".into(),
+                content,
+                base64: binary,
+            });
+            assert!(matches!(reply, WorkerReply::Download { .. }));
+            let frame = serde_json::to_vec(&Response {
+                id: u64::MAX,
+                reply,
+            })
+            .unwrap();
+            assert!(frame.len() < MAX_FRAME);
+        }
+    }
+
+    #[test]
+    fn oversized_exports_are_normal_refusals_and_leave_room_for_the_next_reply() {
+        // Escapes count toward the frame size, not just the content's byte length.
+        let oversized = WorkerReply::Download {
+            mime: "text/plain".into(),
+            content: "\"".repeat(1024),
+            base64: false,
+        };
+        assert!(matches!(
+            bound_export(oversized, 1024),
+            WorkerReply::Failed { .. }
+        ));
+        let next = WorkerReply::Download {
+            mime: "text/plain".into(),
+            content: "still available".into(),
+            base64: false,
+        };
+        assert_eq!(bound_export(next.clone(), 1024), next);
     }
 }

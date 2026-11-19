@@ -517,9 +517,10 @@ impl Worker {
             } => WorkerReply::Command(self.update(request, file, name)),
             WorkerRequest::Download { kind } => self
                 .download(&kind)
+                .map(super::ipc::bounded_export)
                 .unwrap_or_else(|message| WorkerReply::Failed { message }),
             WorkerRequest::Export => match self.export() {
-                Ok(e) => e,
+                Ok(e) => super::ipc::bounded_export(e),
                 Err(message) => WorkerReply::Failed { message },
             },
             WorkerRequest::Saved { request, saved } => {
@@ -874,7 +875,8 @@ impl Worker {
             };
             return Ok(WorkerReply::Download {
                 mime: "application/json".into(),
-                bytes: project.into_bytes(),
+                content: project,
+                base64: false,
             });
         }
         if !["preview-svg", "preview-png", "cutter-file", "plan"].contains(&kind) {
@@ -885,15 +887,23 @@ impl Worker {
             .execute(Origin::User, "export", json!({"kind":kind}), None)
             .map_err(|e| e.message)?;
         let value = output.value;
-        let bytes = if let Some(b) = value["dataBase64"].as_str() {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD
-                .decode(b)
-                .map_err(|e| e.to_string())?
+        let (content, base64) = if let Some(b) = value["dataBase64"].as_str() {
+            if matches!(kind, "preview-svg" | "plan") {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .map_err(|e| e.to_string())?;
+                (String::from_utf8(bytes).map_err(|e| e.to_string())?, false)
+            } else {
+                (b.to_owned(), true)
+            }
         } else if let Some(s) = value["content"].as_str() {
-            s.as_bytes().to_vec()
+            (s.to_owned(), false)
         } else {
-            serde_json::to_vec(&value).map_err(|e| e.to_string())?
+            (
+                serde_json::to_string(&value).map_err(|e| e.to_string())?,
+                false,
+            )
         };
         Ok(WorkerReply::Download {
             mime: match kind {
@@ -903,7 +913,8 @@ impl Worker {
                 _ => "application/octet-stream",
             }
             .into(),
-            bytes,
+            content,
+            base64,
         })
     }
 
@@ -1998,6 +2009,59 @@ mod tests {
         );
         assert!(snapshot(&mut w).design.unwrap().unsaved);
     }
+    #[test]
+    fn downloads_preserve_text_and_binary_content_without_changing_the_design() {
+        let dir = area();
+        let mut worker = Worker::new(dir.path(), &dir.path().join("lists")).unwrap();
+        let before = open(&mut worker);
+        for kind in [
+            "project",
+            "plan",
+            "preview-svg",
+            "preview-png",
+            "cutter-file",
+        ] {
+            let WorkerReply::Download {
+                mime,
+                content,
+                base64: binary,
+            } = worker.answer(WorkerRequest::Download { kind: kind.into() })
+            else {
+                panic!("download {kind}");
+            };
+            assert!(!mime.is_empty());
+            assert!(!content.is_empty());
+            assert_eq!(binary, matches!(kind, "preview-png" | "cutter-file"));
+            match kind {
+                "project" => {
+                    let file: ProjectFile = serde_json::from_str(&content).unwrap();
+                    assert_eq!(file.source.bytes().unwrap(), STAR.as_bytes());
+                    assert!(!content.contains(dir.path().to_str().unwrap()));
+                }
+                "plan" => {
+                    serde_json::from_str::<Value>(&content).unwrap();
+                }
+                "preview-svg" => assert!(content.contains("<svg")),
+                "preview-png" => {
+                    use base64::Engine;
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(content)
+                        .unwrap();
+                    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(snapshot(&mut worker).revision, before.revision);
+        assert!(matches!(
+            worker.answer(WorkerRequest::Download {
+                kind: "unknown".into()
+            }),
+            WorkerReply::Failed { .. }
+        ));
+        assert_eq!(snapshot(&mut worker).revision, before.revision);
+    }
+
     // Regression from the M3 parity review: Save is independent of cut readiness.
     #[test]
     fn desktop_unfinished_export_keeps_questions_and_hides_paths() {

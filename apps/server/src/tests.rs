@@ -1909,6 +1909,49 @@ async fn two_people_have_separate_sessions_and_private_areas() {
         }
     }
 
+    for kind in [
+        "project",
+        "preview-svg",
+        "preview-png",
+        "plan",
+        "cutter-file",
+    ] {
+        for (session, expected) in [
+            (Some(sam.as_str()), StatusCode::OK),
+            (Some(alex.as_str()), StatusCode::UNPROCESSABLE_ENTITY),
+            (None, StatusCode::UNAUTHORIZED),
+        ] {
+            let response = send_raw(
+                &h.app,
+                design(
+                    "GET",
+                    &format!("/api/v1/design/download?kind={kind}"),
+                    Body::empty(),
+                    session,
+                ),
+            )
+            .await;
+            assert_eq!(response.status(), expected, "{kind}");
+            if expected == StatusCode::OK {
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                match kind {
+                    "project" => {
+                        let file: cutcraft_job::ProjectFile =
+                            serde_json::from_slice(&bytes).unwrap();
+                        assert_eq!(file.source.bytes().unwrap(), STAR.as_bytes());
+                    }
+                    "preview-svg" => assert!(std::str::from_utf8(&bytes).unwrap().contains("<svg")),
+                    "preview-png" => assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n")),
+                    "plan" => {
+                        serde_json::from_slice::<Value>(&bytes).unwrap();
+                    }
+                    _ => assert!(!bytes.is_empty()),
+                }
+            }
+        }
+    }
+
     // Each person's upload is in their own area, by their account's id.
     let people = &h.app.service.people;
     assert_eq!(stored_designs(&people.join(&ids["Sam"]).join("designs")), 1);
