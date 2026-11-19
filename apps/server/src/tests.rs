@@ -304,6 +304,47 @@ async fn cut_reports_distinguish_terminal_states_without_leaking_request_secrets
 }
 
 #[tokio::test]
+async fn exit_cancels_the_review_through_the_shared_http_action() {
+    let h = harness();
+    let (_, job) = upload(&h.app, "exit-upload").await;
+    let (status, queued) = send(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/cutters/practice/queue",
+            json!({"job_id":job["id"], "key":"exit-queue"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{queued}");
+    let before = lock(&h.app.service.cutters[0].shared).view();
+    let body = json!({"boot":"t", "turn":queued["turn"],
+        "action_epoch":before.action_epoch, "key":"exit-review"});
+    let (status, answer) = send(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/cutters/practice/cancel-review",
+            body.clone(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["answer"], "review-cancelled");
+    let after = lock(&h.app.service.cutters[0].shared).view();
+    assert!(after.turn.unwrap().review_cancelled);
+    assert_eq!(after.mat, before.mat);
+    assert!(after.execution.is_none());
+    let (status, retried) = send(
+        &h.app,
+        page("POST", "/api/v1/cutters/practice/cancel-review", body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(retried, answer);
+}
+
+#[tokio::test]
 async fn upload_queue_test_cut_then_cut_on_the_practice_cutter() {
     let mut h = harness();
     let (status, job) = upload(&h.app, "u1").await;

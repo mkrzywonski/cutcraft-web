@@ -180,6 +180,17 @@ function savedBody(params){return {...params,key:key(),incarnation:model.snapsho
 async function open(body){try{await api('/api/v1/design/open','POST',savedBody(body));model.result={close_dialog:true};}catch(e){if(e.code==='unsaved-changes'&&confirm('The current design has unsaved changes. Open this file and keep the previous work as a draft?')){await api('/api/v1/design/open','POST',savedBody({...body,replace_unsaved:true}));}else throw e;}}
 async function upload(file){if(!file)return;await execute(async()=>{const r=await fetch(`/api/v1/design/upload?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'x-cutcraft-protocol':String(PROTOCOL),'x-csrf-token':decodeURIComponent(csrf())},body:file});const result=await r.json();if(!r.ok)throw new Error(result.message);const uploaded=result.design;if(uploadMode.update){await api('/api/v1/design/update','POST',savedBody({design:uploaded.id}));}else await open({design:uploaded.id});});}
 async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
+async function cancelOwnReview(){
+ const cutter=model.selectedCutter,view=model.state.cutters?.find(c=>c.id===cutter)?.view;
+ const owner=model.me.principal;
+ if(!owner || !view)return;
+ const current=view?.turn?.actor?.principal===owner?view.turn:null;
+ const queued=view?.queue?.find(q=>q.actor?.principal===owner && q.job.job_id===model.cut_preview?.copy?.id);
+ const target=current || queued;
+ if(target)await api(`/api/v1/cutters/${encodeURIComponent(cutter)}/cancel-review`,'POST',{
+  boot:model.state.boot,turn:target.id || target.turn,action_epoch:view.action_epoch,key:key()
+ });
+}
 async function dispatch({action,params:p}){
  if(action==='artwork'){const art=model.snapshot.design?.art;if(art?.id===p.art)requestPicture(art,p);return;}
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
@@ -191,7 +202,7 @@ async function dispatch({action,params:p}){
  if(action==='highlight'){model.message='Show me: inspecting the affected artwork.';return;}
  await execute(async()=>{
   switch(action){
-   case 'command':{const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:p.close_dialog===true || ['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
+   case 'command':{if(p.id==='view.show' && ['cut','test-cut'].includes(model.snapshot.ui.screen) && !['cut','test-cut'].includes(p.params?.screen))await cancelOwnReview();const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:p.close_dialog===true || ['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
    case 'save':{const {close_after,...save}=p;await api('/api/v1/design/save','POST',savedBody(save));if(close_after){await refresh();await command('design.close');}model.result={close_dialog:true};model.message='Saved to the library.';break;}
    case 'open':await open(p);break;
    case 'library':model.library=await api('/api/v1/library?path='+encodeURIComponent(p.path||''));break;

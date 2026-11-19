@@ -39,6 +39,14 @@ pub struct JobRef {
     pub revision: u32,
 }
 
+/// Cancel an unstarted review, fenced against the displayed cutter state.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CancelReview {
+    pub boot: String,
+    pub turn: String,
+    pub action_epoch: u64,
+}
+
 /// A reviewed replacement of an idle turn, fenced against the displayed cutter state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -174,6 +182,9 @@ pub struct StopIntent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "answer")]
 pub enum Answer {
+    ReviewCancelled {
+        turn: String,
+    },
     Started {
         execution: String,
         turn: String,
@@ -221,6 +232,7 @@ pub enum Refusal {
     },
     /// The turn named was skipped, removed or finished.
     StaleTurn,
+    ReviewCancelled,
     /// The job has a different revision now.
     StaleRevision,
     /// The mat was unloaded or replaced since the page was shown.
@@ -268,6 +280,7 @@ impl Refusal {
             Self::TurnInProgress { .. } => {
                 "Someone else's job is on this cutter. Add yours to the queue.".into()
             }
+            Self::ReviewCancelled => "Prepare this cut again before starting.".into(),
             Self::StaleTurn => "That job is no longer up on this cutter.".into(),
             Self::StaleRevision => "This job was updated; check it again.".into(),
             Self::StaleMat | Self::MatNotFresh { mat: Mat::Used(_) } => {
@@ -302,6 +315,16 @@ impl Refusal {
     }
 }
 
+fn queue_receipt(fingerprint: &str, answer: &Answer) -> bool {
+    match answer {
+        Answer::Queued { .. } => {
+            fingerprint.starts_with("queue-v1|") || fingerprint.starts_with("queue-replace-v1|")
+        }
+        Answer::ReviewCancelled { .. } => fingerprint.starts_with("cancel-review-v1|"),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     pub id: String,
@@ -312,6 +335,9 @@ pub struct Turn {
     /// Areas of test cuts made on its mat, `[x0, y0, x1, y1]` mm.
     pub taken: Vec<[f64; 4]>,
     pub tests: u32,
+    /// Exit invalidates an unstarted review without forgetting safe loaded-material context.
+    #[serde(default)]
+    pub review_cancelled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -910,6 +936,7 @@ impl Cutter {
                 mat: None,
                 taken: Vec::new(),
                 tests: 0,
+                review_cancelled: false,
             });
         }
         self.advance();
@@ -1022,6 +1049,9 @@ impl Cutter {
         match (&self.turn, &request.turn) {
             (None, None) => {}
             (Some(turn), Some(id)) if turn.id == *id => {
+                if turn.review_cancelled {
+                    return Err(Refusal::ReviewCancelled);
+                }
                 if turn.job != request.job {
                     return Err(Refusal::StaleRevision);
                 }
@@ -1075,6 +1105,7 @@ impl Cutter {
                 mat: None,
                 taken: Vec::new(),
                 tests: 0,
+                review_cancelled: false,
             });
         }
         let execution = self.new_id("exec");
@@ -1120,16 +1151,11 @@ impl Cutter {
                 .keys
                 .iter()
                 .filter_map(|(key, (fingerprint, answer))| match answer {
-                    Ok(answer @ Answer::Queued { .. })
-                        if fingerprint.starts_with("queue-v1|")
-                            || fingerprint.starts_with("queue-replace-v1|") =>
-                    {
-                        Some(QueueReceipt {
-                            key: key.clone(),
-                            fingerprint: fingerprint.clone(),
-                            answer: answer.clone(),
-                        })
-                    }
+                    Ok(answer) if queue_receipt(fingerprint, answer) => Some(QueueReceipt {
+                        key: key.clone(),
+                        fingerprint: fingerprint.clone(),
+                        answer: answer.clone(),
+                    }),
                     _ => None,
                 })
                 .collect(),
@@ -1155,10 +1181,7 @@ impl Cutter {
             }
         }
         for receipt in state.receipts {
-            if !matches!(receipt.answer, Answer::Queued { .. })
-                || !(receipt.fingerprint.starts_with("queue-v1|")
-                    || receipt.fingerprint.starts_with("queue-replace-v1|"))
-            {
+            if !queue_receipt(&receipt.fingerprint, &receipt.answer) {
                 return Err("invalid queue receipt".into());
             }
             if let Some((fingerprint, _)) = self.keys.get(&receipt.key)
@@ -1181,6 +1204,7 @@ impl Cutter {
                 mat: None,
                 taken: Vec::new(),
                 tests: 0,
+                review_cancelled: false,
             });
         }
         if let Some(turn) = self.turn.as_mut() {
@@ -1190,6 +1214,49 @@ impl Cutter {
         }
         self.advance();
         Ok(())
+    }
+
+    /// Cancel only this person's review. Current turns retain occupied areas and mat
+    /// authority; queued reviews are removed without touching the active person's material.
+    pub fn cancel_review(
+        &mut self,
+        request: &CancelReview,
+        actor: &Actor,
+        key: &str,
+    ) -> Result<Answer, Refusal> {
+        let fingerprint = format!(
+            "cancel-review-v1|{}",
+            serde_json::to_string(&(request, &actor.principal)).expect("review fields serialize")
+        );
+        self.once(key, fingerprint, |cutter| {
+            if request.boot != cutter.boot {
+                return Err(Refusal::StaleBoot);
+            }
+            if request.action_epoch != cutter.action_epoch {
+                return Err(Refusal::StaleEpoch {
+                    current: cutter.action_epoch,
+                });
+            }
+            if let Some(index) = cutter.queue.iter().position(|q| q.turn == request.turn) {
+                if !cutter.queue[index].actor.same_person(actor) {
+                    return Err(Refusal::StaleTurn);
+                }
+                cutter.queue.remove(index);
+            } else {
+                if !matches!(cutter.activity, Activity::Idle) {
+                    return Err(Refusal::StopFirst);
+                }
+                let turn = cutter.turn.as_mut().ok_or(Refusal::StaleTurn)?;
+                if turn.id != request.turn || !turn.actor.same_person(actor) {
+                    return Err(Refusal::StaleTurn);
+                }
+                turn.review_cancelled = true;
+            }
+            cutter.advance();
+            Ok(Answer::ReviewCancelled {
+                turn: request.turn.clone(),
+            })
+        })
     }
 
     pub fn replay_replacement(
@@ -1249,6 +1316,7 @@ impl Cutter {
                 return Err(Refusal::StaleMat);
             }
             turn.job = request.next.clone();
+            turn.review_cancelled = false;
             let answer = Answer::Queued {
                 turn: turn.id.clone(),
                 position: 0,
@@ -1304,6 +1372,7 @@ impl Cutter {
                     mat: None,
                     taken: Vec::new(),
                     tests: 0,
+                    review_cancelled: false,
                 });
                 cutter.advance();
                 return Ok(Answer::Queued { turn, position: 0 });
@@ -1552,6 +1621,7 @@ impl Cutter {
                 mat: None,
                 taken: Vec::new(),
                 tests: 0,
+                review_cancelled: false,
             });
         } else {
             self.queue.push_back(entry);
@@ -1714,6 +1784,110 @@ mod tests {
         next.generation = generation;
         next.actor.principal = "another-account".into();
         assert_eq!(c.start(next), Err(Refusal::StaleMat));
+        assert!(c.take_pending().is_none());
+    }
+
+    #[test]
+    fn cancelling_review_keeps_material_and_tests_but_fences_every_start_until_prepared_again() {
+        let mut c = ready_cutter();
+        let (exec, turn) = started(c.start(request(&c, Kind::Test, None, "test")));
+        let busy = CancelReview {
+            boot: "b1".into(),
+            turn: turn.clone(),
+            action_epoch: c.action_epoch(),
+        };
+        assert_eq!(
+            c.cancel_review(&busy, &actor(), "busy-cancel"),
+            Err(Refusal::StopFirst)
+        );
+        c.take_pending();
+        c.finished(&exec, Outcome::Completed { duration_s: 1. });
+        let before = c.view();
+        let stale_start = request(&c, Kind::Main, Some(&turn), "stale-start");
+        let cancel = CancelReview {
+            boot: "b1".into(),
+            turn: turn.clone(),
+            action_epoch: c.action_epoch(),
+        };
+        let mut other = actor();
+        other.principal = "other-account".into();
+        assert_eq!(
+            c.cancel_review(&cancel, &other, "wrong-owner"),
+            Err(Refusal::StaleTurn)
+        );
+        let answer = c.cancel_review(&cancel, &actor(), "cancel").unwrap();
+        let after = c.view();
+        assert_eq!(after.mat, before.mat);
+        assert_eq!(after.mat_loaded, before.mat_loaded);
+        assert_eq!(
+            after.turn.as_ref().unwrap().taken,
+            before.turn.as_ref().unwrap().taken
+        );
+        assert_eq!(after.turn.as_ref().unwrap().tests, 1);
+        assert!(after.turn.as_ref().unwrap().review_cancelled);
+        assert!(matches!(
+            c.start(stale_start),
+            Err(Refusal::StaleEpoch { .. })
+        ));
+        assert_eq!(
+            c.start(request(&c, Kind::Main, Some(&turn), "fresh-start")),
+            Err(Refusal::ReviewCancelled)
+        );
+        assert!(c.take_pending().is_none());
+        assert_eq!(
+            c.cancel_review(&cancel, &actor(), "cancel"),
+            Ok(answer.clone())
+        );
+        let mut recovered = Cutter::new("practice", "Practice", "new-boot");
+        recovered
+            .restore_queue(c.queue_state(), &Default::default())
+            .unwrap();
+        assert!(recovered.view().turn.unwrap().review_cancelled);
+        assert_eq!(
+            recovered.cancel_review(&cancel, &actor(), "cancel"),
+            Ok(answer)
+        );
+        let replacement = ReplaceTurn {
+            kind: Kind::Main,
+            boot: "b1".into(),
+            turn: turn.clone(),
+            previous: job(1),
+            next: job(1),
+            action_epoch: c.action_epoch(),
+            generation: Some(1),
+        };
+        c.replace_turn(&replacement, &actor(), "prepare-again")
+            .unwrap();
+        assert!(!c.view().turn.unwrap().review_cancelled);
+        assert!(matches!(
+            c.start(request(&c, Kind::Main, Some(&turn), "after-review")),
+            Ok(Answer::Started { .. })
+        ));
+    }
+
+    #[test]
+    fn cancelling_a_queued_review_never_retires_the_current_mat() {
+        let mut c = ready_cutter();
+        c.queue(job(1), actor(), "first").unwrap();
+        let mut other = actor();
+        other.principal = "other-account".into();
+        let Answer::Queued { turn, .. } = c.queue(job(2), other.clone(), "second").unwrap() else {
+            panic!()
+        };
+        let before = c.view();
+        let request = CancelReview {
+            boot: "b1".into(),
+            turn,
+            action_epoch: c.action_epoch(),
+        };
+        assert_eq!(
+            c.cancel_review(&request, &actor(), "wrong"),
+            Err(Refusal::StaleTurn)
+        );
+        c.cancel_review(&request, &other, "remove").unwrap();
+        assert!(c.view().queue.is_empty());
+        assert_eq!(c.view().mat, before.mat);
+        assert_eq!(c.view().turn.unwrap().id, before.turn.unwrap().id);
         assert!(c.take_pending().is_none());
     }
 

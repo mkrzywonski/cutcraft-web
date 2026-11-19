@@ -618,10 +618,11 @@ impl Desktop {
                 !copy.is_null() && (copy["project_revision"] != design.project_revision
                     || copy["source_sha256"] != design.source_sha256
                     || copy["incarnation"] != self.remote.snapshot.incarnation));
-            if changed && !busy {
-                ui.strong("Settings changed since this cut was prepared");
+            let cancelled=v["turn"]["review_cancelled"]==true;
+            if (changed || cancelled) && !busy {
+                ui.strong(if changed {"Settings changed since this cut was prepared"} else {"This cut review was cancelled"});
                 ui.label("Prepare the current settings to review the updated cut. Earlier test areas stay reserved on the same material.");
-                if self.button(ui,"Prepare updated cut",!self.remote.pending){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}
+                if self.button(ui,if changed {"Prepare updated cut"} else {"Prepare cut again"},!self.remote.pending){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}
             }
             let material=if preview["material"].is_object() { &preview["material"] } else if !busy && copy.is_null() { &self.remote.snapshot.ui.sheet["material"] } else { &serde_json::Value::Null };
             if material.is_object() {
@@ -663,7 +664,7 @@ impl Desktop {
                     if self.button(ui,"Try another pattern",!self.remote.pending){self.reviewed_tests=tests;}
                 }
                 let own_copy=preview.get("copy").filter(|c|!c.is_null());
-                let ready=!uncertain && !changed && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
+                let ready=!uncertain && !changed && !cancelled && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
                 if self.button(ui,"Start",ready){let start=json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});self.send("start",json!({"cutter":self.cutter,"start":start}));}
                 if v["mat"]["state"]=="used" {ui.strong("Fresh material needed");ui.label("Unload and load fresh material for another cut.");}
                 if tests>0{ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));}

@@ -338,6 +338,7 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/cutters/{id}/preview", get(cut_preview))
         .route("/api/v1/cutters/{id}/history", get(cut_history))
         .route("/api/v1/cutters/{id}/replace", post(replace_cut))
+        .route("/api/v1/cutters/{id}/cancel-review", post(cancel_review))
         .route("/api/v1/cutters/{id}/start", post(start))
         .route("/api/v1/cutters/{id}/starts/{key}", get(start_result))
         .route("/api/v1/cutters/{id}/stop", post(stop))
@@ -615,6 +616,29 @@ async fn queue(
             app.service
                 .queue(&id, &body.job_id, body.revision, caller.actor, &body.key)?;
         Ok(Json(json!(answer)))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct CancelReviewBody {
+    #[serde(flatten)]
+    request: cameo_pi_core::cutter::CancelReview,
+    key: String,
+}
+async fn cancel_review(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    Json(body): Json<CancelReviewBody>,
+) -> Result<Json<Value>> {
+    blocking(move || {
+        Ok(Json(json!(app.service.cancel_review(
+            &id,
+            body.request,
+            caller.actor,
+            &body.key
+        )?)))
     })
     .await
 }

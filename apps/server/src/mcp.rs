@@ -323,6 +323,15 @@ const TOOLS: &[ToolSpec] = &[
         required: &["cutter", "request", "key"],
     },
     ToolSpec {
+        name: "cut_cancel_review",
+        title: "Cancel an unstarted cut review",
+        description: "Cancel your pending review without motion. Keeps safe loaded-mat authority and occupied test areas for a current turn; removes your queued review. A cancelled current turn must be prepared again before Start.",
+        read_only: false,
+        destructive: false,
+        properties: || json!({"cutter":s("Cutter id"),"boot":s("Current server boot"),"turn":s("Your turn id"),"action_epoch":i("Current cutter action epoch"),"key":s("Idempotency key")}),
+        required: &["cutter", "boot", "turn", "action_epoch", "key"],
+    },
+    ToolSpec {
         name: "cut_history",
         title: "Read your cut outcomes",
         description: "The latest 50 durable execution outcomes on this cutter for the signed-in person. Reports Done, Stopped, Interrupted, Refused or Outcome pending; never infers success from idle. No source geometry or request keys are included.",
@@ -519,6 +528,15 @@ impl Tools {
         let service = &self.app.service;
         Ok(match name {
             "cutters" => crate::http::snapshot(&self.app),
+            "cut_cancel_review" => json!(
+                service.cancel_review(
+                    text(args, "cutter")?,
+                    serde_json::from_value(args.clone())
+                        .map_err(|e| ApiError::bad_request(e.to_string()))?,
+                    caller.actor.clone(),
+                    text(args, "key")?
+                )?
+            ),
             "cut_history" => {
                 service.execution_history(text(args, "cutter")?, &caller.actor.principal)?
             }

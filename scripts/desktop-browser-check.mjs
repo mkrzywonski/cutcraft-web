@@ -234,6 +234,15 @@ await until(async()=>(await state()).cut_preview?.geometry,'Recover prepared pre
 if((await state()).state.cutters[0].view.turn.id!==preparedTurn || (await state()).state.cutters[0].view.queue.length)throw Error('Reload duplicated the prepared turn');
 await click('Load virtual mat');
 await until(async()=>(await state()).state.cutters[0].view.mat.state==='fresh'&&(await state()).state.cutters[0].view.mat_loaded,'Fresh virtual mat');
+await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='mat','Exit cancels loaded review');
+if(!(await state()).state.cutters[0].view.turn.review_cancelled || (await state()).state.cutters[0].view.mat.state!=='fresh')throw Error('Exit must cancel review while preserving fresh material');
+await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Return to cancelled review');
+await click('Start');
+if((await state()).state.cutters[0].view.execution)throw Error('Cancelled review must not enable Start');
+await click('Prepare cut again');
+await until(async()=>!(await state()).state.cutters[0].view.turn.review_cancelled && !(await state()).pending,'Explicitly prepare cancelled review again');
+console.log('PASS: Exit cancels review without unloading; Start waits for explicit re-preparation');
+
 await click('Start');await until(async()=>(await state()).state.cutters[0].view.turn?.tests===1,'Test completed');
 await until(async()=>(await state()).state.cutters[0].view.mat_loaded,'Mat ready after first test');
 await cdp('Page.reload');
@@ -245,6 +254,8 @@ const occupiedShot=await cdp('Page.captureScreenshot',{format:'png'});
 await fs.writeFile(`${artifacts}/occupied-test.png`,Buffer.from(occupiedShot.data,'base64'));
 const firstCopy=(await state()).cut_preview.copy.id;
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='mat','Exit test to adjust settings');
+if(!(await state()).state.cutters[0].view.turn.review_cancelled || (await state()).state.cutters[0].view.turn.taken.length!==1)throw Error('Exit discarded the occupied test area');
+
 await type('Force','17');await until(async()=>(await state()).snapshot.ui.sheet.material.force===17,'Adjust force after test');
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','Return to test');
 await click('Prepare updated cut');

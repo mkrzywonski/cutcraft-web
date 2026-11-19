@@ -373,6 +373,21 @@ impl Service {
         Ok(answer)
     }
 
+    /// Cancel an owned review without retiring its loaded material. Never starts motion.
+    pub fn cancel_review(
+        &self,
+        cutter: &str,
+        request: cameo_pi_core::cutter::CancelReview,
+        actor: Actor,
+        key: &str,
+    ) -> Result<Answer> {
+        let entry = self.cutter(cutter)?;
+        let _revisions = self.revisions.lock().unwrap_or_else(|p| p.into_inner());
+        let answer = lock(&entry.shared).cancel_review(&request, &actor, key)?;
+        self.persist_queue(cutter)?;
+        Ok(answer)
+    }
+
     /// Update an owned idle cut copy without forgetting occupied material. Never starts motion.
     pub fn replace_cut(
         &self,

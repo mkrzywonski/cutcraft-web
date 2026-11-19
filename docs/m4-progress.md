@@ -48,8 +48,7 @@ These are required work, not exclusions or waived acceptance:
 
 - Shared library font management (web §10 v2.1), including project font status, upload/download
   and backup/restore integration.
-- Exiting an unstarted review must cancel it while retaining safe loaded-mat context; finish
-  the problem-report acceptance audit beyond the bounded execution-outcome report.
+- Finish the problem-report acceptance audit beyond the bounded execution-outcome report.
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -630,3 +629,22 @@ Done and Stopped outcomes, report download, and Stopped surviving reload, plus t
 simulated cut/reload/Stop/resize/large-text workflows. Evidence:
 `/tmp/codex-m4-outcomes-full.log`; screenshots `/tmp/cutcraft-desktop-check.N12Mv3`.
 No physical motion was used. This does not close the remaining M4 gates above.
+
+
+## Exit cancels the review (0.24.1)
+
+Exit uses the shared `cut_cancel_review` action before leaving Cut/Test Cut. It invalidates
+both stale and newly constructed Start requests until explicit preparation, while preserving
+the same user's safe mat authority and occupied test areas. Cancelling an owned queued review
+removes only that entry. Motion cannot be cancelled through navigation: Stop is still required.
+The cancellation receipt survives restart, so retrying it does not act on a newer review.
+
+Regression tests cover owner checks, busy refusal, stale and fresh Start fences, queued
+cancellation, restart/retry and explicit re-preparation. HTTP and browser transport tests
+exercise the shared action and failure propagation. Full desktop browser acceptance covers
+Exit before cutting, disabled Start, explicit preparation, two tests and the subsequent design
+on one loaded mat, retained occupied areas, reload and modal Stop. All 510 Rust tests, fmt,
+native/wasm Clippy, workspace build and cargo-deny pass. Evidence:
+`/tmp/codex-m4-exit-full.log`, `/tmp/codex-m4-exit-final-rust.log`,
+`/tmp/codex-m4-exit-http.log`; captures `/tmp/cutcraft-desktop-check.kBqy9X`.
+Only the simulator was used. Remaining M4 requirements above are still open.

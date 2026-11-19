@@ -62,7 +62,7 @@ Press Start only after the physical material is ready. Consecutive test patterns
 
 Progress, time remaining and the blade marker are estimates. Pause waits for a safe checkpoint. Stop now interrupts the cut; after a stop, follow the loading instructions again. Escape also requests Stop while a cut is active, including when a help dialog is open.
 
-On the cut or test screen, the corresponding toolbar button becomes Exit. Leaving a screen does not start a cut. If Start is not confirmed because a reply was lost, inspect the cutter and use Check Start status. Retry original Start uses the originally prepared copy and request, even if the design has since changed. It is never an automatic retry.
+On the cut or test screen, the corresponding toolbar button becomes Exit. Exit cancels your pending review without moving the cutter. Prepare the cut again before Start becomes available. The same user can keep using safely loaded material, and earlier test-cut areas stay reserved. Leaving a screen does not start a cut. If Start is not confirmed because a reply was lost, inspect the cutter and use Check Start status. Retry original Start uses the originally prepared copy and request, even if the design has since changed. It is never an automatic retry.
 
 The Simulated Cameo is for practice and development. Its scenarios deliberately imitate faults; they do not describe settings to use on a physical cutter.
 

@@ -552,7 +552,8 @@ function renderCutter(id, fresh) {
     );
   } else if (v.turn) {
     const turn = v.turn;
-    const ready = !state.update?.waiting && v.online && v.activity === "idle" && v.mat.state === "fresh" && v.mat_loaded;
+    const ready = !turn.review_cancelled && !state.update?.waiting && v.online && v.activity === "idle" && v.mat.state === "fresh" && v.mat_loaded;
+    if (turn.review_cancelled) put(card, h("p", {}, "This review was cancelled. ", h("a", { href: "/desktop" }, "Prepare the cut again in the workspace"), " before starting."));
     const steps = h("ol", { class: "steps" });
     const facts = h("div");
     // Exactly the revision this turn cuts: the steps, the material and Start all name it.

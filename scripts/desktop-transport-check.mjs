@@ -356,3 +356,24 @@ releaseHistory();await new Promise(r=>setTimeout(r,0));
 assert.equal(vm.runInContext("JSON.stringify(model.cut_history)",context),'{}','Authentication loss retires history reads even before the principal field changes');
 context.fetch=savedFetch;
 console.log('PASS: authentication loss rejects late history even when the account id has not yet changed');
+
+// Exit cancels only this account's review, before changing screens.
+const exitRequests=[];
+context.fetch=async(path,options)=>{
+ exitRequests.push({path,body:JSON.parse(options.body)});
+ return {ok:true,status:200,json:async()=>({answer:'review-cancelled'})};
+};
+vm.runInContext(`model.me={principal:'exit-owner'};model.selectedCutter='practice';model.state={boot:'exit-boot',cutters:[{id:'practice',view:{action_epoch:12,turn:{id:'own-turn',actor:{principal:'exit-owner'}},queue:[]}}]}`,context);
+await vm.runInContext('cancelOwnReview()',context);
+assert.equal(exitRequests.length,1);
+assert.equal(exitRequests[0].body.turn,'own-turn');
+assert.equal(exitRequests[0].body.action_epoch,12);
+vm.runInContext("model.state.cutters[0].view.turn.actor.principal='someone-else'",context);
+await vm.runInContext('cancelOwnReview()',context);
+assert.equal(exitRequests.length,1,'Exit must never cancel another account’s review');
+vm.runInContext("model.cut_preview={copy:{id:'queued-copy'}};model.state.cutters[0].view.queue=[{turn:'queued-turn',actor:{principal:'exit-owner'},job:{job_id:'queued-copy'}}]",context);
+await vm.runInContext('cancelOwnReview()',context);
+assert.equal(exitRequests[1].body.turn,'queued-turn');
+context.fetch=async()=>({ok:false,status:409,json:async()=>({message:'Stop the cut first.'})});
+await assert.rejects(vm.runInContext('cancelOwnReview()',context),/Stop the cut first/);
+console.log('PASS: Exit cancels only an owned current/queued review and propagates refusal');
