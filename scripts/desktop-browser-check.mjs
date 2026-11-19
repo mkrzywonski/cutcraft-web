@@ -257,6 +257,11 @@ await click('Cut');await until(async()=>(await state()).snapshot.ui.screen==='cu
 await until(async()=>(await state()).state.cutters[0].view.mat_loaded,'Same loaded mat ready for design');
 await click('Start');await until(async()=>(await state()).state.cutters[0].view.mat.state==='used','Main cut completed',45000);
 console.log('PASS: toolbar navigation only, explicit prepare/Start, two tests and design on one loaded mat');
+await until(async()=>{const h=(await state()).cut_history;return h?.executions?.[0]?.kind==='main' && h.executions[0].status==='Done';},'Durable Done outcome reaches the cut screen');
+await click('Cut history…');await click('Download cut report');
+await until(async()=>{try{return JSON.parse(await fs.readFile(`${artifacts}/cutcraft-cut-report.json`,'utf8')).executions[0].status==='Done';}catch{return false;}},'Download recorded cut outcomes');
+await click('Close dialog');
+
 await until(async()=>!(await state()).cut_preview?.copy,'Finished turn clears prepared preview');
 await click('Test Cut');await until(async()=>(await state()).snapshot.ui.screen==='test-cut','New test after completed design');
 await click('Cut pattern');await until(async()=>(await state()).cut_preview?.geometry,'Prepare another turn');
@@ -286,10 +291,15 @@ await until(async()=>(await state()).state.cutters[0].view.activity==='idle','St
 await until(async()=>{const record=JSON.parse(await fs.readFile(`${artifacts}/data/private/executions/${stoppedExecution}.json`,'utf8'));return record.outcome?.ended==='stopped';},'Durable record confirms Stop, not completion');
 if((await state()).state.cutters[0].view.mat.state!=='used')throw Error('Stopped test must require fresh loading');
 console.log('PASS: prepare after finished cut and Escape Stop through a help dialog; fresh loading required');
+await until(async()=>(await state()).cut_history?.executions?.[0]?.status==='Stopped','Durable Stopped outcome reaches the cut screen');
+
 await cdp('Page.reload');
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Reload ready');
 await until(async()=>(await state()).snapshot.ui.sheet?.material?.force===17,'Material setting survives reload');
 if((await state()).state.cutters[0].view.activity!=='idle')throw Error('Reload started a cut');
+await until(async()=>(await state()).cut_history?.executions?.[0]?.status==='Stopped','Reload retains Stopped rather than inferring Done from idle');
+console.log('PASS: durable Done/Stopped outcomes, private cut report download and outcome recovery after reload');
+
 for(const [width,height] of [[1280,800],[1920,1080]]){
  await cdp('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await sleep(300);
  const shot=await cdp('Page.captureScreenshot',{format:'png'});

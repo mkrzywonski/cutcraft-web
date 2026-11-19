@@ -323,6 +323,15 @@ const TOOLS: &[ToolSpec] = &[
         required: &["cutter", "request", "key"],
     },
     ToolSpec {
+        name: "cut_history",
+        title: "Read your cut outcomes",
+        description: "The latest 50 durable execution outcomes on this cutter for the signed-in person. Reports Done, Stopped, Interrupted, Refused or Outcome pending; never infers success from idle. No source geometry or request keys are included.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({"cutter": s("The cutter id.")}),
+        required: &["cutter"],
+    },
+    ToolSpec {
         name: "cut_start",
         title: "Start a test cut or the cut",
         description: "Start the turn's test cut or main cut. It moves the cutter: someone must have loaded the material, and the mat must be fresh. Name what you saw in cutters: boot, the turn, the revision, the mat's generation and the action epoch; anything changed since is refused.",
@@ -510,6 +519,9 @@ impl Tools {
         let service = &self.app.service;
         Ok(match name {
             "cutters" => crate::http::snapshot(&self.app),
+            "cut_history" => {
+                service.execution_history(text(args, "cutter")?, &caller.actor.principal)?
+            }
             "cutter_wait" => {
                 let cutter = service.cutter(text(args, "cutter")?)?;
                 let limit = args

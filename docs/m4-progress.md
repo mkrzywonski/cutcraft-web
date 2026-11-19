@@ -48,8 +48,8 @@ These are required work, not exclusions or waived acceptance:
 
 - Shared library font management (web §10 v2.1), including project font status, upload/download
   and backup/restore integration.
-- Durable, authorized Done/Stopped/Interrupted/Refused presentation and bounded cut logs/problem
-  reports; exiting an unstarted review must cancel it while retaining safe loaded-mat context.
+- Exiting an unstarted review must cancel it while retaining safe loaded-mat context; finish
+  the problem-report acceptance audit beyond the bounded execution-outcome report.
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -606,3 +606,27 @@ acceptance verifies actual Chromium requests load all four hashed assets with gz
 immutable headers, and continues through original download, preparation controls, offline
 Manual and 600px/24pt controls. Evidence: `/tmp/codex-m4-assets-final.log`. The wasm gzip is
 2,356,060 bytes; this is bundle size, not Pi load-time acceptance. No hardware used.
+
+## Durable private cut outcomes (0.24.0)
+
+The cut screen shows the last recorded result for the selected cutter: Done, Stopped,
+Interrupted, Refused, or Outcome pending. Idle does not imply Done. Cut history lists up to
+50 records and downloads a bounded JSON report containing execution references, timestamps,
+kind, revision, status and reason, without artwork, request keys, fingerprints or display names.
+The browser and MCP `cut_history` use the same service action.
+
+Records now retain the stable principal at admission. The journal caches only the latest 50
+records per principal/cutter, publishes cache changes after successful writes, and rebuilds
+from durable records on restart; unfinished records become Interrupted. Legacy records with
+no stable owner are deliberately not exposed as private history. History polling is independent
+of project refresh and Start recovery; account changes and authentication loss retire pending
+reads, even before the old principal field changes.
+
+All **507** Rust tests, fmt, native/wasm Clippy, workspace build and cargo-deny pass. Regression
+tests cover bounded history, owner/cutter isolation, restart, terminal-state preservation, all
+five reported states, HTTP authorization and omitted secrets. Transport checks cover late
+responses after account/authentication changes. Full desktop browser acceptance passes with
+Done and Stopped outcomes, report download, and Stopped surviving reload, plus the existing
+simulated cut/reload/Stop/resize/large-text workflows. Evidence:
+`/tmp/codex-m4-outcomes-full.log`; screenshots `/tmp/cutcraft-desktop-check.N12Mv3`.
+No physical motion was used. This does not close the remaining M4 gates above.

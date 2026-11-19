@@ -4,7 +4,7 @@ import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
-let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null;
+let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0;
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 function csrf(){return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';}
 async function api(path,method='GET',body,signal){
@@ -101,8 +101,20 @@ async function sendStart(saved){
  }
 }
 function clearPicture(){model.picture='';model.picture_id='';model.picture_source='';model.picture_region=null;model.picture_key='';pictureWanted=null;}
+function queueCutHistory(){
+ const owner=model.me.principal,cutter=model.selectedCutter,epoch=privateEpoch;
+ if(historyFlight || !owner || !cutter || !['cut','test-cut'].includes(model.snapshot.ui?.screen))return;
+ historyFlight=api(`/api/v1/cutters/${encodeURIComponent(cutter)}/history`,'GET',undefined,AbortSignal.timeout(5000)).then(history=>{
+  if(privateEpoch!==epoch || model.me.principal!==owner || model.selectedCutter!==cutter)return;
+  for(const record of history.executions)record.when=new Date(record.started*1000).toLocaleString();
+  model.cut_history=history;model.history_error='';
+ }).catch(()=>{
+  if(privateEpoch===epoch && model.me.principal===owner && model.selectedCutter===cutter){model.cut_history={};model.history_error='Cut outcomes are unavailable. Retrying…';}
+ }).finally(()=>{historyFlight=null;});
+}
 function clearPrivate(){
- model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.state={};model.library={};model.uploads={};model.result={};
+ privateEpoch++;
+ model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.cut_history={};model.history_error='';model.state={};model.library={};model.uploads={};model.result={};
  model.start_recovery=null;clearPicture();document.title='CutCraft';live?.close();live=null;
 }
 async function refresh(){
@@ -143,6 +155,7 @@ async function refresh(){
   if(art && pictureWanted?.art.id!==art.id){const region=art.bounds.map(n=>n/art.scale);const width=1200,height=Math.max(1,Math.min(1600,Math.round(width*(region[3]-region[1])/(region[2]-region[0]))));requestPicture(art,{art:art.id,region,zoom_step:0,width,height});}else void pumpPicture();
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
   queueStartReconciliation(state);
+  queueCutHistory();
  }catch(e){const auth=e.status===401 || e.status===403;if(auth){clearPrivate();model.me.login_required=true;}model.connected=auth;model.message=e.message;}finally{refreshing=false;}
 }
 function requestPicture(art,request){
@@ -170,7 +183,7 @@ async function execute(fn){if(model.pending)return;model.pending=true;model.mess
 async function dispatch({action,params:p}){
  if(action==='artwork'){const art=model.snapshot.design?.art;if(art?.id===p.art)requestPicture(art,p);return;}
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
- if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
+ if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};model.cut_history={};model.history_error='';}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='layout'){localStorage.setItem('cutcraft.layout',p.layout);location.assign('/station');return;}
  if(action==='upload'){uploadMode=p;document.querySelector('#file').click();return;}
  if(action==='link'){window.open(p.url,'_blank','noopener,noreferrer');return;}
@@ -186,6 +199,11 @@ async function dispatch({action,params:p}){
    case 'login':await api('/api/v1/login','POST',{name:p.username,password:p.password});break;
    case 'password':await api('/api/v1/me/password','POST',p);break;
    case 'logout':await api('/api/v1/logout','POST',{});clearPrivate();break;
+   case 'download-cut-report':{
+     if(model.cut_history?.cutter!==model.selectedCutter || !model.cut_history?.executions?.length)throw new Error('Wait for your cut history to load.');
+     const url=URL.createObjectURL(new Blob([JSON.stringify(model.cut_history,null,2)],{type:'application/json'}));
+     const a=document.createElement('a');a.href=url;a.download='cutcraft-cut-report.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;
+   }
    case 'download':{const r=await fetch(`/api/v1/design/download?kind=${encodeURIComponent(p.kind)}`,{headers:{'x-cutcraft-protocol':String(PROTOCOL)}});if(!r.ok){const e=await r.json();throw new Error(e.message);}const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=r.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] || (p.kind==='project'?'design.cutcraft':`cutcraft.${p.kind==='preview-svg'?'svg':p.kind==='preview-png'?'png':p.kind==='plan'?'json':'gpgl'}`);a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
    case 'prepare-cut':{
      model.selectedCutter=p.cutter;

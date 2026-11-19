@@ -26,6 +26,9 @@ pub struct Record {
     pub kind: String,
     pub key: String,
     pub fingerprint: String,
+    /// Stable authenticated owner; legacy records are not exposed as private history.
+    #[serde(default)]
+    pub principal: String,
     pub user: Option<String>,
     pub client: String,
     pub digest: String,
@@ -121,6 +124,7 @@ pub struct Journal {
     dir: PathBuf,
     transaction: std::sync::Mutex<()>,
     stop_transaction: std::sync::Mutex<()>,
+    recent: std::sync::Mutex<std::collections::BTreeMap<(String, String), Vec<Record>>>,
 }
 
 impl Journal {
@@ -133,6 +137,7 @@ impl Journal {
             dir,
             transaction: std::sync::Mutex::new(()),
             stop_transaction: std::sync::Mutex::new(()),
+            recent: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         };
         let mut records = Vec::new();
         for entry in fs::read_dir(&journal.dir)? {
@@ -172,6 +177,7 @@ impl Journal {
                 record.outcome = Some(serde_json::to_value(&ended).unwrap_or_default());
                 journal.write(&record)?;
             }
+            journal.cache(&record);
             records.push(record);
         }
         records.sort_by_key(|r| r.started);
@@ -320,7 +326,46 @@ impl Journal {
 
     fn write(&self, record: &Record) -> std::io::Result<()> {
         let bytes = serde_json::to_vec_pretty(record).map_err(std::io::Error::other)?;
-        write_atomic(&self.path(&record.execution), &bytes)
+        write_atomic(&self.path(&record.execution), &bytes)?;
+        self.cache(record);
+        Ok(())
+    }
+
+    fn cache(&self, record: &Record) {
+        if record.principal.is_empty() {
+            return;
+        }
+        let mut recent = self.recent.lock().unwrap_or_else(|p| p.into_inner());
+        let entries = recent
+            .entry((record.principal.clone(), record.cutter.clone()))
+            .or_default();
+        entries.retain(|r| r.execution != record.execution);
+        entries.push(record.clone());
+        entries.sort_by_key(|r| {
+            (
+                r.started,
+                r.execution
+                    .rsplit('-')
+                    .next()
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .unwrap_or(0),
+                r.execution.clone(),
+            )
+        });
+        if entries.len() > 50 {
+            entries.drain(..entries.len() - 50);
+        }
+    }
+
+    /// At most 50 durable records, newest first, belonging to this stable principal and cutter.
+    /// No paths or execution ids are accepted from the client for disk access.
+    pub fn recent(&self, principal: &str, cutter: &str) -> Vec<Record> {
+        self.recent
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&(principal.to_owned(), cutter.to_owned()))
+            .map(|records| records.iter().rev().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Records an execution before anything is sent. If this fails, nothing may be sent.
@@ -338,6 +383,7 @@ impl Journal {
                     && first.turn == execution.turn
                     && first.job_id == execution.job.job_id
                     && first.revision == execution.job.revision
+                    && first.principal == execution.actor.principal
                     && first.user == execution.actor.user
                     && first.client == execution.actor.client
                     && first.schema_version == record_schema()
@@ -366,6 +412,7 @@ impl Journal {
             },
             key: execution.key.clone(),
             fingerprint: execution.fingerprint.clone(),
+            principal: execution.actor.principal.clone(),
             user: execution.actor.user.clone(),
             client: execution.actor.client.clone(),
             digest: execution.run.digest.clone(),
@@ -403,6 +450,7 @@ impl Journal {
         let text = fs::read_to_string(self.path(execution))?;
         let mut record: Record = serde_json::from_str(&text).map_err(std::io::Error::other)?;
         if record.outcome.is_some() {
+            self.cache(&record);
             return Ok(());
         }
         record.outcome = Some(serde_json::to_value(ended).map_err(std::io::Error::other)?);
@@ -522,6 +570,43 @@ mod tests {
     }
 
     #[test]
+    fn private_history_is_bounded_durable_and_scoped_by_stable_owner_and_cutter() {
+        let dir = tempfile::tempdir().unwrap();
+        let (journal, _) = Journal::open(dir.path()).unwrap();
+        let mut run = execution("exec-b-0");
+        for n in 0..53 {
+            run.id = format!("exec-b-{n}");
+            journal.started("cutter", &run).unwrap();
+            if n < 52 {
+                journal.ended(&run.id, &Ended::Finished).unwrap();
+            }
+        }
+        assert!(journal.recent("other-person", "cutter").is_empty());
+        assert!(journal.recent("household", "other-cutter").is_empty());
+        let history = journal.recent("household", "cutter");
+        assert_eq!(history.len(), 50);
+        assert_eq!(history[0].execution, "exec-b-52");
+        assert!(history[0].outcome.is_none());
+        let mut impostor = run;
+        impostor.actor.principal = "other-person".into();
+        assert!(journal.started("cutter", &impostor).is_err());
+        drop(journal);
+        let (recovered, _) = Journal::open(dir.path()).unwrap();
+        let history = recovered.recent("household", "cutter");
+        assert_eq!(history.len(), 50);
+        assert_eq!(history[0].execution, "exec-b-52");
+        assert_eq!(history[0].outcome.as_ref().unwrap()["ended"], "interrupted");
+        recovered.ended("exec-b-52", &Ended::Finished).unwrap();
+        assert_eq!(
+            recovered.recent("household", "cutter")[0]
+                .outcome
+                .as_ref()
+                .unwrap()["ended"],
+            "interrupted"
+        );
+    }
+
+    #[test]
     fn leftover_temporary_files_are_removed() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".exec-x.json.1.tmp"), b"partial").unwrap();
@@ -577,6 +662,7 @@ mod tests {
         let mut legacy: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         legacy.as_object_mut().unwrap().remove("schema_version");
+        legacy.as_object_mut().unwrap().remove("principal");
         legacy.as_object_mut().unwrap().remove("start_refused");
         fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let (_, records) = Journal::open(dir.path()).unwrap();

@@ -209,6 +209,100 @@ async fn upload(app: &App, key: &str) -> (StatusCode, Value) {
     send(app, request).await
 }
 
+fn record_outcome_fixture(
+    app: &App,
+    owner: &str,
+    number: usize,
+    ended: Option<cameo_pi_core::cutter::Ended>,
+) {
+    use cameo_pi_core::{
+        cutter::{Actor, Execution, JobRef, Kind},
+        runnable::Runnable,
+    };
+    let (_, plan) = cameo_pi_core::fixtures::upload();
+    let plan = serde_json::from_slice(&plan).unwrap();
+    let run = Runnable::new(&plan, &cutcraft_device::gpgl::CAMEO_1, &app.service.machine).unwrap();
+    let execution = Execution {
+        id: format!("exec-history-{number}"),
+        turn: "turn-fixture".into(),
+        kind: Kind::Main,
+        job: JobRef {
+            job_id: "authored-job".into(),
+            revision: 1,
+        },
+        key: "private-request-key".into(),
+        fingerprint: "private-fingerprint".into(),
+        actor: Actor {
+            principal: owner.into(),
+            user: Some("Same display name".into()),
+            client: "browser".into(),
+        },
+        run: Arc::new(run),
+        controls: Arc::new(cutcraft_device::driver::Controls::default()),
+    };
+    app.service.journal.started("practice", &execution).unwrap();
+    if let Some(ended) = ended {
+        app.service.journal.ended(&execution.id, &ended).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn cut_reports_distinguish_terminal_states_without_leaking_request_secrets() {
+    use cameo_pi_core::cutter::Ended;
+    let h = harness();
+    for (n, ended) in [
+        None,
+        Some(Ended::Finished),
+        Some(Ended::Stopped),
+        Some(Ended::Interrupted {
+            reason: "Inspect the material".into(),
+        }),
+        Some(Ended::NotRun {
+            reason: "Nothing sent".into(),
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        record_outcome_fixture(&h.app, "household", n, ended);
+    }
+    record_outcome_fixture(&h.app, "other-owner", 10, Some(Ended::Finished));
+    let response = send_raw(
+        &h.app,
+        get("/api/v1/cutters/practice/history", "cameo-pi.local"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let history: Value = serde_json::from_slice(&bytes).unwrap();
+    let statuses: Vec<_> = history["executions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            "Refused",
+            "Interrupted",
+            "Stopped",
+            "Done",
+            "Outcome pending"
+        ]
+    );
+    let text = std::str::from_utf8(&bytes).unwrap();
+    for secret in [
+        "private-request-key",
+        "private-fingerprint",
+        "exec-history-10",
+        "Same display name",
+    ] {
+        assert!(!text.contains(secret));
+    }
+}
+
 #[tokio::test]
 async fn upload_queue_test_cut_then_cut_on_the_practice_cutter() {
     let mut h = harness();
@@ -312,6 +406,27 @@ async fn upload_queue_test_cut_then_cut_on_the_practice_cutter() {
     let v = view();
     assert!(v.turn.is_none(), "the main cut ended the turn");
     assert!(matches!(v.mat, cameo_pi_core::mat::Mat::Used(_)));
+
+    let (history_status, history) = send(
+        &h.app,
+        get("/api/v1/cutters/practice/history", "cameo-pi.local"),
+    )
+    .await;
+    assert_eq!(history_status, StatusCode::OK);
+    assert_eq!(history["executions"].as_array().unwrap().len(), 2);
+    assert_eq!(history["executions"][0]["status"], "Done");
+    assert_eq!(history["executions"][0]["kind"], "main");
+    assert!(history["executions"][0].get("key").is_none());
+    assert!(history["executions"][0].get("fingerprint").is_none());
+    assert!(
+        h.app
+            .service
+            .execution_history("practice", "different-person")
+            .unwrap()["executions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     // A stale start (old epoch) is refused, not run.
     let stale = page(
@@ -1957,6 +2072,41 @@ async fn two_people_have_separate_sessions_and_private_areas() {
         .into_iter()
         .map(|u| (u.name, u.id))
         .collect();
+
+    record_outcome_fixture(
+        &h.app,
+        &ids["Sam"],
+        100,
+        Some(cameo_pi_core::cutter::Ended::Stopped),
+    );
+    for (session, count) in [(Some(sam.as_str()), 1), (Some(alex.as_str()), 0)] {
+        let (status, report) = send(
+            &h.app,
+            design(
+                "GET",
+                "/api/v1/cutters/practice/history",
+                Body::empty(),
+                session,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(report["executions"].as_array().unwrap().len(), count);
+    }
+    assert_eq!(
+        send_raw(
+            &h.app,
+            design(
+                "GET",
+                "/api/v1/cutters/practice/history",
+                Body::empty(),
+                None
+            )
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
 
     let sams = open_star(&h.app, Some(&sam)).await;
     let (_, alexs) = send(

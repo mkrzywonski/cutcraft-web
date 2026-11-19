@@ -289,6 +289,43 @@ impl Service {
     }
 
     /// Every cutter's state, as the event stream and snapshots carry it.
+    /// The same bounded private cut report for the browser and MCP. Never infer completion
+    /// from the current activity or include request keys, source geometry or server paths.
+    pub fn execution_history(&self, cutter: &str, principal: &str) -> Result<Value> {
+        self.cutter(cutter)?;
+        if principal.is_empty() {
+            return Err(ApiError::new(401, "login", "Sign in first."));
+        }
+        let executions: Vec<_> = self
+            .journal
+            .recent(principal, cutter)
+            .into_iter()
+            .map(|record| {
+                let outcome = record.outcome.as_ref();
+                let ended = outcome.and_then(|v| v["ended"].as_str());
+                let status = match ended {
+                    Some("finished") => "Done",
+                    Some("stopped") => "Stopped",
+                    Some("interrupted") => "Interrupted",
+                    Some("not-run") => "Refused",
+                    _ => "Outcome pending",
+                };
+                let reason: String = outcome
+                    .and_then(|v| v["reason"].as_str())
+                    .unwrap_or_default()
+                    .chars()
+                    .take(1024)
+                    .collect();
+                json!({"execution":record.execution,"cutter":record.cutter,"job_id":record.job_id,
+                "revision":record.revision,"kind":record.kind,"started":record.started,
+                "status":status,"reason":reason})
+            })
+            .collect();
+        Ok(
+            json!({"version":env!("CARGO_PKG_VERSION"),"cutter":cutter,"executions":executions,"limit":50}),
+        )
+    }
+
     pub fn cutters_view(&self) -> Vec<Value> {
         self.cutters
             .iter()

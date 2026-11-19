@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.24.0 — 2026-11-19
+
+- Show durable cut outcomes and a private, downloadable history of the latest 50 executions per cutter. Reports use stable account ownership and survive reload/restart; idle never implies successful completion. Add the shared MCP cut_history tool.
+
 ## 0.23.2 — 2026-11-19
 
 - Bundle content-addressed JavaScript, CSS and WebAssembly with deterministic gzip compression, immutable caching and conditional requests. Release builds reject incomplete asset packages.

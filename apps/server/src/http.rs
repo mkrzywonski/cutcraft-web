@@ -336,6 +336,7 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/events", get(events))
         .route("/api/v1/cutters/{id}/queue", post(queue))
         .route("/api/v1/cutters/{id}/preview", get(cut_preview))
+        .route("/api/v1/cutters/{id}/history", get(cut_history))
         .route("/api/v1/cutters/{id}/replace", post(replace_cut))
         .route("/api/v1/cutters/{id}/start", post(start))
         .route("/api/v1/cutters/{id}/starts/{key}", get(start_result))
@@ -637,6 +638,24 @@ async fn replace_cut(
             caller.actor,
             &body.key
         )?)))
+    })
+    .await
+}
+
+async fn cut_history(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    axum::Extension(caller): axum::Extension<Caller>,
+) -> Result<Response> {
+    blocking(move || {
+        Ok((
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(
+                app.service
+                    .execution_history(&id, &caller.actor.principal)?,
+            ),
+        )
+            .into_response())
     })
     .await
 }

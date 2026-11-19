@@ -40,6 +40,20 @@ impl Desktop {
                         },
                         "save"=>{string_field(ui,"Name",&mut d.value["name"]);string_field(ui,"Folder (optional, / separated)",&mut d.value["folder"]);ui.horizontal(|ui|{if self.button(ui,"Save project",!self.remote.pending){let folder:Vec<_>=text(&d.value["folder"]).split('/').filter(|s|!s.is_empty()).collect();self.send("save",json!({"as":{"name":d.value["name"],"folder":folder},"close_after":self.close_after_save}));}
 if self.button(ui,"Cancel",true){done=true;}});},
+                        "cut-history"=>{
+                            ui.label("Your latest 50 recorded executions on this cutter. Pending is not proof that a cut completed. Reports contain outcomes, not artwork.");
+                            if !self.remote.history_error.is_empty(){ui.label(&self.remote.history_error);}
+                            let records=crate::list(&self.remote.cut_history["executions"]);
+                            if records.is_empty(){ui.label("No recorded cuts are available for this account and cutter.");}
+                            if self.button(ui,"Download cut report",!records.is_empty()){self.send("download-cut-report",json!({}));}
+                            for record in records {
+                                ui.separator();
+                                ui.strong(format!("{} — {}", if record["kind"]=="test"{"Test cut"}else{"Design cut"},text(&record["status"])));
+                                ui.label(text(&record["when"]));
+                                ui.label(text(&record["execution"]));
+                                if !text(&record["reason"]).is_empty(){ui.label(text(&record["reason"]));}
+                            }
+                        },
                         "trace"=>{
                             ui.label("Adjust the trace, then apply it to preview the resulting cut lines. Undo restores the previous trace.");
                             let mut colours=text(&d.value["colours"]).to_owned();

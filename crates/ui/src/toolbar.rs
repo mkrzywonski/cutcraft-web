@@ -589,6 +589,19 @@ impl Desktop {
             ui.separator();
             let preview=self.remote.cut_preview.clone();let busy=self.cut_busy();
             let uncertain=!self.remote.start_recovery.is_null();
+            if !busy {
+                if !self.remote.history_error.is_empty() { ui.label(&self.remote.history_error); }
+                if self.remote.cut_history["cutter"] == self.cutter
+                    && let Some(last)=list(&self.remote.cut_history["executions"]).first() {
+                        ui.strong(format!("Last {}: {}", if last["kind"]=="test" {"test cut"} else {"cut"}, text(&last["status"])));
+                        ui.label(text(&last["when"]));
+                        if last["status"]=="Interrupted" {ui.label("What was cut is uncertain. Inspect the material and load fresh material before trying again.");}
+                        if last["status"]=="Stopped" {ui.label("The cut was stopped. Inspect the material; it was not completed.");}
+                        if !text(&last["reason"]).is_empty() {ui.label(text(&last["reason"]));}
+                }
+                if self.button(ui,"Cut history…",true){self.open_dialog("cut-history","Your cut history");}
+            }
+
             if self.remote.start_recovery["unreadable"] == true {
                 ui.strong("Start is blocked");
                 ui.label("The browser could not read its saved Start request. Restore access to browser session storage and reload. Other project controls remain available.");

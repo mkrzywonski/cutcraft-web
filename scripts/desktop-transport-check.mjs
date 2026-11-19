@@ -20,6 +20,7 @@ const context=vm.createContext({
   let value={};let ok=true;
   if(path.endsWith('/me'))value=meIdentity;
   else if(path.endsWith('/snapshot'))value={protocol:9,incarnation,revision:1,design:designView,ui:{screen:'test-cut'}};
+  else if(path.endsWith('/history'))value={cutter:'practice',executions:[]};
   else if(path.endsWith('/state'))value={cutters:[{id:'practice',view:{activity,cutting,execution,turn:turn?{job:{job_id:turn}}:null,queue}}]};
   else if(path.includes('/preview?')){if(previewGate)await previewGate;value=refusePreview?{message:'Preview no longer available'}:{copy:{id:'my-copy'},execution,geometry:{id:'frozen'}};ok=!refusePreview;}
   else throw Error('Unexpected request '+path);
@@ -332,3 +333,26 @@ await assert.rejects(timedLookup,/not confirmed/);
 assert.equal(startStorage.size,1);
 assert.equal(vm.runInContext('model.start_recovery.lookup_failed',context),true);
 console.log('PASS: receipt timeout retains uncertainty and never sends motion');
+
+context.AbortSignal=AbortSignal;
+// History reads must never delay refresh or reveal the previous account's outcomes.
+let releaseHistory;
+const savedFetch=context.fetch;
+context.fetch=async(path,...rest)=>path.endsWith('/history')
+ ? await new Promise(resolve=>{releaseHistory=()=>resolve({ok:true,json:async()=>({cutter:'practice',executions:[{started:1,status:'Done',execution:'private-old-account'}]})});})
+ : savedFetch(path,...rest);
+vm.runInContext("model.me.principal='owner-before';model.selectedCutter='practice';model.snapshot.ui={screen:'cut'};historyFlight=null;queueCutHistory()",context);
+assert.ok(releaseHistory);
+vm.runInContext("clearPrivate();model.me.principal='owner-after'",context);
+releaseHistory();await new Promise(r=>setTimeout(r,0));
+assert.equal(vm.runInContext("JSON.stringify(model.cut_history)",context),'{}');
+context.fetch=savedFetch;
+console.log('PASS: late cut history cannot reveal the previous account after switching users');
+
+context.fetch=async()=>await new Promise(resolve=>{releaseHistory=()=>resolve({ok:true,json:async()=>({cutter:'practice',executions:[{started:1,status:'Done'}]})});});
+vm.runInContext("model.me.principal='same-owner';model.snapshot.ui={screen:'cut'};queueCutHistory()",context);
+vm.runInContext("clearPrivate();model.me.login_required=true",context);
+releaseHistory();await new Promise(r=>setTimeout(r,0));
+assert.equal(vm.runInContext("JSON.stringify(model.cut_history)",context),'{}','Authentication loss retires history reads even before the principal field changes');
+context.fetch=savedFetch;
+console.log('PASS: authentication loss rejects late history even when the account id has not yet changed');

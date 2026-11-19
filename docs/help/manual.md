@@ -98,3 +98,13 @@ turn it back on or explicitly exclude the affected artwork. Cut-along-line choic
 These choices replay from the original design, preserve sheet settings, and are saved in
 the project. **Undo** restores the previous recipe; **Clear answers** restores the defaults.
 Clipping and duplicate-cut safety checks remain active.
+
+### Cut outcomes and reports
+
+The cut screen shows your last recorded outcome on the selected cutter: **Done**, **Stopped**,
+**Interrupted**, **Refused**, or **Outcome pending**. An idle cutter alone does not mean a cut
+finished. If interrupted, inspect the material and load fresh material before trying again.
+**Cut history…** lists your latest 50 executions and offers **Download cut report** for
+troubleshooting. It includes outcomes and execution references, not artwork or request keys.
+Only your account's records are shown. Older records without a stable account identity are
+not included. Reloading the browser never starts another cut.
