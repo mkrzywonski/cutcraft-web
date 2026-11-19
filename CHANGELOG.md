@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.21.4 — 2026-11-18
+
+- Keep project geometry and live updates working while an unresolved Start receipt is checked. Run one background lookup at a time and bound receipt reads to ten seconds; lookup failures retain uncertainty and never resend Start.
+
 ## 0.21.3 — 2026-11-18
 
 - Tag and list default presets first, add the editor default checkbox, show empty/error states, and use selected units for mat dimensions. Deleting a default clears its saved identity without altering an open design.

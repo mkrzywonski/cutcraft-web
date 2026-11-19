@@ -500,3 +500,24 @@ skipped. An earlier combined browser process ended before completion and is not 
 The menu, renamed editor and occupied-test captures were inspected; local authored-fixture
 captures are in `/tmp/cutcraft-desktop-check.tGm3Jk` and `/tmp/cutcraft-desktop-check.P7PCyU`.
 No hardware used. Remaining M4 gaps, including shared fonts and review #157, are still open.
+
+## Independent Start-receipt recovery (0.21.4)
+
+Review #157 is addressed: refresh installs geometry, artwork requests and live events before
+starting background receipt reconciliation. Only one automatic lookup runs at a time; receipt
+reads time out after ten seconds. A failed/timed-out read retains the exact unresolved request
+and never posts Start. Late errors for an older key cannot mark a newer recovery context offline
+or send it to sign-in. Existing account/key/fence guards still apply.
+
+Transport regressions cover a hanging lookup with successful geometry/live refresh, repeated
+refresh without duplicate lookups, later retry of the read after HTTP 503, timeout preserving
+uncertainty, and late 503/401 responses after a replacement key. These pass in
+`/tmp/codex-m4-receipt-transport.log`. All 494 Rust tests, fmt, native/wasm Clippy, workspace build,
+dependency policy and the full uncertainty/save-conflict browser suite pass
+(`/tmp/codex-m4-receipt-final.log`). Browser cases A–F include lost request/reply, exact deliberate
+retry, reload, lookup outages and Stop invalidation with no new Start or simulator motion.
+Local authored-fixture captures: `/tmp/cutcraft-uncertainty-check.odkabv`. No physical hardware.
+
+M4 is still open: shared font archive and project-font/original-download UI, remaining advanced
+preparation controls, final cut outcomes/logs, canceling an unstarted review while retaining safe
+mat context, and the complete fixture/reference acceptance matrix remain to be finished.

@@ -31,7 +31,7 @@ Later completed batches (see progress entries for exact test logs and limits):
 - VIEW-02: Show me includes withheld source objects without cut lines, with browser coverage (0.21.0). Keyboard/touch inspection remains open.
 - PANEL-03/UI-05: folds and appearance are per person on the server (0.21.1), including account isolation and reload coverage. Visual Reset has browser coverage (0.21.3).
 - PLAN-06/CUT-06: sender-byte-based estimated progress and distance-based order playback are implemented (0.19.0).
-- CUT-07: unresolved Start survives reload; changed-fence recovery is read-only and tested (0.20.1). Review #157's independent refresh concern remains open.
+- CUT-07: unresolved Start survives reload; changed-fence recovery is read-only and tested (0.20.1). Review #157's independent refresh concern is addressed with background receipt recovery and transport/browser checks (0.21.4).
 - MAT-05/MAT-07: default tagging/order, editor checkbox, selection without editing, rename and delete fallback have browser coverage (0.21.3). Mat lengths follow the selected units.
 - HELP-01: Manual is bundled, opens offline and is reachable from About (0.21.0).
 

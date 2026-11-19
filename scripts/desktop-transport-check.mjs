@@ -9,7 +9,7 @@ let turn='another-copy', refusePreview=false, incarnation='session', previewGate
 const startStorage=new Map();
 const context=vm.createContext({
  sessionStorage:{getItem:key=>startStorage.get(key)??null,setItem:(key,value)=>startStorage.set(key,value),removeItem:key=>startStorage.delete(key)},
- console,URLSearchParams,FormData,TypeError,Uint8Array,
+ console,URLSearchParams,FormData,TypeError,Uint8Array,AbortSignal,
  crypto:{randomUUID:()=> 'test-key'},
  localStorage:{getItem:()=>null,setItem(){}},
  document:{cookie:'',querySelector:()=>({addEventListener(){}})},
@@ -27,6 +27,7 @@ const context=vm.createContext({
  }
 });
 vm.runInContext(source,context);
+const realRefresh=vm.runInContext("refresh",context);
 vm.runInContext("model.me={mode:'open',principal:'household'}",context);
 await vm.runInContext("model.selectedCutter='practice';model.cut_preview={copy:{id:'my-copy'}};refresh()",context);
 assert.equal(calls.some(p=>p.includes('/preview?')),false,'Waiting behind another person must not request their preview');
@@ -268,4 +269,66 @@ vm.runInContext("saveStart({...model.start_recovery,body:{...model.start_recover
 releaseReconcile();await lateLookup;reconcileGate=null;
 assert.equal(vm.runInContext('model.start_recovery.body.key',context),'newer-start','A late lookup cannot clear a newer unresolved request');
 assert.equal(JSON.parse([...startStorage.values()][0]).body.key,'newer-start');
+
+for(const status of [503,401]){
+ resetRecovery();reconcileStatus=status;
+ reconcileGate=new Promise(resolve=>{releaseReconcile=resolve;});
+ const oldLookup=vm.runInContext(`reconcileStart(${JSON.stringify(changedFence)})`,context);
+ vm.runInContext("saveStart({...model.start_recovery,body:{...model.start_recovery.body,key:'newer-start'}})",context);
+ releaseReconcile();await assert.rejects(oldLookup);reconcileGate=null;
+ assert.equal(vm.runInContext('model.connected',context),true,'A late failure cannot disconnect a newer recovery context');
+ assert.equal(vm.runInContext('model.start_recovery.body.key',context),'newer-start');
+ assert.notEqual(vm.runInContext('model.me.login_required',context),true);
+}
 console.log('PASS: changed-fence recovery is read-only, preserves unknown outcomes and newer requests, and distinguishes authentication');
+
+
+// A stalled receipt endpoint must not stall geometry, live events or later refreshes.
+context.refresh=realRefresh;
+resetRecovery();
+let releaseReceipt;
+let receiptGate=new Promise(resolve=>{releaseReceipt=resolve;});
+let receiptCount=0,geometryCount=0;
+context.fetch=async(path,options={})=>{
+ assert.equal(options.method,'GET','Background receipt recovery is read-only');
+ let value;
+ if(path.endsWith('/me'))value={mode:'open',principal:'start-owner'};
+ else if(path.endsWith('/snapshot'))value={protocol:9,incarnation:'fresh-project',revision:1,design:{geometry:{id:'fresh-geometry'}},ui:{screen:'side-by-side'}};
+ else if(path.endsWith('/state'))value=changedFence;
+ else if(path.endsWith('/geometry')){geometryCount++;value={id:'fresh-geometry'};}
+ else if(path.includes('/starts/')){
+  receiptCount++;
+  assert.ok(options.signal,'Receipt reads have a bounded lifetime');
+  await receiptGate;
+  return {ok:false,status:503,json:async()=>({message:'Receipt service unavailable'})};
+ }else throw Error('Unexpected refresh request '+path);
+ return {ok:true,status:200,json:async()=>value};
+};
+await vm.runInContext('refresh()',context);
+assert.equal(vm.runInContext('model.geometry.id',context),'fresh-geometry');
+assert.ok(vm.runInContext('live',context),'Live updates are connected before receipt recovery');
+assert.equal(vm.runInContext('refreshing',context),false);
+assert.equal(geometryCount,1);
+assert.equal(receiptCount,1);
+await vm.runInContext('refresh()',context);
+assert.equal(receiptCount,1,'Refreshes do not multiply a stalled receipt lookup');
+releaseReceipt();await vm.runInContext('recoveryFlight',context);
+assert.equal(startStorage.size,1,'A failed receipt service does not resolve Start');
+assert.match(vm.runInContext('model.message',context),/not confirmed/);
+await vm.runInContext('refresh()',context);
+await vm.runInContext('recoveryFlight',context);
+assert.equal(receiptCount,2,'A later refresh can retry the read after failure');
+assert.equal(vm.runInContext('model.geometry.id',context),'fresh-geometry');
+assert.ok(vm.runInContext('live',context));
+console.log('PASS: hanging/failed receipt recovery cannot block geometry, live connection or later refreshes');
+
+resetRecovery();
+const abortLookup=new AbortController();
+context.AbortSignal={timeout:ms=>{assert.equal(ms,10000);return abortLookup.signal;}};
+context.fetch=async(_path,options)=>new Promise((_resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+const timedLookup=vm.runInContext('lookupStart(model.start_recovery)',context);
+abortLookup.abort(new DOMException('Receipt lookup timed out','TimeoutError'));
+await assert.rejects(timedLookup,/not confirmed/);
+assert.equal(startStorage.size,1);
+assert.equal(vm.runInContext('model.start_recovery.lookup_failed',context),true);
+console.log('PASS: receipt timeout retains uncertainty and never sends motion');

@@ -4,13 +4,13 @@ import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
-let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null;
+let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null;
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 function csrf(){return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';}
-async function api(path,method='GET',body){
+async function api(path,method='GET',body,signal){
  const headers={'x-cutcraft-protocol':String(PROTOCOL),'x-csrf-token':decodeURIComponent(csrf())};
  if(body!==undefined && !(body instanceof FormData))headers['content-type']='application/json';
- const r=await fetch(path,{method,credentials:'same-origin',headers,body:body instanceof FormData?body:body===undefined?undefined:JSON.stringify(body)});
+ const r=await fetch(path,{method,credentials:'same-origin',headers,signal,body:body instanceof FormData?body:body===undefined?undefined:JSON.stringify(body)});
  const value=await r.json();
  if(!r.ok || value.answer==='refused'){const e=new Error(value.message||`Request failed (${r.status})`);e.code=value.code||value.error;e.status=r.status;throw e;}return value;
 }
@@ -56,9 +56,17 @@ async function reconcileStart(state){
  // A subsequent missing receipt means a late copy cannot start with the old fence.
  await lookupStart(saved,true);
 }
+function queueStartReconciliation(state){
+ const saved=model.start_recovery;
+ if(recoveryFlight || model.pending || !saved || saved.unreadable || !startFenced(saved,state))return;
+ // A receipt lookup is independent of project refresh and the live connection.
+ recoveryFlight=reconcileStart(state).catch(e=>{
+  if(model.me.principal===saved.owner && sameStart(saved))model.message=e.message;
+ }).finally(()=>{recoveryFlight=null;});
+}
 async function lookupStart(saved,retire=false){
  try{
-  const result=await api(`/api/v1/cutters/${encodeURIComponent(saved.cutter)}/starts/${encodeURIComponent(saved.body.key)}`);
+  const result=await api(`/api/v1/cutters/${encodeURIComponent(saved.cutter)}/starts/${encodeURIComponent(saved.body.key)}`,'GET',undefined,AbortSignal.timeout(10000));
   if(result.answer==='started'){
    if(clearStart(saved) && retire && model.me.principal===saved.owner)model.message='The original Start was confirmed.';
    return true;
@@ -70,11 +78,12 @@ async function lookupStart(saved,retire=false){
    if(clearStart(saved) && model.me.principal===saved.owner)model.message='The earlier Start can no longer run. Inspect the cutter before preparing another cut.';
    return true;
   }
-  saved.lookup_failed=e instanceof TypeError || e.status>=500;
-  if(sameStart(saved))saveStart(saved);
-  if(saved.lookup_failed && model.me.principal===saved.owner)model.connected=false;
+  saved.lookup_failed=e instanceof TypeError || e.status>=500 || e.name==='TimeoutError' || e.name==='AbortError';
+  const current=sameStart(saved);
+  if(current)saveStart(saved);
+  if(current && saved.lookup_failed && model.me.principal===saved.owner)model.connected=false;
   if(e.status===401 || e.status===403){
-   if(model.me.principal===saved.owner){clearPrivate();model.me.login_required=true;model.connected=true;}
+   if(current && model.me.principal===saved.owner){clearPrivate();model.me.login_required=true;model.connected=true;}
    throw e;
   }
   if(!missing)throw new Error(uncertainStartMessage);
@@ -110,7 +119,6 @@ async function refresh(){
   if(old.incarnation && old.incarnation!==snapshot.incarnation)clearPrivate();
   restoreStart();
   model.snapshot=snapshot;model.state=state;model.connected=!model.start_recovery?.lookup_failed;
-  await reconcileStart(state);
   document.title=(snapshot.design?.name?`${snapshot.design.name} — `:'')+'CutCraft';
   if(snapshot.design?.geometry?.id && (snapshot.design.geometry.id!==old.design?.geometry?.id || !model.geometry.id)){
    const geometry=await api('/api/v1/design/geometry');if(model.snapshot.incarnation===snapshot.incarnation && model.snapshot.design?.geometry?.id===geometry.id)model.geometry=geometry;
@@ -134,6 +142,7 @@ async function refresh(){
   if((old.design?.opened_source_sha256 || old.design?.source_sha256)!==(snapshot.design?.opened_source_sha256 || snapshot.design?.source_sha256))clearPicture();
   if(art && pictureWanted?.art.id!==art.id){const region=art.bounds.map(n=>n/art.scale);const width=1200,height=Math.max(1,Math.min(1600,Math.round(width*(region[3]-region[1])/(region[2]-region[0]))));requestPicture(art,{art:art.id,region,zoom_step:0,width,height});}else void pumpPicture();
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
+  queueStartReconciliation(state);
  }catch(e){const auth=e.status===401 || e.status===403;if(auth){clearPrivate();model.me.login_required=true;}model.connected=auth;model.message=e.message;}finally{refreshing=false;}
 }
 function requestPicture(art,request){
