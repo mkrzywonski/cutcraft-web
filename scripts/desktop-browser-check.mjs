@@ -9,6 +9,8 @@ const tab=await (await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank
 const ws=new WebSocket(tab.webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));
 let next=0;const waiting=new Map();
 ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=waiting.get(m.id);waiting.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);});
+const assetResponses=[];
+ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.method==='Network.responseReceived' && m.params.response.url.includes('/desktop/assets/'))assetResponses.push(m.params.response);});
 function cdp(method,params={}){return new Promise((resolve,reject)=>{let id=++next;waiting.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});}
 async function page(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
 async function state(){return await page('JSON.parse(CutCraft.state())');}
@@ -17,10 +19,19 @@ async function click(label){await until(async()=>!!await page(`CutCraft.controls
 async function type(label,value){await click(label);await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.insertText',{text:value});await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});}
 await cdp('Runtime.enable');
 await cdp('Page.enable');
+await cdp('Network.enable');
 await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
 await cdp('Page.navigate',{url:url+'/desktop'});
 await until(async()=>await page('!!window.CutCraft && Object.keys(CutCraft.controls()).length>0'),'Desktop ready');
-await cdp('Network.enable');
+const wasmResponse=assetResponses.find(r=>/cutcraft_ui_bg\.[0-9a-f]{64}\.wasm$/.test(r.url));
+if(!wasmResponse)throw Error('Desktop did not load the content-addressed wasm');
+for(const response of assetResponses){
+ const headers=Object.fromEntries(Object.entries(response.headers).map(([k,v])=>[k.toLowerCase(),v]));
+ if(headers['content-encoding']!=='gzip' || !headers['cache-control']?.includes('immutable'))throw Error('Desktop asset is not compressed and immutable: '+response.url);
+}
+if(assetResponses.length!==4)throw Error('Expected CSS, runtime, bindings and wasm through hashed routes');
+await fs.writeFile(`${artifacts}/asset-transfer.json`,JSON.stringify(assetResponses,null,2));
+console.log('PASS: real browser loads all four content-addressed, gzip-compressed immutable desktop assets');
 await cdp('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:-1,uploadThroughput:-1});
 await click('Menu Help');await click('Manual');
 await until(async()=>!!await page('CutCraft.controls()["Close dialog"]'),'Bundled manual opens offline');

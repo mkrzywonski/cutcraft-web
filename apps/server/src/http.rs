@@ -143,27 +143,29 @@ fn public(method: &Method, path: &str) -> bool {
                 | "/desktop/pkg/cutcraft_ui.js"
                 | "/desktop/pkg/cutcraft_ui_bg.wasm"
         ) | ("POST", "/api/v1/login")
-    ) || matches!(path, "/api/v1/pair" | "/api/v1/pair/collect")
+    ) || (method == Method::GET && path.starts_with("/desktop/assets/"))
+        || matches!(path, "/api/v1/pair" | "/api/v1/pair/collect")
 }
 
 /// Routes a session that must change its password may still use.
 fn while_must_change(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/app.js"
-            | "/desktop"
-            | "/desktop.js"
-            | "/desktop.css"
-            | "/layout.js"
-            | "/station"
-            | "/desktop/pkg/cutcraft_ui.js"
-            | "/desktop/pkg/cutcraft_ui_bg.wasm"
-            | "/app.css"
-            | "/icon.svg"
-            | "/api/v1/me"
-            | "/api/v1/me/password"
-            | "/api/v1/logout"
-    )
+    path.starts_with("/desktop/assets/")
+        || matches!(
+            path,
+            "/" | "/app.js"
+                | "/desktop"
+                | "/desktop.js"
+                | "/desktop.css"
+                | "/layout.js"
+                | "/station"
+                | "/desktop/pkg/cutcraft_ui.js"
+                | "/desktop/pkg/cutcraft_ui_bg.wasm"
+                | "/app.css"
+                | "/icon.svg"
+                | "/api/v1/me"
+                | "/api/v1/me/password"
+                | "/api/v1/logout"
+        )
 }
 
 /// Who presents this key or session, against the current users and keys.
@@ -416,6 +418,7 @@ pub fn router(app: App) -> Router {
         .route("/layout.js", get(layout_js))
         .route("/desktop.css", get(desktop_css))
         .route("/desktop/pkg/{name}", get(desktop_asset))
+        .route("/desktop/assets/{name}", get(desktop_hashed_asset))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/icon.svg", get(icon))
@@ -1382,10 +1385,7 @@ async fn desktop_index() -> Response {
 }
 #[cfg(desktop_assets)]
 async fn desktop_index() -> Response {
-    asset(
-        "text/html; charset=utf-8",
-        include_str!("../web/desktop/desktop.html"),
-    )
+    asset("text/html; charset=utf-8", desktop_bundle::HTML)
 }
 async fn desktop_js() -> Response {
     asset(
@@ -1424,6 +1424,92 @@ async fn desktop_asset(Path(name): Path<String>) -> Response {
         _ => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
 }
+#[cfg(desktop_assets)]
+pub(super) mod desktop_bundle {
+    include!("../web/desktop/pkg/assets.rs");
+}
+
+#[cfg(not(desktop_assets))]
+async fn desktop_hashed_asset(Path(_name): Path<String>) -> Response {
+    desktop_unavailable()
+}
+
+/// Public immutable assets contain only the bundled UI, never session or project data.
+#[cfg(desktop_assets)]
+async fn desktop_hashed_asset(Path(name): Path<String>, headers: HeaderMap) -> Response {
+    let Some((_, mime, plain, compressed)) = desktop_bundle::ASSETS.iter().find(|a| a.0 == name)
+    else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let gzip = accepts_gzip(
+        headers
+            .get(header::ACCEPT_ENCODING)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or_default(),
+    );
+    let tag = format!("\"{name}{}\"", if gzip { "-gzip" } else { "" });
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|value| {
+            value.split(',').any(|part| {
+                let part = part.trim();
+                part == "*" || part.strip_prefix("W/").unwrap_or(part) == tag
+            })
+        });
+    let mut response = if unchanged {
+        axum::http::StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        (
+            [(header::CONTENT_TYPE, *mime)],
+            if gzip { *compressed } else { *plain },
+        )
+            .into_response()
+    };
+    let h = response.headers_mut();
+    h.insert(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000, immutable".parse().unwrap(),
+    );
+    h.insert(header::VARY, "Accept-Encoding".parse().unwrap());
+    h.insert(header::ETAG, tag.parse().unwrap());
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        PAGE_POLICY.parse().unwrap(),
+    );
+    if gzip {
+        h.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+    }
+    response
+}
+
+#[cfg(any(desktop_assets, test))]
+fn accepts_gzip(value: &str) -> bool {
+    let mut gzip = None;
+    let mut wildcard = false;
+    for item in value.split(',') {
+        let mut parts = item.trim().split(';');
+        let coding = parts.next().unwrap_or_default().trim();
+        let mut quality = 1.0_f32;
+        for parameter in parts {
+            if let Some(q) = parameter.trim().strip_prefix("q=") {
+                quality = q
+                    .parse()
+                    .ok()
+                    .filter(|q: &f32| q.is_finite() && (0.0..=1.0).contains(q))
+                    .unwrap_or(0.0);
+            }
+        }
+        if coding.eq_ignore_ascii_case("gzip") {
+            gzip = Some(quality > 0.0);
+        }
+        if coding == "*" {
+            wildcard = quality > 0.0;
+        }
+    }
+    gzip.unwrap_or(wildcard)
+}
+
 async fn station_index() -> Response {
     let mut response = asset(
         "text/html; charset=utf-8",
@@ -1793,4 +1879,30 @@ pub fn redirect_router(https_port: String) -> Router {
             )
         }
     })
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use super::*;
+
+    #[test]
+    fn gzip_negotiation_respects_explicit_rejections() {
+        for value in ["gzip", "br, gzip, deflate", "GZip;q=0.5", "*;q=1"] {
+            assert!(accepts_gzip(value), "{value}");
+        }
+        for value in [
+            "",
+            "br",
+            "gzip;q=0",
+            "gzip;q=0, *;q=1",
+            "gzip;q=invalid",
+            "gzip;q=NaN",
+            "gzip;q=2",
+        ] {
+            assert!(!accepts_gzip(value), "{value}");
+        }
+        assert!(public(&Method::GET, "/desktop/assets/hash.js"));
+        assert!(!public(&Method::POST, "/desktop/assets/hash.js"));
+        assert!(while_must_change("/desktop/assets/hash.js"));
+    }
 }

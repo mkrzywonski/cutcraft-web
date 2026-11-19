@@ -51,7 +51,6 @@ These are required work, not exclusions or waived acceptance:
 - Durable, authorized Done/Stopped/Interrupted/Refused presentation and bounded cut logs/problem
   reports; exiting an unstarted review must cancel it while retaining safe loaded-mat context.
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
-- Asset content hashing/compression/cache behavior.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
   below cover many paths but do not replace this catalogue.
@@ -587,3 +586,23 @@ and cargo-deny pass. Desktop presentation acceptance passes, including actual or
 download, Advanced controls and 600px/24pt layout. Evidence: `/tmp/codex-m4-export-final.log`;
 captures `/tmp/cutcraft-desktop-check.jRmHer`. The preceding 0.23.0 compact browser suite also
 completed successfully in `/tmp/codex-m4-preparation-final-browser.log`. No hardware used.
+
+## Content-addressed desktop assets (0.23.2)
+
+The desktop build now packages SHA-256-addressed WebAssembly, bindings, runtime JavaScript
+and CSS with deterministic gzip copies. URLs follow dependency changes: a new wasm hash
+changes its bindings URL, the runtime URL, and the HTML references. HTML revalidates; hashed
+assets use a year-long immutable cache policy, representation-specific ETags, conditional
+GET and `Vary: Accept-Encoding`. Explicit gzip rejection is honored. Legacy unversioned
+asset routes remain non-immutable for compatibility. No private responses are cached by this
+path. Unknown hashed names return 404. The release gate also checks the generated inventory
+for missing package files.
+
+The standalone package/build-gate matrix checks missing/stale/incomplete bundles, dependency
+hash changes, deterministic output and gzip round-trips. Router tests check signed-out
+asset access, MIME, gzip/identity negotiation, caching and 304 responses. All **505** Rust
+tests, fmt, native/wasm Clippy, workspace build and cargo-deny pass. Desktop presentation
+acceptance verifies actual Chromium requests load all four hashed assets with gzip and
+immutable headers, and continues through original download, preparation controls, offline
+Manual and 600px/24pt controls. Evidence: `/tmp/codex-m4-assets-final.log`. The wasm gzip is
+2,356,060 bytes; this is bundle size, not Pi load-time acceptance. No hardware used.

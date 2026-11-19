@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.23.2 — 2026-11-19
+
+- Bundle content-addressed JavaScript, CSS and WebAssembly with deterministic gzip compression, immutable caching and conditional requests. Release builds reject incomplete asset packages.
+
 ## 0.23.1 — 2026-11-19
 
 - Keep large project and vector downloads within the worker transport bounds by sending text directly and binary data as base64. Refuse oversized read-only exports without dropping the design session.

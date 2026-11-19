@@ -10,7 +10,17 @@ fn main() {
     let version = env::var("CARGO_PKG_VERSION").expect("Cargo package version");
     let stamped =
         fs::read_to_string(assets.join("bundle-version.txt")).is_ok_and(|v| v.trim() == version);
+    let packaged = fs::read_to_string(assets.join("asset-files.txt")).is_ok_and(|list| {
+        let names: Vec<_> = list.lines().collect();
+        names.len() == 10
+            && names.contains(&"index.html")
+            && names.contains(&"assets.rs")
+            && names.iter().all(|name| {
+                !name.contains('/') && !name.contains('\\') && assets.join(name).is_file()
+            })
+    });
     let complete = stamped
+        && packaged
         && ["cutcraft_ui.js", "cutcraft_ui_bg.wasm"]
             .iter()
             .all(|name| assets.join(name).is_file());

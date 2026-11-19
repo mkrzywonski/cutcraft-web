@@ -774,6 +774,90 @@ async fn desktop_bundle_is_served_or_explicitly_unavailable_in_a_native_only_bui
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+#[cfg(desktop_assets)]
+#[tokio::test]
+async fn hashed_assets_are_public_immutable_compressed_and_conditionally_cached() {
+    let h = harness();
+    send_raw(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/users/first",
+            json!({"name":"Sam", "password":"correct horse"}),
+        ),
+    )
+    .await;
+    for (name, mime, plain, compressed) in crate::http::desktop_bundle::ASSETS {
+        let path = format!("/desktop/assets/{name}");
+        let response = send_raw(&h.app, get(&path, "cameo-pi.local")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], *mime);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(response.headers()[header::VARY], "Accept-Encoding");
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            *plain
+        );
+        let mut request = get(&path, "cameo-pi.local");
+        request
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        let response = send_raw(&h.app, request).await;
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        let tag = response.headers()[header::ETAG].clone();
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            *compressed
+        );
+        let mut request = get(&path, "cameo-pi.local");
+        request
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        request.headers_mut().insert(
+            header::IF_NONE_MATCH,
+            format!("W/{}", tag.to_str().unwrap()).parse().unwrap(),
+        );
+        let response = send_raw(&h.app, request).await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::ETAG], tag);
+        assert!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .is_empty()
+        );
+        let mut request = get(&path, "cameo-pi.local");
+        request
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, "gzip;q=0, *;q=1".parse().unwrap());
+        let response = send_raw(&h.app, request).await;
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+    }
+    let response = send_raw(&h.app, get("/desktop/assets/unknown.js", "cameo-pi.local")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = send_raw(&h.app, get("/desktop", "cameo-pi.local")).await;
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+}
+
 #[tokio::test]
 async fn the_web_interface_loads_before_login_with_a_strict_policy() {
     let h = harness();

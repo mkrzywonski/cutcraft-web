@@ -18,7 +18,9 @@ requirements. This is the independent M4 implementation branch, still under deve
 
 The four native Cargo checks work on a fresh checkout without generated browser files.
 Such a development binary explicitly reports the desktop layout unavailable until it is bundled.
-Release builds refuse missing or differently versioned desktop assets.
+Release builds refuse missing, incomplete or differently versioned desktop assets.
+The desktop packager produces content-addressed JavaScript/CSS/WebAssembly and deterministic
+gzip copies; the HTML entry point revalidates while hashed assets cache immutably.
 
 For a runnable desktop development build, enter `nix-shell`, run `scripts/build-desktop.sh`, then
 `cargo build --workspace --locked`. The first shell entry builds the pinned WebAssembly

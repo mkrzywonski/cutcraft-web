@@ -12,5 +12,7 @@ fi
 cargo build --release --locked -p cutcraft-ui --target wasm32-unknown-unknown
 "$bindgen" --target web --out-dir apps/server/web/desktop/pkg target/wasm32-unknown-unknown/release/cutcraft_ui.wasm
 
+python3 scripts/package-desktop.py apps/server/web/desktop
+
 # A release must not embed assets from a previous application version.
 sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\)"/\1/p' Cargo.toml | head -n 1 > apps/server/web/desktop/pkg/bundle-version.txt
