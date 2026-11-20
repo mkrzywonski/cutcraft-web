@@ -112,7 +112,7 @@ function queueCutHistory(){
   if(privateEpoch===epoch && model.me.principal===owner && model.selectedCutter===cutter){model.cut_history={};model.history_error='Cut outcomes are unavailable. Retrying…';}
  }).finally(()=>{historyFlight=null;});
 }
-function clearPrivate(){
+function clearPrivate(){model.cancelling=false;
  privateEpoch++;
  model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.cut_history={};model.history_error='';model.state={};model.library={};model.uploads={};model.result={};
  model.start_recovery=null;clearPicture();document.title='CutCraft';live?.close();live=null;
@@ -192,6 +192,17 @@ async function cancelOwnReview(){
  });
 }
 async function dispatch({action,params:p}){
+ if(action==='cancel-preparation'){
+  const epoch=privateEpoch,owner=model.me.principal;
+  if(model.cancelling || !p.key || !owner || !model.connected || p.incarnation!==model.snapshot.incarnation || p.key!==model.snapshot.busy_key)return;
+  model.cancelling=true;
+  try{
+   const result=await api('/api/v1/design/command','POST',{...request('design.cancel',{key:p.key}),incarnation:p.incarnation},AbortSignal.timeout(5000));
+   if(epoch===privateEpoch && owner===model.me.principal)model.message=result.value?.cancel_requested?'Cancellation requested — waiting for preparation to finish.':'That preparation has already finished.';
+  }catch(e){if(epoch===privateEpoch && owner===model.me.principal)model.message=`Cancellation is not confirmed: ${e.message}`;}
+  finally{if(epoch===privateEpoch){model.cancelling=false;await refresh();}}
+  return;
+ }
  if(action==='artwork'){const art=model.snapshot.design?.art;if(art?.id===p.art)requestPicture(art,p);return;}
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
  if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};model.cut_history={};model.history_error='';}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}

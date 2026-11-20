@@ -33,6 +33,7 @@ pub struct Remote {
     pub preferences: Value,
     pub connected: bool,
     pub pending: bool,
+    pub cancelling: bool,
     pub message: String,
     pub result: Value,
     pub result_id: u64,
@@ -292,7 +293,7 @@ impl Desktop {
             self.toolbar(ui);
         });
         egui::Panel::bottom("status").show(root, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
                     if self.remote.connected {
                         Color32::from_rgb(30, 115, 80)
@@ -313,6 +314,20 @@ impl Desktop {
                             .busy
                             .as_deref()
                             .unwrap_or("Applying change…"),
+                    );
+                }
+                if let Some(key) = self.remote.snapshot.busy_key.clone()
+                    && self.button(
+                        ui,
+                        "Cancel preparation",
+                        self.remote.connected && !self.remote.cancelling,
+                    )
+                {
+                    self.send(
+                        "cancel-preparation",
+                        json!({
+                            "key":key, "incarnation":self.remote.snapshot.incarnation
+                        }),
                     );
                 }
                 if !self.remote.message.is_empty() {
@@ -371,6 +386,58 @@ pub fn list(v: &Value) -> Vec<Value> {
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+
+    #[test]
+    fn preparation_cancel_stays_clickable_while_edits_are_pending() {
+        let mut desktop = Desktop::default();
+        desktop.remote.connected = true;
+        desktop.remote.pending = true;
+        desktop.remote.snapshot.incarnation = "current-session".into();
+        desktop.remote.snapshot.busy = Some("Making cut-ready…".into());
+        desktop.remote.snapshot.busy_key = Some("current-preparation".into());
+        let ctx = egui::Context::default();
+        let frame = |desktop: &mut Desktop, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280., 900.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |root| desktop.frame(root),
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            frame(&mut desktop, vec![]);
+        }
+        let rect = desktop.controls["Cancel preparation"];
+        let pos = egui::pos2((rect[0] + rect[2]) / 2., (rect[1] + rect[3]) / 2.);
+        frame(&mut desktop, vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            frame(
+                &mut desktop,
+                vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        assert_eq!(desktop.intents.len(), 1);
+        assert_eq!(desktop.intents[0].action, "cancel-preparation");
+        assert_eq!(
+            desktop.intents[0].params,
+            json!({"key":"current-preparation","incarnation":"current-session"})
+        );
+        desktop.remote.snapshot.busy = None;
+        desktop.remote.snapshot.busy_key = None;
+        frame(&mut desktop, vec![]);
+        assert!(!desktop.controls.contains_key("Cancel preparation"));
+    }
 
     #[test]
     fn appearance_changes_reach_the_root_and_popup_style() {

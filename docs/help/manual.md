@@ -108,3 +108,10 @@ finished. If interrupted, inspect the material and load fresh material before tr
 troubleshooting. It includes outcomes and execution references, not artwork or request keys.
 Only your account's records are shown. Older records without a stable account identity are
 not included. Reloading the browser never starts another cut.
+
+
+While a design opens or Make cut-ready runs, the status bar describes the current work.
+**Cancel preparation** stops that request and keeps the previous complete project. The
+button remains usable while other edits are waiting. Cancellation is confirmed only when
+preparation ends; a connection error does not mean it stopped. This button never stops a cutter:
+use **Stop now** for physical motion.

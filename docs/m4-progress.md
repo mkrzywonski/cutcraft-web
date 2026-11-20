@@ -648,3 +648,20 @@ native/wasm Clippy, workspace build and cargo-deny pass. Evidence:
 `/tmp/codex-m4-exit-full.log`, `/tmp/codex-m4-exit-final-rust.log`,
 `/tmp/codex-m4-exit-http.log`; captures `/tmp/cutcraft-desktop-check.kBqy9X`.
 Only the simulator was used. Remaining M4 requirements above are still open.
+
+
+## Visible preparation cancellation (0.24.2)
+
+The desktop status bar offers Cancel preparation for the server's current cancellable request.
+It remains clickable while an edit is pending, targets the exact incarnation/request key,
+coalesces repeated clicks and discards late replies after an account change. It uses the existing
+shared `design.cancel` action. A timeout reports uncertainty rather than claiming success;
+the original edit remains pending until its result arrives. The status row wraps in narrow views.
+
+The real egui pointer test proves cancellation is clickable while edits are pending and disappears
+when work finishes. Browser transport regressions check exact-target fencing, duplicate clicks,
+independent edit state and cross-account replies. All 511 Rust tests, fmt, native/wasm Clippy,
+workspace build and cargo-deny pass, along with desktop presentation acceptance including
+600px/24pt controls. Evidence: `/tmp/codex-m4-cancel-full.log`; authored-fixture screenshots
+`/tmp/cutcraft-desktop-check.ejTH7j`. This exposes existing import/preparation cancellation;
+planning and region-render cancellation acceptance remain part of the broader completion gate.

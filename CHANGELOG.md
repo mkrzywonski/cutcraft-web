@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.24.2 — 2026-11-19
+
+- Add Cancel preparation beside the desktop progress indicator. It stays available during a pending import or preparation, targets that exact request, and reports cancellation uncertainty without affecting cutter motion.
+
 ## 0.24.1 — 2026-11-19
 
 - Exit cancels a pending cut review and requires preparation before Start can work again. Preserve the same user’s safe loaded-mat context and occupied test areas; expose the same action through MCP.

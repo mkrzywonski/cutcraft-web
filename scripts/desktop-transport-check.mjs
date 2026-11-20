@@ -377,3 +377,29 @@ assert.equal(exitRequests[1].body.turn,'queued-turn');
 context.fetch=async()=>({ok:false,status:409,json:async()=>({message:'Stop the cut first.'})});
 await assert.rejects(vm.runInContext('cancelOwnReview()',context),/Stop the cut first/);
 console.log('PASS: Exit cancels only an owned current/queued review and propagates refusal');
+
+// Cancellation bypasses the edit queue but targets only the displayed preparation.
+const cancelRequests=[];let finishCancellation;
+vm.runInContext("refresh=async()=>{};clearPrivate();model.me={principal:'preparer'};model.connected=true;model.pending=true;model.snapshot.incarnation='prepare-session';model.snapshot.busy_key='preparing-now'",context);
+context.fetch=async(path,options)=>{
+ cancelRequests.push({path,body:JSON.parse(options.body)});
+ return await new Promise(resolve=>{finishCancellation=()=>resolve({ok:true,status:200,json:async()=>({answer:'applied',value:{cancel_requested:true}})});});
+};
+const cancellation=vm.runInContext("dispatch({action:'cancel-preparation',params:{incarnation:'prepare-session',key:'preparing-now'}})",context);
+assert.equal(cancelRequests.length,1,'A pending edit must not swallow cancellation');
+assert.equal(cancelRequests[0].body.id,'design.cancel');
+assert.equal(cancelRequests[0].body.params.key,'preparing-now');
+await vm.runInContext("dispatch({action:'cancel-preparation',params:{incarnation:'prepare-session',key:'preparing-now'}})",context);
+assert.equal(cancelRequests.length,1,'Duplicate clicks are coalesced');
+finishCancellation();await cancellation;
+assert.equal(vm.runInContext('model.pending',context),true,'Cancel must not release the original edit lock');
+assert.match(vm.runInContext('model.message',context),/Cancellation requested/);
+await vm.runInContext("dispatch({action:'cancel-preparation',params:{incarnation:'older-session',key:'preparing-now'}})",context);
+await vm.runInContext("dispatch({action:'cancel-preparation',params:{incarnation:'prepare-session',key:'older-request'}})",context);
+assert.equal(cancelRequests.length,1,'Stale UI cannot cancel another preparation');
+const lateCancellation=vm.runInContext("dispatch({action:'cancel-preparation',params:{incarnation:'prepare-session',key:'preparing-now'}})",context);
+vm.runInContext("clearPrivate();model.me.principal='new-user';model.message='New account'",context);
+finishCancellation();await lateCancellation;
+assert.equal(vm.runInContext('model.message',context),'New account');
+assert.equal(vm.runInContext('model.cancelling',context),false);
+console.log('PASS: preparation cancellation bypasses pending edits, fences its target, and retires cross-account replies');
