@@ -85,13 +85,18 @@ await click('Close dialog');
 console.log('PASS: Help downloads a bounded diagnostic report before any cut has run');
 
 
+await click('Overlay');await until(async()=>(await state()).snapshot.ui.screen==='overlay' && (await state()).picture,'Overlay renders artwork');
+await sleep(250);
+const contrast=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/overlay-contrast.png`,Buffer.from(contrast.data,'base64'));
+await click('Side by side');await until(async()=>(await state()).snapshot.ui.screen==='side-by-side' && !(await state()).pending,'Return from Overlay');
+const showRevision=(await state()).snapshot.revision;
 const backgroundId=issueState.snapshot.ui.report.pending[0].source_ids[0];
 if(issueState.geometry.lines.some(line=>line.source_ids.includes(backgroundId)))throw Error('Unanswered background unexpectedly has cut lines');
 await click('Show me');
 await until(async()=>!!await page('CutCraft.controls()["Shown source 0"] && CutCraft.controls()["Shown source 1"]'),'Source-only object highlighted in both panes');
 await until(async()=>!!(await state()).picture,'Source artwork rendered for Show me');await sleep(250);
 const shown=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/show-me-withheld-background.png`,Buffer.from(shown.data,'base64'));
-if((await state()).snapshot.revision!==issueState.snapshot.revision)throw Error('Show me changed the project');
+if((await state()).snapshot.revision!==showRevision)throw Error('Show me changed the project');
 await click('Menu File');await click('Close design');await until(async()=>!!await page('CutCraft.controls()["Save first"]'),'Close confirmation');await click('Close design');
 await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close issue fixture');
 console.log('PASS: Show me locates a withheld source object without creating cut geometry or an edit');

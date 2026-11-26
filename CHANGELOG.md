@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.24.4 — 2026-11-26
+
+- Restore contrasting magenta cut lines in Overlay, with orange highlights and grey excluded-row peeks, matching CutCraft 1.0.5. Keep source colors in the separate cut-lines pane.
+- Update `url` to 2.5.9 for RUSTSEC-2026-0592, found by the refreshed dependency audit, and replace the withdrawn `wasmi` 2.0.1 packages with 2.0.3.
+
 ## 0.24.3 — 2026-11-25
 
 - Add Help → Problem report and the shared MCP cut_report tool. Downloads include version, engine revision, platform, cutter state and private plan/outcome references; exclude raw errors, artwork, commands, coordinates and secrets.

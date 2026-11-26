@@ -498,14 +498,20 @@ impl Desktop {
                         painter.line_segment([a, *b], Stroke::new(0.6, Color32::LIGHT_BLUE));
                     }
                     last = points.last().copied();
-                    let colour = if line
+                    let highlighted = line
                         .source_ids
                         .iter()
-                        .any(|id| source_selected(&self.highlight, id))
-                    {
-                        Color32::from_rgb(220, 110, 20)
+                        .any(|id| source_selected(&self.highlight, id));
+                    // Reference 1.0.5: source colours disappear against the same artwork.
+                    // Overlay has one contrasting cut-line colour, with explicit highlight/peek strokes.
+                    let stroke = if highlighted {
+                        Stroke::new(3., Color32::from_rgb(255, 140, 0))
+                    } else if !line.included {
+                        Stroke::new(1., Color32::from_gray(185))
+                    } else if self.screen() == "overlay" {
+                        Stroke::new(1.5, Color32::from_rgb(220, 0, 160))
                     } else {
-                        colour(&line.colour)
+                        Stroke::new(if line.aid { 0.7 } else { 1.5 }, colour(&line.colour))
                     };
                     let points = if mat && self.order < 1. {
                         painter.add(egui::Shape::line(
@@ -522,16 +528,16 @@ impl Desktop {
                         points
                     };
                     if points.len() > 1 {
-                        if colour.r() > 220 && colour.g() > 220 && colour.b() > 220 {
+                        if stroke.color.r() > 220
+                            && stroke.color.g() > 220
+                            && stroke.color.b() > 220
+                        {
                             painter.add(egui::Shape::line(
                                 points.clone(),
                                 Stroke::new(2.4, Color32::from_gray(120)),
                             ));
                         }
-                        painter.add(egui::Shape::line(
-                            points,
-                            Stroke::new(if line.aid { 0.7 } else { 1.4 }, colour),
-                        ));
+                        painter.add(egui::Shape::line(points, stroke));
                     }
                 }
             }
@@ -1052,6 +1058,54 @@ mod tests {
         output.textures_delta.clear();
         assert!(desktop.controls.contains_key("Shown source 0"));
         assert!(desktop.controls.contains_key("Shown source 1"));
+    }
+
+    #[test]
+    fn overlay_paths_use_reference_contrast_highlight_and_peek_strokes() {
+        let source = Color32::from_rgb(230, 126, 34);
+        for (screen, included, highlighted, expected, width) in [
+            ("overlay", true, false, Color32::from_rgb(220, 0, 160), 1.5),
+            ("overlay", true, true, Color32::from_rgb(255, 140, 0), 3.),
+            ("overlay", false, false, Color32::from_gray(185), 1.),
+            ("overlay", false, true, Color32::from_rgb(255, 140, 0), 3.),
+            ("side-by-side", true, false, source, 1.5),
+        ] {
+            let mut desktop = Desktop::default();
+            desktop.remote.snapshot.design = Some(Default::default());
+            desktop.remote.snapshot.ui.screen = screen.into();
+            desktop.remote.geometry.lines = vec![cutcraft_web_protocol::Stroke {
+                item: Some("row".into()),
+                source_ids: vec!["source/0".into()],
+                included,
+                colour: "#e67e22".into(),
+                aid: false,
+                points: vec![[0., 0.], [20., 0.], [20., 20.]],
+            }];
+            desktop.peek = vec!["row".into()];
+            if highlighted {
+                desktop.highlight = vec!["source/0".into()];
+            }
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280., 900.))),
+                    ..Default::default()
+                },
+                |ui| desktop.canvas(ui),
+            );
+            output.textures_delta.clear();
+            let paths: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Path(path) if path.points.len() == 3 => Some(path),
+                    _ => None,
+                })
+                .collect();
+            assert!(!paths.is_empty(), "{screen}");
+            assert!(paths.iter().all(|path|path.stroke.width==width &&
+                matches!(path.stroke.color,egui::epaint::ColorMode::Solid(c) if c==expected)),"{screen}, included={included}, highlighted={highlighted}");
+        }
     }
 
     #[test]

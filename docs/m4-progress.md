@@ -684,3 +684,21 @@ reload. Evidence: `/tmp/codex-m4-report-final.log`, `/tmp/codex-m4-report-browse
 `/tmp/codex-m4-report-transport.log`; captures `/tmp/cutcraft-desktop-check.dRHBLm`.
 An initial browser test syntax error (duplicate local name) was corrected before the passing run.
 No physical cutter was used. Shared fonts and the remaining M4 gates remain open.
+
+
+## Overlay contrast restored (0.24.4)
+
+Zulip #174 identified cut lines disappearing against artwork of the same color. The renderer
+now follows reference 1.0.5 `workspace.rs:760`: Overlay uses 1.5px magenta, highlights use 3px
+orange, and excluded-row peeks use 1px grey. The separate cut-lines pane retains source colors.
+A real egui render test checks all these path strokes, including highlighted excluded paths.
+Browser acceptance captures `overlay-contrast.png` against an authored colored fixture; visual
+inspection confirms the magenta boundary remains visible over the artwork. Reference comparison
+used the original reference code and the local paired Overlay capture cited in #174.
+
+The refreshed dependency audit found RUSTSEC-2026-0592 and withdrawn wasmi packages. The lockfile
+now uses url 2.5.9 (with form_urlencoded 1.2.3) and wasmi 2.0.3. All 513 Rust tests, fmt,
+native/wasm Clippy, workspace build and the refreshed dependency audit pass. Desktop presentation
+acceptance also passes. Evidence: `/tmp/codex-m4-overlay-verified.log`; authored captures
+`/tmp/cutcraft-desktop-check.EtgQ1m`. No hardware was used. Font archive work is separate and
+not yet complete.
