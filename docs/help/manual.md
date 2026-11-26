@@ -115,3 +115,11 @@ While a design opens or Make cut-ready runs, the status bar describes the curren
 button remains usable while other edits are waiting. Cancellation is confirmed only when
 preparation ends; a connection error does not mean it stopped. This button never stops a cutter:
 use **Stop now** for physical motion.
+
+
+**Help → Problem report…** downloads diagnostic JSON for the selected cutter, even before a
+cut has run. It contains the app version, VectorCraft revision, operating system/architecture,
+cutter model and state, your current plan reference and up to 50 of your recorded outcomes.
+Raw error text, source files, artwork, coordinates, command bytes, private paths and access keys
+are excluded. Download does not send the report anywhere. Cut history's Download cut report
+uses this same report; MCP exposes it as `cut_report`.

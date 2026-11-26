@@ -48,7 +48,6 @@ These are required work, not exclusions or waived acceptance:
 
 - Shared library font management (web §10 v2.1), including project font status, upload/download
   and backup/restore integration.
-- Finish the problem-report acceptance audit beyond the bounded execution-outcome report.
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -665,3 +664,23 @@ workspace build and cargo-deny pass, along with desktop presentation acceptance 
 600px/24pt controls. Evidence: `/tmp/codex-m4-cancel-full.log`; authored-fixture screenshots
 `/tmp/cutcraft-desktop-check.ejTH7j`. This exposes existing import/preparation cancellation;
 planning and region-render cancellation acceptance remain part of the broader completion gate.
+
+
+## Authorized problem reports (0.24.3)
+
+Help → Problem report downloads a bounded report even before the first cut. Cut history uses
+the same authenticated endpoint and MCP exposes `cut_report`. The allowlist includes app version,
+pinned VectorCraft revision, OS/architecture, supported model, simulator/online/activity/mat state,
+the caller's current plan reference, and their latest 50 execution outcomes. Other accounts'
+plan references, raw driver/filesystem errors, source text, artwork, coordinates, raw commands,
+private paths and access keys are excluded. Responses are no-store; a late browser reply after
+account change cannot trigger a download. Nothing is uploaded automatically.
+
+All 512 Rust tests, fmt, native/wasm Clippy, workspace build and cargo-deny pass. Tests exercise
+raw-error omission, account/plan isolation and authenticated/signed-out HTTP requests; browser
+transport covers late private downloads. Full desktop acceptance downloads from Help before any
+cut, then from Cut history after a simulated completed cut, and retains stopped outcomes across
+reload. Evidence: `/tmp/codex-m4-report-final.log`, `/tmp/codex-m4-report-browser-final.log`,
+`/tmp/codex-m4-report-transport.log`; captures `/tmp/cutcraft-desktop-check.dRHBLm`.
+An initial browser test syntax error (duplicate local name) was corrected before the passing run.
+No physical cutter was used. Shared fonts and the remaining M4 gates remain open.

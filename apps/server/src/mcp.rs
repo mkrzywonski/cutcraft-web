@@ -332,6 +332,15 @@ const TOOLS: &[ToolSpec] = &[
         required: &["cutter", "boot", "turn", "action_epoch", "key"],
     },
     ToolSpec {
+        name: "cut_report",
+        title: "Download a private problem report",
+        description: "Bounded version, engine, platform and cutter state with your plan reference and latest 50 execution outcomes. Omits artwork, raw commands, raw errors, paths and secrets. Does not send anything to a support service.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({"cutter":s("The cutter id.")}),
+        required: &["cutter"],
+    },
+    ToolSpec {
         name: "cut_history",
         title: "Read your cut outcomes",
         description: "The latest 50 durable execution outcomes on this cutter for the signed-in person. Reports Done, Stopped, Interrupted, Refused or Outcome pending; never infers success from idle. No source geometry or request keys are included.",
@@ -537,6 +546,9 @@ impl Tools {
                     text(args, "key")?
                 )?
             ),
+            "cut_report" => {
+                service.problem_report(text(args, "cutter")?, &caller.actor.principal)?
+            }
             "cut_history" => {
                 service.execution_history(text(args, "cutter")?, &caller.actor.principal)?
             }

@@ -403,3 +403,22 @@ finishCancellation();await lateCancellation;
 assert.equal(vm.runInContext('model.message',context),'New account');
 assert.equal(vm.runInContext('model.cancelling',context),false);
 console.log('PASS: preparation cancellation bypasses pending edits, fences its target, and retires cross-account replies');
+
+let finishReport,reportDownloads=0;
+context.Blob=Blob;
+context.URL={createObjectURL:()=> 'blob:report',revokeObjectURL:()=>{}};
+context.setTimeout=fn=>{fn();};
+context.document.createElement=()=>({click:()=>{reportDownloads++;}});
+vm.runInContext("clearPrivate();model.me={principal:'report-owner'};model.pending=false;model.selectedCutter='practice'",context);
+context.fetch=async(path)=>{
+ assert.equal(path,'/api/v1/cutters/practice/report');
+ return await new Promise(resolve=>{finishReport=()=>resolve({ok:true,status:200,json:async()=>({schema:1,executions:[]})});});
+};
+const reportDownload=vm.runInContext("dispatch({action:'download-cut-report',params:{}})",context);
+finishReport();await reportDownload;
+assert.equal(reportDownloads,1,'A report is available before any execution');
+const staleReportDownload=vm.runInContext("dispatch({action:'download-cut-report',params:{}})",context);
+vm.runInContext("clearPrivate();model.me.principal='another-account'",context);
+finishReport();await staleReportDownload;
+assert.equal(reportDownloads,1,'Late private report must never download after account change');
+console.log('PASS: reports are fetched through the authorized endpoint and never downloaded after an account change');

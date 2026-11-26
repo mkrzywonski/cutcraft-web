@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.24.3 — 2026-11-25
+
+- Add Help → Problem report and the shared MCP cut_report tool. Downloads include version, engine revision, platform, cutter state and private plan/outcome references; exclude raw errors, artwork, commands, coordinates and secrets.
+
 ## 0.24.2 — 2026-11-19
 
 - Add Cancel preparation beside the desktop progress indicator. It stays available during a pending import or preparation, targets that exact request, and reports cancellation uncertainty without affecting cutter motion.

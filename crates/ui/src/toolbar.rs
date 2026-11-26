@@ -194,6 +194,7 @@ impl Desktop {
                     ("design-help", "How to save designs for cutting"),
                     ("troubleshooting", "Troubleshooting"),
                     ("ai-help", "Set up AI tools"),
+                    ("problem-report", "Problem report…"),
                     ("about", "About CutCraft"),
                 ] {
                     if self.menu_item(ui, label, true) {

@@ -288,7 +288,6 @@ impl Service {
             .ok_or_else(ApiError::not_found)
     }
 
-    /// Every cutter's state, as the event stream and snapshots carry it.
     /// The same bounded private cut report for the browser and MCP. Never infer completion
     /// from the current activity or include request keys, source geometry or server paths.
     pub fn execution_history(&self, cutter: &str, principal: &str) -> Result<Value> {
@@ -326,6 +325,56 @@ impl Service {
         )
     }
 
+    /// A bounded support report built from an allowlist, never raw state or error strings.
+    pub fn problem_report(&self, cutter: &str, principal: &str) -> Result<Value> {
+        let mut report = self.execution_history(cutter, principal)?;
+        let entry = self.cutter(cutter)?;
+        let view = lock(&entry.shared).view();
+        let engine_revision = include_str!("../../../Cargo.toml")
+            .lines()
+            .find(|line| line.starts_with("vectorcraft-engine ="))
+            .and_then(|line| line.split("rev = \"").nth(1))
+            .and_then(|rev| rev.split('"').next())
+            .unwrap_or("unknown");
+        report["schema"] = json!(1);
+        report["engine"] = json!({"name":"VectorCraft", "revision":engine_revision});
+        report["platform"] =
+            json!({"os":std::env::consts::OS, "architecture":std::env::consts::ARCH});
+        report["device"] = json!({"model":CAMEO_1.name,"simulated":entry.simulator.is_some(),
+            "online":view.online,"activity":view.activity,"mat_loaded":view.mat_loaded,
+            "mat_state":serde_json::to_value(view.mat).expect("mat serializes")["state"]});
+        report["plan_reference"] = view
+            .turn
+            .as_ref()
+            .filter(|turn| turn.actor.principal == principal)
+            .map(|turn| {
+                let plan = view.cutting.as_ref().unwrap_or(&turn.job);
+                json!({"job_id":plan.job_id,"revision":plan.revision})
+            })
+            .unwrap_or(Value::Null);
+        if let Some(records) = report["executions"].as_array_mut() {
+            for record in records {
+                // Driver/filesystem errors can contain local paths, device identifiers or
+                // command text. The stable outcome is sufficient for the default report.
+                if let Some(object) = record.as_object_mut() {
+                    object.remove("reason");
+                }
+            }
+        }
+        report["omitted"] = json!([
+            "artwork",
+            "source text",
+            "coordinates",
+            "raw commands",
+            "raw error messages",
+            "server paths",
+            "account names",
+            "access keys"
+        ]);
+        Ok(report)
+    }
+
+    /// Every cutter's state, as the event stream and snapshots carry it.
     pub fn cutters_view(&self) -> Vec<Value> {
         self.cutters
             .iter()

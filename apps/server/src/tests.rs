@@ -304,6 +304,77 @@ async fn cut_reports_distinguish_terminal_states_without_leaking_request_secrets
 }
 
 #[tokio::test]
+async fn problem_report_allowlist_omits_raw_errors_and_other_peoples_plan() {
+    use cameo_pi_core::cutter::{Actor, Ended, JobRef};
+    let h = harness();
+    record_outcome_fixture(
+        &h.app,
+        "household",
+        1,
+        Some(Ended::Interrupted {
+            reason: "/private/secret-design.svg token=private-value M123,456".into(),
+        }),
+    );
+    let owner = Actor {
+        principal: "other-owner".into(),
+        user: Some("Private name".into()),
+        client: "browser".into(),
+    };
+    lock(&h.app.service.cutters[0].shared)
+        .queue(
+            JobRef {
+                job_id: "other-private-plan".into(),
+                revision: 7,
+            },
+            owner,
+            "private-queue-key",
+        )
+        .unwrap();
+    let response = send_raw(
+        &h.app,
+        get("/api/v1/cutters/practice/report", "cameo-pi.local"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(
+        response.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("attachment")
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let report: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(report["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["engine"]["revision"].as_str().unwrap().len(), 40);
+    assert_eq!(report["platform"]["os"], std::env::consts::OS);
+    assert_eq!(report["device"]["simulated"], true);
+    assert_eq!(report["executions"][0]["status"], "Interrupted");
+    assert!(report["executions"][0].get("reason").is_none());
+    assert!(report["plan_reference"].is_null());
+    let text = std::str::from_utf8(&bytes).unwrap();
+    for private in [
+        "secret-design",
+        "private-value",
+        "M123,456",
+        "Private name",
+        "private-queue-key",
+        "other-private-plan",
+        "private-request-key",
+        "private-fingerprint",
+    ] {
+        assert!(!text.contains(private), "{private}");
+    }
+    let owned = h
+        .app
+        .service
+        .problem_report("practice", "other-owner")
+        .unwrap();
+    assert_eq!(owned["plan_reference"]["job_id"], "other-private-plan");
+    assert!(owned["executions"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn exit_cancels_the_review_through_the_shared_http_action() {
     let h = harness();
     let (_, job) = upload(&h.app, "exit-upload").await;
@@ -2114,25 +2185,41 @@ async fn two_people_have_separate_sessions_and_private_areas() {
         .map(|u| (u.name, u.id))
         .collect();
 
+    assert_eq!(
+        send_raw(
+            &h.app,
+            design(
+                "GET",
+                "/api/v1/cutters/practice/report",
+                Body::empty(),
+                None
+            )
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
     record_outcome_fixture(
         &h.app,
         &ids["Sam"],
         100,
         Some(cameo_pi_core::cutter::Ended::Stopped),
     );
-    for (session, count) in [(Some(sam.as_str()), 1), (Some(alex.as_str()), 0)] {
-        let (status, report) = send(
-            &h.app,
-            design(
-                "GET",
-                "/api/v1/cutters/practice/history",
-                Body::empty(),
-                session,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(report["executions"].as_array().unwrap().len(), count);
+    for endpoint in ["history", "report"] {
+        for (session, count) in [(Some(sam.as_str()), 1), (Some(alex.as_str()), 0)] {
+            let (status, report) = send(
+                &h.app,
+                design(
+                    "GET",
+                    &format!("/api/v1/cutters/practice/{endpoint}"),
+                    Body::empty(),
+                    session,
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(report["executions"].as_array().unwrap().len(), count);
+        }
     }
     assert_eq!(
         send_raw(

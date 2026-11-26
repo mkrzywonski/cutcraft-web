@@ -76,6 +76,14 @@ await click('Menu File');await click('Download original design…');
 await until(async()=>{try{return (await fs.readFile(`${artifacts}/original.svg`)).equals(await fs.readFile(background));}catch{return false;}},'Original download matches uploaded bytes before resolving issues');
 if((await state()).snapshot.revision!==issueState.snapshot.revision)throw Error('Original download changed the project');
 console.log('PASS: original design downloads unchanged while preparation still has an issue');
+await click('Menu Help');await click('Problem report…');await click('Download problem report');
+await until(async()=>{try{return JSON.parse(await fs.readFile(`${artifacts}/cutcraft-cut-report.json`,'utf8')).engine.name==='VectorCraft';}catch{return false;}},'Problem report downloads before the first cut');
+const diagnosticReport=JSON.parse(await fs.readFile(`${artifacts}/cutcraft-cut-report.json`,'utf8'));
+if(!diagnosticReport.platform.os || diagnosticReport.device.simulated!==true || diagnosticReport.executions.length!==0)throw Error('Problem report missing platform/cutter context');
+await fs.rename(`${artifacts}/cutcraft-cut-report.json`,`${artifacts}/problem-report-before-cut.json`);
+await click('Close dialog');
+console.log('PASS: Help downloads a bounded diagnostic report before any cut has run');
+
 
 const backgroundId=issueState.snapshot.ui.report.pending[0].source_ids[0];
 if(issueState.geometry.lines.some(line=>line.source_ids.includes(backgroundId)))throw Error('Unanswered background unexpectedly has cut lines');
