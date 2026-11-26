@@ -354,6 +354,13 @@ pub mod worker {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "ask", rename_all = "snake_case")]
     pub enum WorkerRequest {
+        Fonts,
+        FontInspect {
+            data_base64: String,
+        },
+        FontDownload {
+            id: String,
+        },
         Command(CommandRequest),
         /// Control-plane cancellation for one in-flight call, never a later one.
         Cancel {
@@ -438,6 +445,9 @@ pub mod worker {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "reply", rename_all = "snake_case")]
     pub enum WorkerReply {
+        Fonts {
+            value: serde_json::Value,
+        },
         /// Text travels as text; only binary exports use base64. JSON byte arrays expand
         /// valid large projects beyond the worker frame limit.
         Download {
@@ -574,6 +584,27 @@ mod tests {
         ] {
             let line = serde_json::to_string(&reply).unwrap();
             assert_eq!(serde_json::from_str::<WorkerReply>(&line).unwrap(), reply);
+        }
+    }
+}
+
+#[cfg(test)]
+mod font_wire_tests {
+    use super::worker::{Response, WorkerReply};
+    #[test]
+    fn font_catalog_and_inspection_round_trip_through_the_process_wire() {
+        for value in [
+            serde_json::json!({"fonts":[]}),
+            serde_json::json!([{"family":"Authored","style":"Regular","version":"1"}]),
+        ] {
+            let response = Response {
+                id: 42,
+                reply: WorkerReply::Fonts { value },
+            };
+            let bytes = serde_json::to_vec(&response).unwrap();
+            let decoded: Response = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(decoded.id, response.id);
+            assert_eq!(decoded.reply, response.reply);
         }
     }
 }

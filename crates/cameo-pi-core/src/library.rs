@@ -264,6 +264,8 @@ impl Library {
             fs::remove_dir_all(&library.staging)?;
         }
         fs::create_dir_all(&library.staging)?;
+        crate::fonts::recover_archive(&library.root.join(crate::fonts::DIRECTORY))
+            .map_err(LibraryError::Io)?;
         let mut index = HashMap::new();
         library.scan(&library.root.clone(), &mut index)?;
         *library.index.lock().unwrap_or_else(|p| p.into_inner()) = index;
@@ -281,6 +283,9 @@ impl Library {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             // Never follow links out of the library (spec §14.3).
+            if entry.file_name() == crate::fonts::DIRECTORY {
+                continue;
+            }
             if entry.file_type()?.is_dir() {
                 self.scan(&entry.path(), index)?;
             }
@@ -403,7 +408,7 @@ impl Library {
         };
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() {
+            if entry.file_name() == crate::fonts::DIRECTORY || !entry.file_type()?.is_dir() {
                 continue;
             }
             let path = entry.path();

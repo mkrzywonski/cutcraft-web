@@ -10,11 +10,13 @@ const ws=new WebSocket(tab.webSocketDebuggerUrl);await new Promise(r=>ws.addEven
 let next=0;const waiting=new Map();
 ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=waiting.get(m.id);waiting.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);});
 const assetResponses=[];
+const fontResponses=[];
+ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.method==='Network.responseReceived' && m.params.response.url.includes('/api/v1/fonts'))fontResponses.push({url:m.params.response.url,status:m.params.response.status});});
 ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.method==='Network.responseReceived' && m.params.response.url.includes('/desktop/assets/'))assetResponses.push(m.params.response);});
 function cdp(method,params={}){return new Promise((resolve,reject)=>{let id=++next;waiting.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});}
 async function page(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
 async function state(){return await page('JSON.parse(CutCraft.state())');}
-async function until(fn,why,timeout=15000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await sleep(100);}throw Error(why+': '+JSON.stringify((await state()).message));}
+async function until(fn,why,timeout=15000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await sleep(100);}const failureShot=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/failure.png`,Buffer.from(failureShot.data,'base64'));await fs.writeFile(`${artifacts}/failure-state.json`,JSON.stringify({state:await state(),fontResponses,controls:await page('CutCraft.controls()')}));throw Error(why+': '+JSON.stringify((await state()).message));}
 async function click(label){await until(async()=>!!await page(`CutCraft.controls()[${JSON.stringify(label)}]`),'Control rendered: '+label);let r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);if(!r)throw Error('No control '+label);const x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;if(y<80&&label==='Width')throw Error('Bad field');await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});await sleep(100);}
 async function type(label,value){await click(label);await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.insertText',{text:value});await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});}
 await cdp('Runtime.enable');
@@ -65,6 +67,53 @@ await click('Menu Edit');await click('Materials…');await click('Preset Browser
 await until(async()=>!(await state()).snapshot.ui.defaults.material && !(await state()).pending,'Deleting default clears its identity');
 if(await page('!!CutCraft.controls()["Close dialog"]'))await click('Close dialog');
 console.log('PASS: preset default checkbox, first-row tag, select without editing, rename and delete fallback');
+// Original 1 KiB test font: validates the actual child worker, shared archive and live rescan.
+await cdp('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:artifacts});
+const fontFixture=fileURLToPath(new URL('../crates/import/tests/fixtures/cutcraft-test-font.ttf',import.meta.url));
+const fontDesign=`${artifacts}/authored-font.svg`;
+await fs.writeFile(fontDesign,'<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="30mm" viewBox="0 0 40 30"><text x="5" y="20" font-family="CutCraft Fixture" font-size="15">A</text></svg>');
+const fontDoc=await cdp('DOM.getDocument');
+const designPicker=await cdp('DOM.querySelector',{nodeId:fontDoc.root.nodeId,selector:'#file'});
+await cdp('DOM.setFileInputFiles',{nodeId:designPicker.nodeId,files:[fontDesign]});
+await until(async()=>!(await state()).pending && (await state()).snapshot.ui.report?.pending?.some(i=>i.choices?.some(c=>c.decision==='font_substitute')),'Authored missing font issue');
+await click('Upload a font…');
+await until(async()=>(await state()).fonts?.fonts?.length && !(await state()).pending,'Font catalog',60000);
+async function chooseFont(label,file){
+ await click(label);
+ const document=await cdp('DOM.getDocument');
+ const input=await cdp('DOM.querySelector',{nodeId:document.root.nodeId,selector:'#font-file'});
+ if(!input.nodeId)throw Error('Font upload did not open its picker');
+ await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[file]});
+}
+await chooseFont('Upload font…',fontFixture);
+await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.some(f=>f.faces.some(face=>face.family==='CutCraft Fixture'));},'Installed font available to the live worker',60000);
+const installedFont=(await state()).fonts.installed[0];
+await click('Close dialog');await click('Run again');
+await until(async()=>!(await state()).pending && (await state()).snapshot.design?.cut_ready,'Uploaded font resolves missing font after Run again');
+await click('Menu File');await click('Download project…');
+await until(async()=>{try{return (await fs.stat(`${artifacts}/design.cutcraft`)).size>0;}catch{return false;}},'Download project with prepared letter shapes');
+await click('Menu Edit');await click('Fonts…');
+await until(async()=>!(await state()).pending && (await state()).fonts?.project_fonts?.some(f=>f.family==='CutCraft Fixture' && f.available),'Project font is available');
+await sleep(300);
+
+await click('Download library font cutcraft-test-font.ttf');
+await until(async()=>{try{return (await fs.readFile(`${artifacts}/cutcraft-test-font.ttf`)).equals(await fs.readFile(fontFixture));}catch{return false;}},'Font download is byte-exact');
+const fontShot=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/fonts-library.png`,Buffer.from(fontShot.data,'base64'));
+const replacementFont=`${artifacts}/replacement.ttf`;
+await fs.writeFile(replacementFont,Buffer.concat([await fs.readFile(fontFixture),Buffer.from([0])]));
+await chooseFont('Replace cutcraft-test-font.ttf…',replacementFont);
+await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.length===1 && s.fonts.installed[0].id!==installedFont.id;},'Explicit font replacement',60000);
+await click('Remove replacement.ttf');await click('Remove font');
+await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.length===0 && !s.fonts.fonts.some(f=>f.family==='CutCraft Fixture');},'Removal rescans the live worker',60000);
+await click('Menu File');await click('Close design');await click('Close design');
+await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close authored font design');
+const savedFontDocument=await cdp('DOM.getDocument');
+const savedFontPicker=await cdp('DOM.querySelector',{nodeId:savedFontDocument.root.nodeId,selector:'#file'});
+await cdp('DOM.setFileInputFiles',{nodeId:savedFontPicker.nodeId,files:[`${artifacts}/design.cutcraft`]});
+await until(async()=>!(await state()).pending && (await state()).snapshot.design?.cut_ready,'Saved project cuts without the removed font');
+await click('Menu File');await click('Close design');await click('Close design');
+await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close saved font project');
+console.log('PASS: missing-font upload and reprepare, project font listing, exact download, replacement, removal and saved letter shapes');
 const doc=await cdp('DOM.getDocument');
 const input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#file'});
 const background=fileURLToPath(new URL('../examples/issues/08-background-rectangle.svg',import.meta.url));

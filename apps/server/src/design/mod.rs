@@ -2,6 +2,8 @@
 //! CutCraft's controller, behind the server's guard (login, CSRF, Host). The browser speaks
 //! `cutcraft-web-protocol` here; every request is checked for the protocol version first.
 
+pub mod font_api;
+mod fonts;
 mod ipc;
 pub mod worker;
 
@@ -544,13 +546,18 @@ impl Sessions {
             let obsolete=picture.is_some_and(|generation|generation!=session.pictures.load(std::sync::atomic::Ordering::SeqCst))
                 || key.as_ref().is_some_and(|key|session.cancelled.lock().unwrap_or_else(|p|p.into_inner()).contains(key));
             if obsolete { return Err(ApiError::new(409,"cancelled","Preparation was superseded or cancelled.")); }
-            if cancellable(&request) {
+            let font_request=matches!(request,WorkerRequest::Fonts|WorkerRequest::FontInspect{..}|WorkerRequest::FontDownload{..});
+            if cancellable(&request) || font_request {
                 match worker.ask(&WorkerRequest::Checkpoint).await {
                     Ok(WorkerReply::Replay { result:None })=>{},
                     _=>return Err(ApiError::new(503,"checkpoint-failed","The project could not be checkpointed before preparation.")),
                 }
             }
-            let result = match worker.ask_inner(&request,Some(&session)).await {
+            let answer = if font_request {
+                tokio::time::timeout(Duration::from_secs(30),worker.ask_inner(&request,Some(&session))).await
+                    .unwrap_or_else(|_|Err("Font processing timed out.".into()))
+            } else {worker.ask_inner(&request,Some(&session)).await};
+            let result = match answer {
                 Ok(reply) => {
                     if let WorkerReply::Snapshot(snapshot) = &reply { cache_snapshot(&session,*snapshot.clone()); }
                     Ok(reply)

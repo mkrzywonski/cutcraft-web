@@ -123,3 +123,20 @@ cutter model and state, your current plan reference and up to 50 of your recorde
 Raw error text, source files, artwork, coordinates, command bytes, private paths and access keys
 are excluded. Download does not send the report anywhere. Cut history's Download cut report
 uses this same report; MCP exposes it as `cut_report`.
+
+
+## Shared fonts
+
+**Edit → Fonts…** lists fonts available on the server, labelled bundled, system or library.
+Use **Find font** to narrow a long list. **Info → Fonts used…** shows the open design's fonts:
+available fonts can be downloaded; missing fonts offer upload. Missing-font issues also link
+here. Upload a TTF, OTF or TTC file (up to 16 MiB), then use **Run again** to prepare the open
+design with it. You can still choose a substitute or save outlined text from your editor.
+
+Library fonts are shared by everyone in the household. Any signed-in person can upload,
+download, explicitly replace or remove them. Bundled and system fonts cannot be removed here.
+Download preserves the installed font file, so you can install it on a computer for editing.
+The library holds up to 128 font files and 256 MiB. Library backups include these installed
+fonts; restore checks them before replacing the library. System and bundled fonts are excluded.
+Saved CutCraft projects keep letter shapes, so removing a font does not erase saved cut lines.
+Fonts embedded in designs are never installed automatically.

@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.0 — 2026-11-26
+
+- Add the shared Fonts library: upload, exact download, explicit replacement and removal, with available-font search and fonts used by the open design. Font programs are checked in a bounded preparation worker. Library backup and restore include installed fonts; saved projects retain their letter shapes.
+- Add the same font actions to MCP and an Upload a font entry beside missing-font choices.
+
 ## 0.24.4 — 2026-11-26
 
 - Restore contrasting magenta cut lines in Overlay, with orange highlights and grey excluded-row peeks, matching CutCraft 1.0.5. Keep source colors in the separate cut-lines pane.

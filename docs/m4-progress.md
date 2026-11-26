@@ -46,8 +46,8 @@ paired reference screenshot review.
 
 These are required work, not exclusions or waived acceptance:
 
-- Shared library font management (web §10 v2.1), including project font status, upload/download
-  and backup/restore integration.
+- Independent review of shared library font management and backup/restore integration
+  (implemented in 0.25.0; evidence below).
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -702,3 +702,44 @@ native/wasm Clippy, workspace build and the refreshed dependency audit pass. Des
 acceptance also passes. Evidence: `/tmp/codex-m4-overlay-verified.log`; authored captures
 `/tmp/cutcraft-desktop-check.EtgQ1m`. No hardware was used. Font archive work is separate and
 not yet complete.
+
+
+## 2026-11-26 — Shared font library (0.25.0)
+
+Implements web §10 v2.1 and §14 library-font backup: Edit → Fonts and Info → Fonts used,
+missing-font Upload a font recovery, available/bundled/system/library origins, searchable
+catalog, exact downloads, explicit replacement and removal. Every signed-in household member
+can manage library fonts, with the same validated actions exposed as `fonts_list`, `font_install`,
+`font_download` and `font_remove` over MCP. Bundled and OS fonts have no removal control.
+
+Untrusted font programs are inspected only in the memory-limited preparation worker. Font
+requests checkpoint the draft and have a 30-second processing deadline. The library archive
+uses content hashes, atomic index publication and the existing snapshot/write lock. Library
+backups include its index and font bytes; restore checks hashes, metadata and actual font
+programs in a separate worker before publication. The restore summary includes a font count.
+Saved project letter shapes remain usable after removing the font. No automatic embedded-font
+installation was added.
+
+Validation on the development NixOS host:
+
+- `cargo fmt --all -- --check`; native workspace and wasm UI/protocol Clippy with warnings
+  denied; `cargo test --workspace --locked` (**519 passing**); locked workspace build;
+  `cargo deny check`; desktop transport regressions: passed.
+- Tests cover invalid uploads, exact downloads, ordinary-user shared access, signed-out
+  refusal, explicit replacement, snapshot/restore bytes, orphan recovery, corruption,
+  unsafe archive paths and forged-but-hash-consistent font programs during restore.
+- Full desktop browser workflow (including simulator cuts and reload) and compact browser
+  checks: passed.
+- An original 1 KiB font and authored SVG exercise the actual child process and real browser:
+  missing-font issue → upload → Run again → ready; project font availability; replacement and
+  removal; downloaded project reopening with its letter shapes after the font is removed.
+- A process-wire regression covers both catalog objects and inspection arrays. This caught
+  a new reply-shape error that in-process HTTP tests alone could not detect.
+- Account changes retire catalog replies, downloads and file pickers. A 12,000-face regression
+  verifies full-catalog search with at most 100 entries sent to the UI each frame.
+
+Local evidence: `/tmp/codex-m4-font-verified.log`,
+`/tmp/codex-m4-font-browsers-verified.log`; authored desktop captures in
+`/tmp/cutcraft-desktop-check.1VlC1q` (including visually inspected `fonts-library.png`).
+Independent review, Pi resource measurements, Safari and hardware acceptance remain open.
+This does not close M4's other completion gates.

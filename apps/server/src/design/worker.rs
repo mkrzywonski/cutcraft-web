@@ -108,6 +108,7 @@ pub struct Worker {
     controller: Controller,
     control_state: std::sync::Arc<std::sync::Mutex<CallState>>,
     area: PathBuf,
+    library_fonts: PathBuf,
     incarnation: String,
     /// Accepted keys: the request as received and its answer (spec §7). They become durable
     /// with the draft checkpoint that contains their change, not before.
@@ -212,6 +213,13 @@ pub fn run_process(area: &Path, lists: &Path) -> Result<(), String> {
     if std::fs::write("/proc/self/oom_score_adj", b"500").is_err() {
         eprintln!("cutcraft-web worker: could not lower OOM priority");
     }
+    vectorcraft_text::set_app_font_dir(
+        lists
+            .parent()
+            .ok_or("Missing catalog parent")?
+            .join("library")
+            .join(cameo_pi_core::fonts::DIRECTORY),
+    );
     let mut worker = Worker::new(area, lists)?;
     let control = worker.control();
     let (send, lines) = std::sync::mpsc::sync_channel::<cutcraft_web_protocol::worker::Call>(1);
@@ -326,6 +334,11 @@ impl Worker {
             .collect();
         let authority = commands.iter().map(|c| (c.id, c.authority)).collect();
         let mut worker = Self {
+            library_fonts: lists
+                .parent()
+                .ok_or("Missing catalog parent")?
+                .join("library")
+                .join(cameo_pi_core::fonts::DIRECTORY),
             reads,
             authority,
             controller,
@@ -460,7 +473,39 @@ impl Worker {
     }
 
     pub fn answer(&mut self, request: WorkerRequest) -> WorkerReply {
+        if vectorcraft_text::FontDb::global().installed_fonts_changed() {
+            vectorcraft_text::FontDb::global().load_system_fonts();
+        }
         match request {
+            WorkerRequest::Fonts => {
+                let result = self.controller.snapshot().and_then(|s| {
+                    super::fonts::catalog(
+                        &self.library_fonts,
+                        &s.design
+                            .map(|d| d.inspection.clone())
+                            .unwrap_or(Value::Null),
+                    )
+                });
+                match result {
+                    Ok(value) => WorkerReply::Fonts { value },
+                    Err(message) => WorkerReply::Failed { message },
+                }
+            }
+            WorkerRequest::FontInspect { data_base64 } => {
+                match super::fonts::inspect(&self.area, &data_base64) {
+                    Ok(faces) => WorkerReply::Fonts {
+                        value: json!(faces),
+                    },
+                    Err(message) => WorkerReply::Failed { message },
+                }
+            }
+            WorkerRequest::FontDownload { id } => match super::fonts::download(&id) {
+                Ok((filename, data_base64)) => WorkerReply::Original {
+                    filename,
+                    data_base64,
+                },
+                Err(message) => WorkerReply::Failed { message },
+            },
             WorkerRequest::Cancel { .. } => WorkerReply::Cancel { requested: false },
             WorkerRequest::Checkpoint => match self.checkpoint() {
                 Ok(()) => WorkerReply::Replay { result: None },

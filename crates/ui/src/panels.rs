@@ -169,6 +169,10 @@ impl Desktop {
         let sheet = data.sheet.clone();
         match group {
             "Issues" | "Info" => {
+                if group == "Info" && self.button(ui, "Fonts used…", true) {
+                    self.open_dialog("fonts", "Fonts");
+                    self.send("fonts", json!({}));
+                }
                 let mut entries = Vec::new();
                 if group == "Issues" {
                     for item in list(&data.report["pending"]) {
@@ -240,6 +244,9 @@ impl Desktop {
                                             }
                                         }
                                     });
+                                    if list(&item["choices"]).iter().any(|choice| choice["decision"]=="font_substitute" || choice["decision"]=="font_from_file") && self.button(ui,"Upload a font…",!self.remote.pending) {
+                                        self.open_dialog("fonts","Fonts");self.send("fonts",json!({}));
+                                    }
                                     if item["code"]=="picture.traced" && self.button(ui,"Trace settings…",!self.remote.pending) {
                                 let value=list(&data.report["recipe"]["decisions"]).into_iter().find(|d|d["decision"]=="trace").unwrap_or(json!({"decision":"trace","colours":"one","threshold":128,"detail":95,"smoothness":20,"ignore_white":true}));
                                 self.open_dialog("trace","Trace picture");

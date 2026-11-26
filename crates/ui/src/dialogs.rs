@@ -12,7 +12,7 @@ impl Desktop {
         let modal=egui::Modal::new(id)
             .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(20)).show(ctx,|ui|{
                 ui.set_width(620_f32.min(ctx.content_rect().width()-60.));
-                if matches!(d.kind.as_str(), "materials"|"mats"|"material-edit"|"mat-edit") { ui.set_height((ctx.content_rect().height()-100.).clamp(200.,760.)); }
+                if matches!(d.kind.as_str(), "materials"|"mats"|"material-edit"|"mat-edit"|"fonts") { ui.set_height((ctx.content_rect().height()-100.).clamp(200.,760.)); }
                 ui.horizontal(|ui| {ui.heading(&d.title);if self.button(ui,"Close dialog",true){open=false;}});
                 if self.cut_busy(){
                     ui.horizontal(|ui|{ui.strong("Cutter active");if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}});
@@ -40,6 +40,48 @@ impl Desktop {
                         },
                         "save"=>{string_field(ui,"Name",&mut d.value["name"]);string_field(ui,"Folder (optional, / separated)",&mut d.value["folder"]);ui.horizontal(|ui|{if self.button(ui,"Save project",!self.remote.pending){let folder:Vec<_>=text(&d.value["folder"]).split('/').filter(|s|!s.is_empty()).collect();self.send("save",json!({"as":{"name":d.value["name"],"folder":folder},"close_after":self.close_after_save}));}
 if self.button(ui,"Cancel",true){done=true;}});},
+                        "fonts"=>{
+                            ui.label("Library fonts are shared by everyone. Saved projects keep their letter shapes even after a font is removed.");
+                            ui.horizontal(|ui|{
+                                if self.button(ui,"Upload font…",!self.remote.pending){self.send("font-upload",json!({}));}
+                                if self.button(ui,"Refresh fonts",!self.remote.pending){self.send("fonts",json!({}));}
+                            });
+                            let project=list(&self.remote.fonts["project_fonts"]);
+                            if !project.is_empty(){ui.heading("This project's fonts");}
+                            for font in project {
+                                ui.label(format!("{} · {} — {}",text(&font["family"]),text(&font["style"]),if font["available"]==true{"Available"}else{"Not on this server"}));
+                                if font["available"]==true {
+                                    if self.button(ui,&format!("Download project font {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["download_id"]}));}
+                                }else if self.button(ui,&format!("Upload missing font {}",text(&font["family"])),!self.remote.pending){self.send("font-upload",json!({}));}
+                            }
+                            ui.separator();ui.heading("Installed in the library");
+                            for font in list(&self.remote.fonts["installed"]) {
+                                ui.group(|ui|{
+                                    ui.strong(text(&font["name"]));
+                                    for face in list(&font["faces"]){ui.label(format!("{} · {}",text(&face["family"]),text(&face["style"])));}
+                                    ui.horizontal_wrapped(|ui|{
+                                        if self.button(ui,&format!("Download library font {}",text(&font["name"])),!self.remote.pending){self.send("font-download",json!({"id":format!("library-{}",text(&font["id"])),"name":font["name"]}));}
+                                        if self.button(ui,&format!("Replace {}…",text(&font["name"])),!self.remote.pending){self.send("font-upload",json!({"replace":font["id"]}));}
+                                        if self.button(ui,&format!("Remove {}",text(&font["name"])),!self.remote.pending){self.open_dialog("font-remove","Remove shared font");if let Some(dialog)=&mut self.dialog{dialog.value=font.clone();}}
+                                    });
+                                });
+                            }
+                            ui.separator();ui.heading("Available fonts");
+                            let before=d.value["query"].clone();string_field(ui,"Find font",&mut d.value["query"]);
+                            if before!=d.value["query"]{self.send("font-search",json!({"query":d.value["query"]}));}
+                            ui.weak(format!("{} matching fonts. Showing up to 100; type to narrow the list.",self.remote.fonts["matches"].as_u64().unwrap_or(0)));
+                            for font in list(&self.remote.fonts["fonts"]) {
+                                ui.horizontal_wrapped(|ui|{
+                                    ui.label(format!("{} · {} ({})",text(&font["family"]),text(&font["style"]),text(&font["origin"])));
+                                    if self.button(ui,&format!("Download {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["id"]}));}
+                                });
+                            }
+                        },
+                        "font-remove"=>{
+                            ui.label(format!("Remove {} for everyone? Saved letter shapes are kept; new imports needing this font may require a substitute.",text(&d.value["name"])));
+                            if self.button(ui,"Remove font",!self.remote.pending){self.send("font-remove",json!({"id":d.value["id"]}));done=true;}
+                            if self.button(ui,"Keep font",true){done=true;}
+                        },
                         "problem-report"=>{
                             ui.label("Download a report for the selected cutter with the app and engine versions, platform, cutter state, your plan reference and latest 50 cut outcomes.");
                             ui.label("Art, source text, coordinates, raw commands and errors, private paths and access keys are excluded. Nothing is uploaded automatically.");

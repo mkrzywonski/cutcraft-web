@@ -215,6 +215,18 @@ impl Library {
 /// A library path from a manifest, checked as a name a person could have typed (spec §14.3):
 /// no `..`, no absolute paths, no hidden names. Restores write only these.
 pub fn safe_path(path: &str) -> Result<PathBuf, String> {
+    if path == crate::fonts::DIRECTORY {
+        return Ok(path.into());
+    }
+    if let Some(name) = path.strip_prefix(".fonts/")
+        && (name == "index.json"
+            || name
+                .strip_suffix(".ttf")
+                .is_some_and(crate::fonts::valid_id))
+    {
+        return Ok(path.into());
+    }
+
     let unsafe_name = || Err(format!("The backup has an unsafe file name: {path:?}."));
     if path.contains('\\') || path.starts_with('/') || path.is_empty() {
         return unsafe_name();
@@ -339,6 +351,7 @@ pub struct StagedJob {
 /// What a fetched backup holds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Staged {
+    pub fonts: usize,
     pub jobs: Vec<StagedJob>,
     /// Every folder, jobs' folders included, from the top.
     pub folders: Vec<Vec<String>>,
@@ -387,6 +400,10 @@ fn walk(
                 "The backup has a stray file {:?} among the folders.",
                 [path.as_slice(), &[name]].concat().join("/")
             ));
+        }
+        if path.is_empty() && name == crate::fonts::DIRECTORY {
+            staged.fonts += crate::fonts::inspect_archive(&entry.path())?.fonts.len();
+            continue;
         }
         path.push(name.clone());
         if entry.path().join("job.json").exists() {

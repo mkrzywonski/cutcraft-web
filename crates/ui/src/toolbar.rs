@@ -74,10 +74,14 @@ impl Desktop {
                 for (kind, label) in [
                     ("materials", "Materials…"),
                     ("mats", "Mats…"),
+                    ("fonts", "Fonts…"),
                     ("preferences", "Preferences…"),
                 ] {
                     if self.menu_item(ui, label, true) {
                         self.open_dialog(kind, label);
+                        if kind == "fonts" {
+                            self.send("fonts", json!({}));
+                        }
                         ui.close();
                     }
                 }

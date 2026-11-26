@@ -101,3 +101,9 @@ The source-object Show me bounds and bundled manual in 0.21.0 adapt CutCraft 1.0
 `39654a9465ecdef7478703ee586276304dbc29c6`. The web worker sends only scaled bounds and source ids,
 not its private inspection metadata. The manual is rewritten for uploaded files, server sessions,
 the shared library and the browser's download flow; reference screenshots are not imported.
+
+
+The font regression fixture `crates/import/tests/fixtures/cutcraft-test-font.ttf` is original
+CutCraft test data: a square A glyph, a space and a missing-glyph box. Its reproducible generator
+is `scripts/make-font-fixture.py`; no existing font program or artwork was copied. Regeneration
+uses fontTools, but normal builds and tests use the committed fixture without that dependency.

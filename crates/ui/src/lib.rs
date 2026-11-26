@@ -25,6 +25,7 @@ pub struct Remote {
     pub state: Value,
     pub library: Value,
     pub uploads: Value,
+    pub fonts: Value,
     pub me: Value,
     pub cut_preview: Value,
     pub cut_history: Value,

@@ -12,7 +12,7 @@ const context=vm.createContext({
  console,URLSearchParams,FormData,TypeError,Uint8Array,AbortSignal,
  crypto:{randomUUID:()=> 'test-key'},
  localStorage:{getItem:()=>null,setItem(){}},
- document:{cookie:'',querySelector:()=>({addEventListener(){}})},
+ document:{cookie:'',querySelector:()=>({addEventListener(){},remove(){}})},
  window:{addEventListener(){}},
  EventSource:class {addEventListener(){} close(){}},
  fetch:async path=>{
@@ -422,3 +422,38 @@ vm.runInContext("clearPrivate();model.me.principal='another-account'",context);
 finishReport();await staleReportDownload;
 assert.equal(reportDownloads,1,'Late private report must never download after account change');
 console.log('PASS: reports are fetched through the authorized endpoint and never downloaded after an account change');
+
+// A font catalog includes the current design's font names; late replies are private.
+let finishFonts;
+vm.runInContext("clearPrivate();model.me={principal:'font-owner'};model.pending=false",context);
+context.fetch=async()=>await new Promise(resolve=>{finishFonts=()=>resolve({ok:true,json:async()=>({fonts:[],project_fonts:[{family:'Private project font'}]})});});
+const staleFonts=vm.runInContext('refreshFonts()',context);
+vm.runInContext("clearPrivate();model.me.principal='next-font-owner'",context);
+finishFonts();await staleFonts;
+assert.equal(vm.runInContext('JSON.stringify(model.fonts)',context),'{}');
+context.fetch=async()=>await new Promise(resolve=>{finishFonts=()=>resolve({ok:true,blob:async()=>new Blob(['font'])});});
+const staleFontDownload=vm.runInContext("dispatch({action:'font-download',params:{id:'opaque-face'}})",context);
+vm.runInContext("clearPrivate();model.me.principal='last-font-owner'",context);
+finishFonts();await staleFontDownload;
+assert.equal(reportDownloads,1,'Late font download cannot cross accounts');
+let picker;let fontUploads=0;
+context.document.createElement=()=>picker={click(){},remove(){this.removed=true;},files:[{name:'private.ttf',size:1024}]};
+context.document.body={append(){}};
+context.document.querySelector=()=>picker;
+context.fetch=async()=>{fontUploads++;throw Error('Unexpected upload');};
+await vm.runInContext("dispatch({action:'font-upload',params:{}})",context);
+vm.runInContext("clearPrivate();model.me.principal='changed-at-picker'",context);
+assert.equal(picker.removed,true,'Account change removes the stale file picker');
+await picker.onchange();
+assert.equal(fontUploads,0,'A selected file from a retired account is never uploaded');
+console.log('PASS: font catalogs, downloads and file pickers retire on account changes');
+
+vm.runInContext(`fontCatalog={fonts:Array.from({length:12000},(_,i)=>({family:'Family '+i,style:'Regular'})),installed:[],project_fonts:[]};filterFonts('')`,context);
+assert.equal(vm.runInContext('model.fonts.fonts.length',context),100);
+assert.equal(vm.runInContext('model.fonts.matches',context),12000);
+vm.runInContext("filterFonts('Family 11999')",context);
+assert.equal(vm.runInContext('model.fonts.fonts[0].family',context),'Family 11999');
+assert.equal(vm.runInContext('model.fonts.matches',context),1);
+vm.runInContext('clearPrivate()',context);
+assert.equal(vm.runInContext('fontCatalog',context),null);
+console.log('PASS: font search covers the full catalog while bounding per-frame UI data');

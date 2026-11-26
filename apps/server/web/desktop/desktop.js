@@ -4,7 +4,7 @@ import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
-let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0;
+let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='';
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 function csrf(){return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';}
 async function api(path,method='GET',body,signal){
@@ -112,9 +112,9 @@ function queueCutHistory(){
   if(privateEpoch===epoch && model.me.principal===owner && model.selectedCutter===cutter){model.cut_history={};model.history_error='Cut outcomes are unavailable. Retrying…';}
  }).finally(()=>{historyFlight=null;});
 }
-function clearPrivate(){model.cancelling=false;
- privateEpoch++;
- model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.cut_history={};model.history_error='';model.state={};model.library={};model.uploads={};model.result={};
+function clearPrivate(){model.cancelling=false;document.querySelector("#font-file")?.remove();
+ privateEpoch++;fontCatalog=null;fontQuery='';
+ model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.cut_history={};model.history_error='';model.state={};model.library={};model.uploads={};model.fonts={};model.result={};
  model.start_recovery=null;clearPicture();document.title='CutCraft';live?.close();live=null;
 }
 async function refresh(){
@@ -151,7 +151,7 @@ async function refresh(){
   }
   if(!snapshot.design){model.geometry={id:""};clearPicture();}
   const art=snapshot.design?.art;
-  if((old.design?.opened_source_sha256 || old.design?.source_sha256)!==(snapshot.design?.opened_source_sha256 || snapshot.design?.source_sha256))clearPicture();
+  if((old.design?.opened_source_sha256 || old.design?.source_sha256)!==(snapshot.design?.opened_source_sha256 || snapshot.design?.source_sha256)){clearPicture();model.fonts={};fontCatalog=null;}
   if(art && pictureWanted?.art.id!==art.id){const region=art.bounds.map(n=>n/art.scale);const width=1200,height=Math.max(1,Math.min(1600,Math.round(width*(region[3]-region[1])/(region[2]-region[0]))));requestPicture(art,{art:art.id,region,zoom_step:0,width,height});}else void pumpPicture();
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
   queueStartReconciliation(state);
@@ -191,6 +191,13 @@ async function cancelOwnReview(){
   boot:model.state.boot,turn:target.id || target.turn,action_epoch:view.action_epoch,key:key()
  });
 }
+function fontScope(){return `${privateEpoch}|${model.me.principal}|${model.snapshot.incarnation}|${model.snapshot.design?.opened_source_sha256||''}`;}
+function filterFonts(query){
+ fontQuery=query;if(!fontCatalog)return;
+ const matches=fontCatalog.fonts.filter(font=>`${font.family} ${font.style}`.toLowerCase().includes(query.toLowerCase()));
+ model.fonts={...fontCatalog,fonts:matches.slice(0,100),matches:matches.length};
+}
+async function refreshFonts(){const scope=fontScope(),fonts=await api('/api/v1/fonts');if(scope===fontScope()){fontCatalog=fonts;filterFonts(fontQuery);}}
 async function dispatch({action,params:p}){
  if(action==='cancel-preparation'){
   const epoch=privateEpoch,owner=model.me.principal;
@@ -207,6 +214,19 @@ async function dispatch({action,params:p}){
  if(action==='cutter' && p.action==='stop'){model.message='Stop requested — waiting for the cutter';try{await api(`/api/v1/cutters/${encodeURIComponent(p.id)}/stop`,'POST',{});}catch(e){model.message=`Stop is not confirmed: ${e.message}`;}finally{await refresh();}return;}
  if(action==='select-cutter'){if(model.selectedCutter!==p.cutter){model.cut_preview={};model.cut_history={};model.history_error='';}model.selectedCutter=p.cutter;model.preferences.cutter=p.cutter;localStorage.setItem('cutcraft.desktop',JSON.stringify(model.preferences));return;}
  if(action==='layout'){localStorage.setItem('cutcraft.layout',p.layout);location.assign('/station');return;}
+ if(action==='font-search'){filterFonts(p.query||'');return;}
+ if(action==='font-upload'){
+  const scope=fontScope(),input=document.createElement('input');input.type='file';input.accept='.ttf,.otf,.ttc';input.id='font-file';input.hidden=true;document.querySelector('#font-file')?.remove();document.body.append(input);
+  input.onchange=async()=>{const file=input.files?.[0];input.remove();if(!file || scope!==fontScope())return;
+   await execute(async()=>{
+    if(file.size>16*1024*1024)throw new Error('The font exceeds 16 MiB.');
+    const q=new URLSearchParams({name:file.name});if(p.replace)q.set('replace',p.replace);
+    const response=await fetch('/api/v1/fonts/upload?'+q,{method:'POST',headers:{'x-csrf-token':decodeURIComponent(csrf())},body:file});
+    const result=await response.json();if(!response.ok)throw new Error(result.message);
+    if(scope===fontScope()){await refreshFonts();model.message='Font installed for everyone. Use Run again to recheck an open design.';}
+   });
+  };input.click();return;
+ }
  if(action==='upload'){uploadMode=p;document.querySelector('#file').click();return;}
  if(action==='link'){window.open(p.url,'_blank','noopener,noreferrer');return;}
  if(action==='settings'){window.open(`/station#/${p.section==='keys'?'settings':p.section}`,'_blank','noopener');return;}
@@ -216,6 +236,14 @@ async function dispatch({action,params:p}){
    case 'command':{if(p.id==='view.show' && ['cut','test-cut'].includes(model.snapshot.ui.screen) && !['cut','test-cut'].includes(p.params?.screen))await cancelOwnReview();const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:p.close_dialog===true || ['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
    case 'save':{const {close_after,...save}=p;await api('/api/v1/design/save','POST',savedBody(save));if(close_after){await refresh();await command('design.close');}model.result={close_dialog:true};model.message='Saved to the library.';break;}
    case 'open':await open(p);break;
+   case 'fonts':fontQuery='';await refreshFonts();break;
+   case 'font-remove':await api('/api/v1/fonts/'+encodeURIComponent(p.id),'DELETE');await refreshFonts();break;
+   case 'font-download':{
+    const scope=fontScope(),response=await fetch('/api/v1/fonts/'+encodeURIComponent(p.id)+'/download');
+    if(!response.ok)throw new Error((await response.json()).message);
+    const blob=await response.blob();if(scope!==fontScope())break;
+    const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=p.name || response.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] || 'font.ttf';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;
+   }
    case 'library':model.library=await api('/api/v1/library?path='+encodeURIComponent(p.path||''));break;
    case 'uploads':model.uploads=await api('/api/v1/design/designs');break;
    case 'login':await api('/api/v1/login','POST',{name:p.username,password:p.password});break;

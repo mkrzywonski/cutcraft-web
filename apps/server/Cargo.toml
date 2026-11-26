@@ -44,6 +44,7 @@ cutcraft-control.workspace = true
 cutcraft-web-protocol.workspace = true
 image.workspace = true
 rlimit.workspace = true
+vectorcraft-text.workspace = true
 
 [dev-dependencies]
 cutcraft-station.workspace = true

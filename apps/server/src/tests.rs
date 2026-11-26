@@ -4143,3 +4143,188 @@ async fn custom_mat_rulers_reach_both_draft_and_frozen_cut_geometry() {
         .unwrap();
     assert_eq!(preview["geometry"]["mat"], geometry["mat"]);
 }
+
+#[tokio::test]
+async fn library_fonts_require_worker_validation_and_download_exact_installed_bytes() {
+    let h = harness();
+    let bytes = include_bytes!("../../../crates/import/tests/fixtures/cutcraft-test-font.ttf");
+    let upload_font = |body: Vec<u8>| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/fonts/upload?name=fixture.ttf")
+            .header("host", "cameo-pi.local")
+            .header("origin", "http://cameo-pi.local")
+            .header("cookie", "cpi_csrf=test-token")
+            .header("x-csrf-token", TOKEN)
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let (status, bad) = send(&h.app, upload_font(b"not a font".to_vec())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    assert!(h.app.service.library.fonts().unwrap().fonts.is_empty());
+    let (status, installed) = send(&h.app, upload_font(bytes.to_vec())).await;
+    assert_eq!(status, StatusCode::OK, "{installed}");
+    assert_eq!(installed["font"]["faces"][0]["family"], "CutCraft Fixture");
+    let id = installed["font"]["id"].as_str().unwrap();
+    let response = send_raw(
+        &h.app,
+        get(
+            &format!("/api/v1/fonts/library-{id}/download"),
+            "cameo-pi.local",
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .as_ref(),
+        bytes
+    );
+    let snapshot = h.app.service.library.snapshot().unwrap();
+    let scratch = h.app.service.library.scratch("font-restore-test");
+    crate::design::font_api::validate_restored(
+        &snapshot.join(cameo_pi_core::fonts::DIRECTORY),
+        &h.app.service.lists,
+        &scratch,
+    )
+    .await
+    .unwrap();
+    let (status, _) = send(
+        &h.app,
+        page("DELETE", &format!("/api/v1/fonts/{id}"), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(h.app.service.library.fonts().unwrap().fonts.is_empty());
+    // A forged archive may have consistent hashes and metadata, but its font program still
+    // has to parse in the worker before restore may publish it.
+    let bad_library = cameo_pi_core::library::Library::open(&scratch.join("invalid")).unwrap();
+    bad_library
+        .install_font(
+            "bad.ttf".into(),
+            b"invalid program",
+            vec![cameo_pi_core::fonts::Face {
+                family: "Forged".into(),
+                style: "Regular".into(),
+                version: "1".into(),
+            }],
+            None,
+        )
+        .unwrap();
+    assert!(
+        crate::design::font_api::validate_restored(
+            &scratch.join("invalid/library/.fonts"),
+            &h.app.service.lists,
+            &scratch.join("validate-invalid")
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn library_fonts_are_shared_without_admin_rights_but_require_login() {
+    let h = harness();
+    let first = send_raw(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/users/first",
+            json!({"name":"Sam","password":"correct horse"}),
+        ),
+    )
+    .await;
+    let admin = session_from(&first);
+    let add = with_session(
+        page(
+            "POST",
+            "/api/v1/users",
+            json!({"name":"Alex","password":"first password"}),
+        ),
+        &admin,
+    );
+    assert_eq!(send(&h.app, add).await.0, StatusCode::OK);
+    let login = send_raw(
+        &h.app,
+        page(
+            "POST",
+            "/api/v1/login",
+            json!({"name":"Alex","password":"first password"}),
+        ),
+    )
+    .await;
+    let user = session_from(&login);
+    assert_eq!(
+        send(
+            &h.app,
+            with_session(
+                page(
+                    "POST",
+                    "/api/v1/me/password",
+                    json!({"old":"first password","new":"new personal password"})
+                ),
+                &user
+            )
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(
+            &h.app,
+            with_session(get("/api/v1/users", "cameo-pi.local"), &user)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let upload = || {
+        let mut req = page("POST", "/api/v1/fonts/upload?name=shared.ttf", json!({}));
+        *req.body_mut() = Body::from(
+            include_bytes!("../../../crates/import/tests/fixtures/cutcraft-test-font.ttf").to_vec(),
+        );
+        req
+    };
+    assert_eq!(send(&h.app, upload()).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        send(&h.app, get("/api/v1/fonts", "cameo-pi.local")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, result) = send(&h.app, with_session(upload(), &user)).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let id = result["font"]["id"].as_str().unwrap();
+    // A different account can read the shared entry and retrieve its exact program.
+    let (status, catalog) = send(
+        &h.app,
+        with_session(get("/api/v1/fonts", "cameo-pi.local"), &admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(catalog["installed"][0]["id"], id);
+    let path = format!("/api/v1/fonts/library-{id}/download");
+    assert_eq!(
+        send_raw(&h.app, get(&path, "cameo-pi.local"))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send_raw(&h.app, with_session(get(&path, "cameo-pi.local"), &admin))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let remove = || page("DELETE", &format!("/api/v1/fonts/{id}"), json!({}));
+    assert_eq!(send(&h.app, remove()).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        send(&h.app, with_session(remove(), &user)).await.0,
+        StatusCode::OK
+    );
+}

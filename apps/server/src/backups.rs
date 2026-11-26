@@ -843,6 +843,7 @@ impl Service {
             "running": runtime.running,
             "restore_waiting": runtime.restore.as_ref().map(|r| json!({
                 "jobs": r.staged.jobs.len(),
+                "fonts": r.staged.fonts,
                 "folders": r.staged.folders.len(),
                 "from": r.marker.pi_name,
                 "updated": r.marker.updated,
@@ -1551,6 +1552,12 @@ impl Service {
                 &dir.join("scratch"),
             )
             .map_err(|why| ApiError::new(422, "invalid-backup", why))?;
+            self.block_on(crate::design::font_api::validate_restored(
+                &dir.join("library").join(cameo_pi_core::fonts::DIRECTORY),
+                &self.lists,
+                &dir.join("scratch"),
+            ))
+            .map_err(|why| ApiError::new(422, "invalid-backup", why))?;
             Ok((marker, manifest, staged, encryption))
         });
         if let Ok((marker, manifest, _, _)) = &outcome
@@ -1567,6 +1574,7 @@ impl Service {
             Ok((marker, manifest, staged, encryption)) => {
                 let summary = json!({
                     "jobs": staged.jobs.len(),
+                    "fonts": staged.fonts,
                     "folders": staged.folders.len(),
                     "from": marker.pi_name,
                     "updated": marker.updated,
@@ -1745,7 +1753,9 @@ impl Service {
         state.retry_delay = 0;
         self.write_json("state.json", &state)?;
         drop(files);
-        Ok(json!({"restored": true, "jobs": restore.staged.jobs.len()}))
+        Ok(
+            json!({"restored": true, "jobs": restore.staged.jobs.len(), "fonts":restore.staged.fonts}),
+        )
     }
 
     pub fn backup_restore_cancel(&self) {

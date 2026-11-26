@@ -1735,6 +1735,7 @@ function renderBackup(section) {
         clearInterval(watch);
         swap(restoreBox, h("div", { class: "note" },
           h("p", {}, `The backup of ${r.from} (${when(r.updated)}) has ${r.jobs} job${r.jobs === 1 ? "" : "s"}.`),
+          r.fonts ? h("p", {}, `${r.fonts} library font${r.fonts === 1 ? "" : "s"} will also be restored.`) : null,
           h("p", {}, "Replace this Pi's library with it? The current library goes to Recently deleted."),
           r.replace_allowed ? null : h("p", { class: "muted small" }, "A cutter is in use: Replace waits until no cutter has a turn or a queue."),
           h("div", { class: "row" },

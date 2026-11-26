@@ -332,6 +332,42 @@ const TOOLS: &[ToolSpec] = &[
         required: &["cutter", "boot", "turn", "action_epoch", "key"],
     },
     ToolSpec {
+        name: "fonts_list",
+        title: "List available and project fonts",
+        description: "Household library fonts, bundled and system fonts, and fonts used by the open project. Library fonts are shared by everyone.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({}),
+        required: &[],
+    },
+    ToolSpec {
+        name: "font_install",
+        title: "Install a household font",
+        description: "Validate a base64 font in a preparation worker and install it in the shared library. Supply replace with an existing library font id to explicitly replace it. Maximum 16 MiB decoded.",
+        read_only: false,
+        destructive: false,
+        properties: || json!({"name":s("Font filename"),"data_base64":s("Font bytes, base64"),"replace":s("Existing library font id to replace")}),
+        required: &["name", "data_base64"],
+    },
+    ToolSpec {
+        name: "font_remove",
+        title: "Remove a library font",
+        description: "Remove a shared library font by its library_id. Bundled and operating-system fonts cannot be removed here; saved letter shapes stay intact.",
+        read_only: false,
+        destructive: true,
+        properties: || json!({"id":s("Library font id")}),
+        required: &["id"],
+    },
+    ToolSpec {
+        name: "font_download",
+        title: "Download an available font",
+        description: "Read one font by the id from fonts_list, returning filename and base64 bytes.",
+        read_only: true,
+        destructive: false,
+        properties: || json!({"id":s("Available font id")}),
+        required: &["id"],
+    },
+    ToolSpec {
         name: "cut_report",
         title: "Download a private problem report",
         description: "Bounded version, engine, platform and cutter state with your plan reference and latest 50 execution outcomes. Omits artwork, raw commands, raw errors, paths and secrets. Does not send anything to a support service.",
@@ -523,6 +559,43 @@ impl Tools {
                 }
                 cutcraft_web_protocol::CommandReply::Refused { code, message } => {
                     Err(ApiError::new(409, &code, message))
+                }
+            };
+        }
+        if matches!(
+            name,
+            "fonts_list" | "font_install" | "font_remove" | "font_download"
+        ) {
+            use base64::Engine;
+            let p = crate::people::Principal::of(&caller.identity)
+                .ok_or_else(|| ApiError::new(401, "login", "Sign in first."))?;
+            return match name {
+                "fonts_list" => crate::design::font_api::list(&self.app, &p).await,
+                "font_install" => {
+                    let data = text(&args, "data_base64")?;
+                    if data.len() > cameo_pi_core::fonts::MAX_FONT_BYTES.div_ceil(3) * 4 {
+                        return Err(ApiError::bad_request("The font exceeds 16 MiB."));
+                    }
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .map_err(|_| ApiError::bad_request("Invalid base64."))?;
+                    crate::design::font_api::install(
+                        &self.app,
+                        &p,
+                        text(&args, "name")?.into(),
+                        bytes,
+                        args["replace"].as_str().map(str::to_owned),
+                    )
+                    .await
+                }
+                "font_remove" => crate::design::font_api::remove(&self.app, text(&args, "id")?),
+                _ => {
+                    let (filename, bytes) =
+                        crate::design::font_api::download(&self.app, &p, text(&args, "id")?.into())
+                            .await?;
+                    Ok(
+                        json!({"filename":filename,"data_base64":base64::engine::general_purpose::STANDARD.encode(bytes)}),
+                    )
                 }
             };
         }

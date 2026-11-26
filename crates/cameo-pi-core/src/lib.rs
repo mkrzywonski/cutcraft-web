@@ -7,6 +7,7 @@ pub mod backup;
 pub mod cutter;
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
+pub mod fonts;
 pub mod journal;
 pub mod library;
 pub mod mat;
