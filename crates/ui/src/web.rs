@@ -6,6 +6,7 @@ extern "C" {
     fn state() -> String;
     fn dispatch(intent: &str);
     fn inspect(controls: &str);
+    fn editables(rects: &str);
 }
 impl eframe::App for Desktop {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -20,6 +21,9 @@ impl eframe::App for Desktop {
         }
         if let Ok(value) = serde_json::to_string(&self.controls) {
             inspect(&value);
+        }
+        if let Ok(value) = serde_json::to_string(&crate::take_editables(ui.ctx())) {
+            editables(&value);
         }
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(50));

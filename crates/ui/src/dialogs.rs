@@ -27,7 +27,7 @@ impl Desktop {
                             ui.label("Linked proportions; the top-left corner stays fixed. You can include mm, cm, in or fractions.");
                             let mut value=text(&d.value["length"]).to_owned();
                             let enter=ui.input(|i|i.key_pressed(egui::Key::Enter));
-                            let response=ui.text_edit_singleline(&mut value);self.record("Dimension",&response);
+                            let response=ui.text_edit_singleline(&mut value);self.record("Dimension",&response);crate::editable(ui,&response);
                             d.value["length"]=json!(value);
                             let parsed=crate::panels::parse_length(&value,d.value["inches"]==true).filter(|v|*v>0.);
                             let submit=(response.has_focus()||response.lost_focus())&&enter;
@@ -160,7 +160,7 @@ if self.button(ui,"Cancel",true){done=true;}});},
                                 }
                             }
                             let items=if d.kind=="uploads"{list(&self.remote.uploads["designs"])}else{list(&self.remote.library["jobs"])};
-                            ui.add(egui::TextEdit::singleline(&mut d.search).hint_text("Search"));
+                            let r=ui.add(egui::TextEdit::singleline(&mut d.search).hint_text("Search"));crate::editable(ui,&r);
                             for item in items {let name=text(&item["name"]);if !name.to_lowercase().contains(&d.search.to_lowercase()){continue;}
                                 if self.button(ui,name,!self.remote.pending){let body=if d.kind=="uploads"{json!({"design":item["id"]})}else{json!({"project":{"job":item["id"]}})};self.send("open",body);}
                             }
@@ -210,7 +210,8 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
         {
             d.selected = None;
         }
-        ui.add(egui::TextEdit::singleline(&mut d.search).hint_text("Search by name"));
+        let r = ui.add(egui::TextEdit::singleline(&mut d.search).hint_text("Search by name"));
+        crate::editable(ui, &r);
         ui.horizontal_wrapped(|ui| {
             if self.button(ui, "New…", true) {
                 let mut value = entries.first().cloned().unwrap_or(json!({}));
@@ -331,6 +332,7 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
         let mut name = text(&d.value["name"]).to_owned();
         let response = ui.text_edit_singleline(&mut name);
         self.record("Preset name", &response);
+        crate::editable(ui, &response);
         if response.changed() {
             d.value["name"] = json!(name);
         }
@@ -357,7 +359,9 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
             }
             ui.label("Loading notes");
             let mut notes = text(&d.value["notes"]).to_owned();
-            if ui.text_edit_multiline(&mut notes).changed() {
+            let r = ui.text_edit_multiline(&mut notes);
+            crate::editable(ui, &r);
+            if r.changed() {
                 d.value["notes"] = json!(notes);
             }
             egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
@@ -464,7 +468,9 @@ if self.button(ui,"User manual",true){self.open_dialog("manual","User manual");}
 fn string_field(ui: &mut Ui, label: &str, v: &mut Value) {
     ui.label(label);
     let mut s = text(v).to_owned();
-    if ui.text_edit_singleline(&mut s).changed() {
+    let r = ui.text_edit_singleline(&mut s);
+    crate::editable(ui, &r);
+    if r.changed() {
         *v = json!(s);
     }
 }
@@ -472,14 +478,13 @@ fn numeric_field(ui: &mut Ui, label: &str, v: &mut Value, min: f64, max: f64, in
     ui.horizontal(|ui| {
         ui.label(label);
         let mut n = number(v);
-        if ui
-            .add(
-                egui::DragValue::new(&mut n)
-                    .range(min..=max)
-                    .speed(if integer { 1. } else { 0.1 }),
-            )
-            .changed()
-        {
+        let r = ui.add(
+            egui::DragValue::new(&mut n)
+                .range(min..=max)
+                .speed(if integer { 1. } else { 0.1 }),
+        );
+        crate::editable(ui, &r);
+        if r.changed() {
             *v = if integer { json!(n as u64) } else { json!(n) };
         }
     });
@@ -515,18 +520,17 @@ fn draft_length(ui: &mut Ui, label: &str, value: &mut Value, min: f64, max: f64,
     let mut n = number(value) / factor;
     ui.horizontal(|ui| {
         ui.label(label);
-        if ui
-            .add(
-                egui::DragValue::new(&mut n)
-                    .range(min / factor..=max / factor)
-                    .speed(0.1 / factor)
-                    .suffix(if inches { " in" } else { " mm" })
-                    .custom_parser(move |s| {
-                        crate::panels::parse_length(s, inches).map(|mm| mm / factor)
-                    }),
-            )
-            .changed()
-        {
+        let r = ui.add(
+            egui::DragValue::new(&mut n)
+                .range(min / factor..=max / factor)
+                .speed(0.1 / factor)
+                .suffix(if inches { " in" } else { " mm" })
+                .custom_parser(move |s| {
+                    crate::panels::parse_length(s, inches).map(|mm| mm / factor)
+                }),
+        );
+        crate::editable(ui, &r);
+        if r.changed() {
             *value = json!(n * factor);
         }
     });

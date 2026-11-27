@@ -7,6 +7,7 @@ mod dialogs;
 mod mat;
 mod motion;
 mod panels;
+mod phone;
 mod toolbar;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -91,6 +92,10 @@ pub struct Desktop {
     pub close_after_save: bool,
     pub reviewed_tests: u64,
     pub dark: bool,
+    /// Phone arrangement (narrow windows): one full-screen view at a time.
+    pub phone: bool,
+    pub phone_tab: phone::PhoneTab,
+    pub phone_menu: bool,
 }
 impl Default for Desktop {
     fn default() -> Self {
@@ -126,6 +131,9 @@ impl Default for Desktop {
             close_after_save: false,
             reviewed_tests: 0,
             dark: false,
+            phone: false,
+            phone_tab: phone::PhoneTab::default(),
+            phone_menu: false,
         }
     }
 }
@@ -191,7 +199,18 @@ impl Desktop {
         self.send("command", json!({"id": id, "params": params,"incarnation":self.remote.snapshot.incarnation,"revision":self.remote.snapshot.revision}));
     }
     pub fn screen(&self) -> &str {
-        &self.remote.snapshot.ui.screen
+        let screen = self.remote.snapshot.ui.screen.as_str();
+        // The phone chooses its view locally (spec: compact pages never call view.show), except for
+        // the cut screens, which are a shared mode entered and left through commands.
+        if self.phone && !matches!(screen, "cut" | "test-cut") {
+            return match self.phone_tab {
+                phone::PhoneTab::Artwork | phone::PhoneTab::Lines => "side-by-side",
+                phone::PhoneTab::Overlay => "overlay",
+                phone::PhoneTab::Preview => "mat",
+                phone::PhoneTab::Controls => screen,
+            };
+        }
+        screen
     }
     pub fn has_design(&self) -> bool {
         self.remote.snapshot.design.is_some()
@@ -282,8 +301,19 @@ impl Desktop {
         for font in style.text_styles.values_mut() {
             font.size *= size / 14.;
         }
-        style.spacing.item_spacing = egui::vec2(8., 7.);
-        style.spacing.button_padding = egui::vec2(10., 6.);
+        self.phone = ctx.content_rect().width() < phone::PHONE_WIDTH;
+        if self.phone {
+            // Thumb-sized targets: Apple and Google both recommend ~44–48 points.
+            style.spacing.item_spacing = egui::vec2(10., 10.);
+            style.spacing.button_padding = egui::vec2(14., 10.);
+            style.spacing.interact_size.y = 40.;
+            for font in style.text_styles.values_mut() {
+                font.size *= 1.1;
+            }
+        } else {
+            style.spacing.item_spacing = egui::vec2(8., 7.);
+            style.spacing.button_padding = egui::vec2(10., 6.);
+        }
         style.visuals.selection.bg_fill = Color32::from_rgb(24, 112, 96);
         style.visuals.selection.stroke.color = Color32::WHITE;
         ctx.set_global_style(style.clone());
@@ -296,54 +326,17 @@ impl Desktop {
             return;
         }
         self.keyboard(&ctx);
+        if self.phone {
+            self.phone_frame(root);
+            self.dialogs(&ctx);
+            return;
+        }
         egui::Panel::top("chrome").show(root, |ui| {
             self.menus(ui);
             ui.separator();
             self.toolbar(ui);
         });
-        egui::Panel::bottom("status").show(root, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.colored_label(
-                    if self.remote.connected {
-                        Color32::from_rgb(30, 115, 80)
-                    } else {
-                        Color32::from_rgb(160, 60, 40)
-                    },
-                    if self.remote.connected {
-                        "● Connected"
-                    } else {
-                        "● Reconnecting — edits unavailable"
-                    },
-                );
-                if self.remote.pending || self.remote.snapshot.busy.is_some() {
-                    ui.spinner();
-                    ui.label(
-                        self.remote
-                            .snapshot
-                            .busy
-                            .as_deref()
-                            .unwrap_or("Applying change…"),
-                    );
-                }
-                if let Some(key) = self.remote.snapshot.busy_key.clone()
-                    && self.button(
-                        ui,
-                        "Cancel preparation",
-                        self.remote.connected && !self.remote.cancelling,
-                    )
-                {
-                    self.send(
-                        "cancel-preparation",
-                        json!({
-                            "key":key, "incarnation":self.remote.snapshot.incarnation
-                        }),
-                    );
-                }
-                if !self.remote.message.is_empty() {
-                    ui.label(&self.remote.message);
-                }
-            });
-        });
+        egui::Panel::bottom("status").show(root, |ui| self.status(ui));
         if matches!(self.screen(), "cut" | "test-cut") {
             egui::CentralPanel::default().show(root, |ui| self.cutting(ui));
         } else {
@@ -358,6 +351,50 @@ impl Desktop {
         }
         self.dialogs(&ctx);
     }
+    /// Connection, busy work, cancellation and the latest message: one line at the bottom.
+    pub fn status(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(
+                if self.remote.connected {
+                    Color32::from_rgb(30, 115, 80)
+                } else {
+                    Color32::from_rgb(160, 60, 40)
+                },
+                if self.remote.connected {
+                    "● Connected"
+                } else {
+                    "● Reconnecting — edits unavailable"
+                },
+            );
+            if self.remote.pending || self.remote.snapshot.busy.is_some() {
+                ui.spinner();
+                ui.label(
+                    self.remote
+                        .snapshot
+                        .busy
+                        .as_deref()
+                        .unwrap_or("Applying change…"),
+                );
+            }
+            if let Some(key) = self.remote.snapshot.busy_key.clone()
+                && self.button(
+                    ui,
+                    "Cancel preparation",
+                    self.remote.connected && !self.remote.cancelling,
+                )
+            {
+                self.send(
+                    "cancel-preparation",
+                    json!({
+                        "key":key, "incarnation":self.remote.snapshot.incarnation
+                    }),
+                );
+            }
+            if !self.remote.message.is_empty() {
+                ui.label(&self.remote.message);
+            }
+        });
+    }
     fn login(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui|{
             ui.add_space(70.);
@@ -365,11 +402,11 @@ impl Desktop {
             let change=self.remote.me["must_change"]==true;
             ui.heading(if change {"Choose a new password"} else {"Sign in to CutCraft"});
             if !change {
-                let r=ui.add(egui::TextEdit::singleline(self.fields.entry("username".into()).or_default()).hint_text("Username"));self.record("Username",&r);
+                let r=ui.add(egui::TextEdit::singleline(self.fields.entry("username".into()).or_default()).hint_text("Username"));self.record("Username",&r);editable(ui,&r);
             }
-            let r=ui.add(egui::TextEdit::singleline(self.fields.entry("password".into()).or_default()).password(true).hint_text(if change {"Current password"}else{"Password"}));self.record("Password",&r);
+            let r=ui.add(egui::TextEdit::singleline(self.fields.entry("password".into()).or_default()).password(true).hint_text(if change {"Current password"}else{"Password"}));self.record("Password",&r);editable(ui,&r);
             if change {
-                let r=ui.add(egui::TextEdit::singleline(self.fields.entry("new-password".into()).or_default()).password(true).hint_text("New password"));self.record("New password",&r);
+                let r=ui.add(egui::TextEdit::singleline(self.fields.entry("new-password".into()).or_default()).password(true).hint_text("New password"));self.record("New password",&r);editable(ui,&r);
                 if self.button(ui,"Change password",!self.remote.pending) {
                     let old=self.fields.remove("password").unwrap_or_default();let new=self.fields.remove("new-password").unwrap_or_default();
                     self.send("password",json!({"old":old,"new":new}));
@@ -381,6 +418,24 @@ impl Desktop {
             ui.label(&self.remote.message);
         });
     }
+}
+/// Text and number fields record where they are, so the page can give the browser's hidden
+/// keyboard input focus during the tap itself: iOS opens its keyboard only inside the touch event.
+pub fn editable(ui: &Ui, r: &Response) {
+    if !r.enabled() {
+        return;
+    }
+    let rect = [r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y];
+    ui.ctx().data_mut(|d| {
+        d.get_temp_mut_or_default::<Vec<[f32; 4]>>(egui::Id::new(EDITABLES))
+            .push(rect)
+    });
+}
+const EDITABLES: &str = "cutcraft-editable-rects";
+/// This frame's editable rectangles, cleared for the next frame.
+pub fn take_editables(ctx: &egui::Context) -> Vec<[f32; 4]> {
+    ctx.data_mut(|d| d.remove_temp::<Vec<[f32; 4]>>(egui::Id::new(EDITABLES)))
+        .unwrap_or_default()
 }
 pub fn text(v: &Value) -> &str {
     v.as_str().unwrap_or("")

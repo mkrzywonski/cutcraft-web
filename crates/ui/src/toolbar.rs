@@ -581,102 +581,330 @@ impl Desktop {
             self.command("design.size", json!({"width_mm":w*factor}));
         }
     }
-    pub fn cutting(&mut self, ui: &mut Ui) {
-        let test = self.screen() == "test-cut";
-        egui::Panel::right("loading-controls").default_size(370.).min_size(310.).show(ui,|ui|{
-            ui.heading(if test{"Test Cut"}else{"Cut"});
-            let cutters=list(&self.remote.state["cutters"]);
-            if self.cutter.is_empty(){self.cutter=text(&self.remote.preferences["cutter"]).into();if self.cutter.is_empty()&& let Some(c)=cutters.first(){self.cutter=text(&c["id"]).into();}}
-            let before=self.cutter.clone();
-            ui.add_enabled_ui(!self.cut_busy(),|ui|{egui::ComboBox::from_label("Cutter").selected_text(&self.cutter).show_ui(ui,|ui|{for c in &cutters{let id=text(&c["id"]);ui.selectable_value(&mut self.cutter,id.into(),text(&c["view"]["name"]));}});});
-            if self.cutter!=before{self.send("select-cutter",json!({"cutter":self.cutter}));}
-            let cutter=cutters.iter().find(|c|c["id"]==self.cutter).cloned().unwrap_or_default();let v=cutter["view"].clone();
-            ui.separator();
-            let preview=self.remote.cut_preview.clone();let busy=self.cut_busy();
-            let uncertain=!self.remote.start_recovery.is_null();
-            if !busy {
-                if !self.remote.history_error.is_empty() { ui.label(&self.remote.history_error); }
-                if self.remote.cut_history["cutter"] == self.cutter
-                    && let Some(last)=list(&self.remote.cut_history["executions"]).first() {
-                        ui.strong(format!("Last {}: {}", if last["kind"]=="test" {"test cut"} else {"cut"}, text(&last["status"])));
-                        ui.label(text(&last["when"]));
-                        if last["status"]=="Interrupted" {ui.label("What was cut is uncertain. Inspect the material and load fresh material before trying again.");}
-                        if last["status"]=="Stopped" {ui.label("The cut was stopped. Inspect the material; it was not completed.");}
-                        if !text(&last["reason"]).is_empty() {ui.label(text(&last["reason"]));}
+    /// The cut screen's controls: cutter, material, loading, Start, progress, Pause and Stop.
+    fn cut_controls(&mut self, ui: &mut Ui, test: bool) {
+        ui.heading(if test { "Test Cut" } else { "Cut" });
+        let cutters = list(&self.remote.state["cutters"]);
+        if self.cutter.is_empty() {
+            self.cutter = text(&self.remote.preferences["cutter"]).into();
+            if self.cutter.is_empty()
+                && let Some(c) = cutters.first()
+            {
+                self.cutter = text(&c["id"]).into();
+            }
+        }
+        let before = self.cutter.clone();
+        ui.add_enabled_ui(!self.cut_busy(), |ui| {
+            egui::ComboBox::from_label("Cutter")
+                .selected_text(&self.cutter)
+                .show_ui(ui, |ui| {
+                    for c in &cutters {
+                        let id = text(&c["id"]);
+                        ui.selectable_value(&mut self.cutter, id.into(), text(&c["view"]["name"]));
+                    }
+                });
+        });
+        if self.cutter != before {
+            self.send("select-cutter", json!({"cutter":self.cutter}));
+        }
+        let cutter = cutters
+            .iter()
+            .find(|c| c["id"] == self.cutter)
+            .cloned()
+            .unwrap_or_default();
+        let v = cutter["view"].clone();
+        ui.separator();
+        let preview = self.remote.cut_preview.clone();
+        let busy = self.cut_busy();
+        let uncertain = !self.remote.start_recovery.is_null();
+        if !busy {
+            if !self.remote.history_error.is_empty() {
+                ui.label(&self.remote.history_error);
+            }
+            if self.remote.cut_history["cutter"] == self.cutter
+                && let Some(last) = list(&self.remote.cut_history["executions"]).first()
+            {
+                ui.strong(format!(
+                    "Last {}: {}",
+                    if last["kind"] == "test" {
+                        "test cut"
+                    } else {
+                        "cut"
+                    },
+                    text(&last["status"])
+                ));
+                ui.label(text(&last["when"]));
+                if last["status"] == "Interrupted" {
+                    ui.label("What was cut is uncertain. Inspect the material and load fresh material before trying again.");
                 }
-                if self.button(ui,"Cut history…",true){self.open_dialog("cut-history","Your cut history");}
+                if last["status"] == "Stopped" {
+                    ui.label("The cut was stopped. Inspect the material; it was not completed.");
+                }
+                if !text(&last["reason"]).is_empty() {
+                    ui.label(text(&last["reason"]));
+                }
             }
-
-            if self.remote.start_recovery["unreadable"] == true {
-                ui.strong("Start is blocked");
-                ui.label("The browser could not read its saved Start request. Restore access to browser session storage and reload. Other project controls remain available.");
-            } else if uncertain {
-                ui.strong("Start is not confirmed");
-                ui.label(format!("Check cutter {} before trying again. Retry uses revision {} of the originally prepared copy, even if you have since edited the design.",text(&self.remote.start_recovery["cutter"]), self.remote.start_recovery["body"]["revision"]));
-                if self.button(ui,"Check Start status",!self.remote.pending){self.send("check-start",json!({}));}
-                if self.button(ui,"Retry original Start",!self.remote.pending){self.send("retry-start",json!({}));}
-                if !busy && self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.remote.start_recovery["cutter"],"action":"stop"}));}
+            if self.button(ui, "Cut history…", true) {
+                self.open_dialog("cut-history", "Your cut history");
             }
+        }
 
-            let copy = &preview["copy"];
-            let changed = self.remote.snapshot.design.as_ref().is_some_and(|design|
-                !copy.is_null() && (copy["project_revision"] != design.project_revision
+        if self.remote.start_recovery["unreadable"] == true {
+            ui.strong("Start is blocked");
+            ui.label("The browser could not read its saved Start request. Restore access to browser session storage and reload. Other project controls remain available.");
+        } else if uncertain {
+            ui.strong("Start is not confirmed");
+            ui.label(format!("Check cutter {} before trying again. Retry uses revision {} of the originally prepared copy, even if you have since edited the design.",text(&self.remote.start_recovery["cutter"]), self.remote.start_recovery["body"]["revision"]));
+            if self.button(ui, "Check Start status", !self.remote.pending) {
+                self.send("check-start", json!({}));
+            }
+            if self.button(ui, "Retry original Start", !self.remote.pending) {
+                self.send("retry-start", json!({}));
+            }
+            if !busy && self.button(ui, "Stop now", true) {
+                self.send(
+                    "cutter",
+                    json!({"id":self.remote.start_recovery["cutter"],"action":"stop"}),
+                );
+            }
+        }
+
+        let copy = &preview["copy"];
+        let changed = self.remote.snapshot.design.as_ref().is_some_and(|design| {
+            !copy.is_null()
+                && (copy["project_revision"] != design.project_revision
                     || copy["source_sha256"] != design.source_sha256
-                    || copy["incarnation"] != self.remote.snapshot.incarnation));
-            let cancelled=v["turn"]["review_cancelled"]==true;
-            if (changed || cancelled) && !busy {
-                ui.strong(if changed {"Settings changed since this cut was prepared"} else {"This cut review was cancelled"});
-                ui.label("Prepare the current settings to review the updated cut. Earlier test areas stay reserved on the same material.");
-                if self.button(ui,if changed {"Prepare updated cut"} else {"Prepare cut again"},!self.remote.pending){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}
+                    || copy["incarnation"] != self.remote.snapshot.incarnation)
+        });
+        let cancelled = v["turn"]["review_cancelled"] == true;
+        if (changed || cancelled) && !busy {
+            ui.strong(if changed {
+                "Settings changed since this cut was prepared"
+            } else {
+                "This cut review was cancelled"
+            });
+            ui.label("Prepare the current settings to review the updated cut. Earlier test areas stay reserved on the same material.");
+            if self.button(
+                ui,
+                if changed {
+                    "Prepare updated cut"
+                } else {
+                    "Prepare cut again"
+                },
+                !self.remote.pending,
+            ) {
+                self.send("prepare-cut", json!({"cutter":self.cutter,"test":test}));
             }
-            let material=if preview["material"].is_object() { &preview["material"] } else if !busy && copy.is_null() { &self.remote.snapshot.ui.sheet["material"] } else { &serde_json::Value::Null };
-            if material.is_object() {
-                ui.strong(text(&material["name"]));
-                ui.label(format!("Blade {} · force {} · speed {} · {} pass(es)",material["blade"],material["force"],material["speed"],material["passes"]));
-            } else { ui.label("Recovering the reviewed material settings…"); }
-            for (n,step) in list(&preview["steps"]).iter().enumerate(){ui.label(format!("{}. {}",n+1,text(step)));}
-            let waiting=preview["copy"]["id"].as_str().is_some_and(|id|list(&v["queue"]).iter().any(|q|q["job"]["job_id"]==id));
-            if let Some(seconds)=preview["estimate_s"].as_f64().filter(|s|s.is_finite()) {ui.label(format!("About {:.0} seconds (estimate)",seconds.ceil()));}
-            if waiting{ui.strong("Waiting for this cutter");ui.label("Your prepared cut is in the queue. Start will be available when it is your turn and the mat is ready.");}
-            if !waiting && (preview.is_null() || preview["geometry"].is_null()){ui.label(if test {"Choose Cut pattern to review the pattern and loading instructions."} else {"Choose Cut this sheet to review the design and loading instructions."});if self.button(ui,if test{"Cut pattern"}else{"Cut this sheet"},!self.remote.pending && !self.cutter.is_empty()){self.send("prepare-cut",json!({"cutter":self.cutter,"test":test}));}}
+        }
+        let material = if preview["material"].is_object() {
+            &preview["material"]
+        } else if !busy && copy.is_null() {
+            &self.remote.snapshot.ui.sheet["material"]
+        } else {
+            &serde_json::Value::Null
+        };
+        if material.is_object() {
+            ui.strong(text(&material["name"]));
+            ui.label(format!(
+                "Blade {} · force {} · speed {} · {} pass(es)",
+                material["blade"], material["force"], material["speed"], material["passes"]
+            ));
+        } else {
+            ui.label("Recovering the reviewed material settings…");
+        }
+        for (n, step) in list(&preview["steps"]).iter().enumerate() {
+            ui.label(format!("{}. {}", n + 1, text(step)));
+        }
+        let waiting = preview["copy"]["id"]
+            .as_str()
+            .is_some_and(|id| list(&v["queue"]).iter().any(|q| q["job"]["job_id"] == id));
+        if let Some(seconds) = preview["estimate_s"].as_f64().filter(|s| s.is_finite()) {
+            ui.label(format!("About {:.0} seconds (estimate)", seconds.ceil()));
+        }
+        if waiting {
+            ui.strong("Waiting for this cutter");
+            ui.label("Your prepared cut is in the queue. Start will be available when it is your turn and the mat is ready.");
+        }
+        if !waiting && (preview.is_null() || preview["geometry"].is_null()) {
+            ui.label(if test {
+                "Choose Cut pattern to review the pattern and loading instructions."
+            } else {
+                "Choose Cut this sheet to review the design and loading instructions."
+            });
+            if self.button(
+                ui,
+                if test {
+                    "Cut pattern"
+                } else {
+                    "Cut this sheet"
+                },
+                !self.remote.pending && !self.cutter.is_empty(),
+            ) {
+                self.send("prepare-cut", json!({"cutter":self.cutter,"test":test}));
+            }
+        }
+        ui.separator();
+        let state = text(&v["activity"]);
+        ui.strong(match state {
+            "testing" => "Test cut in progress",
+            "cutting" => "Cutting",
+            "paused" => "Paused",
+            "stopping" => "Stopping — waiting for confirmation",
+            "confirming-stop" => "Checking that the cutter stopped",
+            "check-cutter" => "Check the cutter",
+            _ => {
+                if v["mat_loaded"] == true {
+                    "Mat loaded"
+                } else {
+                    "Load the mat"
+                }
+            }
+        });
+        if busy {
+            if v["progress"].is_null() {
+                ui.label("Starting… waiting for the first progress estimate.");
+            } else {
+                let fraction = (crate::number(&v["progress"]["fraction"]) as f32).clamp(0., 1.);
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .text(format!("About {:.0}% (estimated)", fraction * 100.)),
+                );
+                if let Some(seconds) = v["progress"]["remaining_s"]
+                    .as_f64()
+                    .filter(|s| s.is_finite() && *s >= 0.)
+                {
+                    ui.label(if seconds < 1. {
+                        "Less than a second remaining (estimate)".into()
+                    } else {
+                        format!("About {:.0} seconds remaining (estimate)", seconds.ceil())
+                    });
+                }
+            }
+            ui.strong("Estimated progress — not the blade’s exact position");
+            if !preview["motion"].is_null() {
+                for (colour, label) in [
+                    (crate::motion::DONE, "Black: cut (estimated)"),
+                    (crate::motion::TODO, "Red: still to cut"),
+                    (
+                        crate::motion::QUEUED,
+                        "Orange: queued; blade may be anywhere along it",
+                    ),
+                ] {
+                    ui.horizontal_wrapped(|ui| {
+                        let (r, _) =
+                            ui.allocate_exact_size(egui::vec2(20., 12.), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(r, 2., egui::Color32::from_gray(246));
+                        ui.painter().line_segment(
+                            [r.left_center(), r.right_center()],
+                            egui::Stroke::new(2., colour),
+                        );
+                        ui.small(label);
+                    });
+                }
+            } else {
+                ui.small("Detailed motion preview unavailable.");
+            }
+            let pausing = v["progress"]["phase"] == "pausing";
+            if self.button(
+                ui,
+                if state == "paused" {
+                    "Resume"
+                } else if pausing {
+                    "Pausing…"
+                } else {
+                    "Pause"
+                },
+                !pausing && matches!(state, "testing" | "cutting" | "paused"),
+            ) {
+                self.send(
+                    "cutter",
+                    json!({"id":self.cutter,"action":if state=="paused"{"resume"}else{"pause"}}),
+                );
+            }
+            if self.button(ui, "Stop now", true) {
+                self.send("cutter", json!({"id":self.cutter,"action":"stop"}));
+            }
+        } else {
+            if v["mat"]["state"] == "unseen" && v["mat_loaded"] == true {
+                ui.label("CutCraft did not see this mat load. Confirm only if it has fresh material where this cut will go.");
+                if self.button(ui, "This mat has fresh material", !self.remote.pending) {
+                    self.send("cutter", json!({"id":self.cutter,"action":"mat-fresh"}));
+                }
+            }
+            let tests = v["turn"]["tests"].as_u64().unwrap_or(0);
+            if test && tests > self.reviewed_tests && v["mat"]["state"] == "fresh" {
+                ui.strong("Test cut finished");
+                ui.label("Check how the pattern weeds. Adjust material settings if needed, or try another pattern.");
+                if self.button(ui, "Try another pattern", !self.remote.pending) {
+                    self.reviewed_tests = tests;
+                }
+            }
+            let own_copy = preview.get("copy").filter(|c| !c.is_null());
+            let ready = !uncertain
+                && !changed
+                && !cancelled
+                && (!test || tests <= self.reviewed_tests)
+                && self.remote.connected
+                && !self.remote.pending
+                && v["online"] == true
+                && v["activity"] == "idle"
+                && v["mat"]["state"] == "fresh"
+                && v["mat_loaded"] == true
+                && own_copy.is_some_and(|c| c["id"] == v["turn"]["job"]["job_id"])
+                && !preview["geometry"].is_null();
+            if self.button(ui, "Start", ready) {
+                let start = json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});
+                self.send("start", json!({"cutter":self.cutter,"start":start}));
+            }
+            if v["mat"]["state"] == "used" {
+                ui.strong("Fresh material needed");
+                ui.label("Unload and load fresh material for another cut.");
+            }
+            if tests > 0 {
+                ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));
+            }
+            if self.button(ui, "Troubleshooting", true) {
+                self.open_dialog("troubleshooting", "Troubleshooting");
+            }
+        }
+        if cutter["simulated"] == true {
             ui.separator();
-            let state=text(&v["activity"]);ui.strong(match state{"testing"=>"Test cut in progress","cutting"=>"Cutting","paused"=>"Paused","stopping"=>"Stopping — waiting for confirmation","confirming-stop"=>"Checking that the cutter stopped","check-cutter"=>"Check the cutter",_=>if v["mat_loaded"]==true{"Mat loaded"}else{"Load the mat"}});
-            if busy {
-                if v["progress"].is_null(){ui.label("Starting… waiting for the first progress estimate.");}
-                else {
-                    let fraction=(crate::number(&v["progress"]["fraction"]) as f32).clamp(0.,1.);
-                    ui.add(egui::ProgressBar::new(fraction).text(format!("About {:.0}% (estimated)",fraction*100.)));
-                    if let Some(seconds)=v["progress"]["remaining_s"].as_f64().filter(|s|s.is_finite() && *s>=0.) {
-                        ui.label(if seconds<1.{"Less than a second remaining (estimate)".into()}else{format!("About {:.0} seconds remaining (estimate)",seconds.ceil())});
+            ui.label("Simulated Cameo — no physical motion");
+            ui.horizontal(|ui| {
+                for (load, label) in [(true, "Load virtual mat"), (false, "Unload virtual mat")] {
+                    if self.button(
+                        ui,
+                        label,
+                        !busy
+                            && if load {
+                                v["mat"]["state"] == "none"
+                            } else {
+                                v["mat_loaded"] == true
+                            },
+                    ) {
+                        self.send(
+                            "cutter",
+                            json!({"id":self.cutter,"action":"practice","body":{"load":load}}),
+                        );
                     }
                 }
-                ui.strong("Estimated progress — not the blade’s exact position");
-                if !preview["motion"].is_null() {
-                for (colour,label) in [(crate::motion::DONE,"Black: cut (estimated)"),(crate::motion::TODO,"Red: still to cut"),(crate::motion::QUEUED,"Orange: queued; blade may be anywhere along it")] {ui.horizontal_wrapped(|ui|{let (r,_)=ui.allocate_exact_size(egui::vec2(20.,12.),egui::Sense::hover());ui.painter().rect_filled(r,2.,egui::Color32::from_gray(246));ui.painter().line_segment([r.left_center(),r.right_center()],egui::Stroke::new(2.,colour));ui.small(label);});}
-                } else {ui.small("Detailed motion preview unavailable.");}
-                let pausing=v["progress"]["phase"]=="pausing";
-                if self.button(ui,if state=="paused"{"Resume"}else if pausing{"Pausing…"}else{"Pause"},!pausing && matches!(state,"testing"|"cutting"|"paused")){self.send("cutter",json!({"id":self.cutter,"action":if state=="paused"{"resume"}else{"pause"}}));}
-                if self.button(ui,"Stop now",true){self.send("cutter",json!({"id":self.cutter,"action":"stop"}));}
-            }else{
-                if v["mat"]["state"]=="unseen" && v["mat_loaded"]==true{
-                    ui.label("CutCraft did not see this mat load. Confirm only if it has fresh material where this cut will go.");
-                    if self.button(ui,"This mat has fresh material",!self.remote.pending){self.send("cutter",json!({"id":self.cutter,"action":"mat-fresh"}));}
-                }
-                let tests=v["turn"]["tests"].as_u64().unwrap_or(0);
-                if test && tests>self.reviewed_tests && v["mat"]["state"]=="fresh" {
-                    ui.strong("Test cut finished");
-                    ui.label("Check how the pattern weeds. Adjust material settings if needed, or try another pattern.");
-                    if self.button(ui,"Try another pattern",!self.remote.pending){self.reviewed_tests=tests;}
-                }
-                let own_copy=preview.get("copy").filter(|c|!c.is_null());
-                let ready=!uncertain && !changed && !cancelled && (!test || tests<=self.reviewed_tests) && self.remote.connected && !self.remote.pending && v["online"]==true && v["activity"]=="idle" && v["mat"]["state"]=="fresh" && v["mat_loaded"]==true && own_copy.is_some_and(|c|c["id"]==v["turn"]["job"]["job_id"]) && !preview["geometry"].is_null();
-                if self.button(ui,"Start",ready){let start=json!({"boot":self.remote.state["boot"],"kind":if test{"test"}else{"main"},"turn":v["turn"]["id"],"job_id":v["turn"]["job"]["job_id"],"revision":v["turn"]["job"]["revision"],"generation":v["mat"]["generation"],"action_epoch":v["action_epoch"]});self.send("start",json!({"cutter":self.cutter,"start":start}));}
-                if v["mat"]["state"]=="used" {ui.strong("Fresh material needed");ui.label("Unload and load fresh material for another cut.");}
-                if tests>0{ui.label(format!("{tests} test cut(s) on this mat. The next pattern stays clear of earlier tests."));}
-                if self.button(ui,"Troubleshooting",true){self.open_dialog("troubleshooting","Troubleshooting");}
+            });
+        }
+    }
+    pub fn cutting(&mut self, ui: &mut Ui) {
+        let test = self.screen() == "test-cut";
+        if self.phone {
+            if self.phone_tab == crate::phone::PhoneTab::Controls {
+                egui::ScrollArea::vertical().show(ui, |ui| self.cut_controls(ui, test));
+                return;
             }
-            if cutter["simulated"]==true{ui.separator();ui.label("Simulated Cameo — no physical motion");ui.horizontal(|ui|{for (load,label) in [(true,"Load virtual mat"),(false,"Unload virtual mat")]{if self.button(ui,label,!busy && if load {v["mat"]["state"]=="none"}else{v["mat_loaded"]==true}){self.send("cutter",json!({"id":self.cutter,"action":"practice","body":{"load":load}}));}}});}
-        });
+        } else {
+            egui::Panel::right("loading-controls")
+                .default_size(370.)
+                .min_size(310.)
+                .show(ui, |ui| self.cut_controls(ui, test));
+        }
         let saved = self.remote.geometry.clone();
         // Never substitute the editable draft when the owned cut preview is unavailable.
         let active = list(&self.remote.state["cutters"])

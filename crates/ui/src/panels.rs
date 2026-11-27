@@ -684,6 +684,8 @@ impl Desktop {
             ui.label(label);
             let edit = self.fields.entry(field.clone()).or_insert_with(||format!("{:.*}", if length.is_none(){0}else if length==Some(true){2}else{3}, value/factor));
             let r = ui.add_enabled(!self.remote.pending && self.remote.connected, egui::TextEdit::singleline(edit).desired_width(82.));
+            crate::editable(ui, &r);
+            self.controls.insert(format!("Field {label}"), [r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y]);
             let parsed = if let Some(inches) = length {parse_length(edit, inches)} else {edit.trim().parse::<f64>().ok().filter(|n|n.is_finite())};
             let submit = r.lost_focus() || (r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
             if !r.has_focus() && !submit && !self.edit_fences.contains_key(&field) { *edit = format!("{:.*}", if length.is_none(){0}else if length==Some(true){2}else{3}, value/factor); }

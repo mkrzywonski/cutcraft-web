@@ -307,7 +307,17 @@ async function dispatch({action,params:p}){
 }
 const presentationScope=()=>JSON.stringify([model.me.principal,model.snapshot.incarnation,model.snapshot.design?.opened_source_sha256 || model.snapshot.design?.source_sha256]);
 let dispatchQueue=Promise.resolve();
-window.CutCraft={state:()=>JSON.stringify(model),dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='artwork' || (intent.action==='cutter'&&intent.params.action==='stop')){void dispatch(intent);}else{const scope=presentationScope();dispatchQueue=dispatchQueue.then(()=>{if(scope===presentationScope())return dispatch(intent);});}},inspect:s=>{controls=JSON.parse(s);},controls:()=>controls};
+window.CutCraft={state:()=>JSON.stringify(model),dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='artwork' || (intent.action==='cutter'&&intent.params.action==='stop')){void dispatch(intent);}else{const scope=presentationScope();dispatchQueue=dispatchQueue.then(()=>{if(scope===presentationScope())return dispatch(intent);});}},inspect:s=>{controls=JSON.parse(s);},editables:s=>{editRects=JSON.parse(s);},controls:()=>controls};
+// iOS opens its keyboard only when an input is focused inside the touch event itself, but egui learns
+// that a tap hit a text field one frame later. Focus eframe's hidden text agent synchronously when a
+// tap ends over a field the app reported as editable; eframe's own touchend then keeps that focus.
+let editRects=[];
+document.addEventListener('touchend',e=>{
+ const t=e.changedTouches[0],canvas=document.querySelector('#cutcraft');if(!t||!canvas)return;
+ const box=canvas.getBoundingClientRect(),x=t.clientX-box.left,y=t.clientY-box.top;
+ if(!editRects.some(r=>x>=r[0]-4&&x<=r[2]+4&&y>=r[1]-4&&y<=r[3]+4))return;
+ canvas.parentNode.querySelector('input[type="text"]')?.focus({preventScroll:true});
+},{capture:true,passive:true});
 document.querySelector('#file').addEventListener('change',e=>{void upload(e.target.files[0]);e.target.value='';});
 window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>{e.preventDefault();uploadMode={};void upload(e.dataTransfer.files[0]);});
 try{await refresh();await init();await start(document.querySelector('#cutcraft'));document.querySelector('#loading').hidden=true;setInterval(refresh,1000);}catch(e){document.querySelector('#loading').textContent=`CutCraft could not start: ${e.message}. Reload to try again.`;}

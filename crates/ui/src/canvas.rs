@@ -144,6 +144,18 @@ impl Desktop {
                 .map_or([x, y, x + w, y + h], |(_, _, b)| b),
         )
     }
+    /// How many comparison panes to draw, and which comes first: (2, 0) side by side, (1, 0) the
+    /// artwork alone or a single overlay/mat view, (1, 1) the cut lines alone on a phone.
+    fn pane_plan(&self) -> (usize, usize) {
+        if self.screen() != "side-by-side" {
+            return (1, 0);
+        }
+        match (self.phone, self.phone_tab) {
+            (true, crate::phone::PhoneTab::Artwork) => (1, 0),
+            (true, crate::phone::PhoneTab::Lines) => (1, 1),
+            _ => (2, 0),
+        }
+    }
     pub fn canvas(&mut self, ui: &mut Ui) {
         if self.drag_settling.as_ref().is_some_and(|d| {
             d.finished(
@@ -251,11 +263,7 @@ impl Desktop {
                 });
                 if zoom != 1. {
                     if let Some(pointer) = pointer {
-                        let panes = if self.screen() == "side-by-side" {
-                            2.
-                        } else {
-                            1.
-                        };
+                        let panes = self.pane_plan().0 as f32;
                         let width = rect.width() / panes;
                         let pane = ((pointer.x - rect.left()) / width)
                             .floor()
@@ -293,21 +301,19 @@ impl Desktop {
         if let Some(b) = shown {
             bounds = [b[0] - 3., b[1] - 3., b[2] + 3., b[3] + 3.];
         }
-        let panes = if self.screen() == "side-by-side" {
-            2
-        } else {
-            1
-        };
+        let (panes, first_pane) = self.pane_plan();
         let pane_width = rect.width() / panes as f32;
         let mut scale = 1.;
         let mut screen_origin = Pos2::ZERO;
-        for pane in 0..panes {
+        for slot in 0..panes {
+            // Pane 0 is the artwork and pane 1 the cut lines; a phone shows one of them full width.
+            let pane = first_pane + slot;
             let painter = ui.painter_at(Rect::from_min_size(
-                rect.min + Vec2::new(pane_width * pane as f32, 0.),
+                rect.min + Vec2::new(pane_width * slot as f32, 0.),
                 Vec2::new(pane_width, rect.height()),
             ));
             let area = Rect::from_min_size(
-                rect.min + Vec2::new(pane_width * pane as f32, 0.),
+                rect.min + Vec2::new(pane_width * slot as f32, 0.),
                 Vec2::new(pane_width, rect.height()),
             )
             .shrink(22.);
