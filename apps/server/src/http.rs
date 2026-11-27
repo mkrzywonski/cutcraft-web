@@ -338,6 +338,10 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/cutters/{id}/preview", get(cut_preview))
         .route("/api/v1/fonts", get(crate::design::font_api::get))
         .route(
+            "/api/v1/fonts/installed",
+            get(crate::design::font_api::get_installed),
+        )
+        .route(
             "/api/v1/fonts/upload",
             post(crate::design::font_api::upload)
                 .layer(axum::extract::DefaultBodyLimit::max(

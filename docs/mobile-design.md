@@ -375,3 +375,15 @@ as well as sufficient pane width; this is an explicit M5 implementation check.
 This is a limited layout illustration, not functional application code or an accessibility test.
 Its schematic image, placeholder group contents and example progress do not establish rendering,
 editing, device-control or full capability parity. Real-device gates above remain open.
+
+
+### Shared-font parity after M4
+
+M5 must expose the household font library implemented in desktop 0.25.0–0.25.2: installed-font
+upload, download, explicit replace and remove; server font search with origin labels; and fonts
+used by the open project with missing-font upload and reprepare. These are shared household
+fonts, not private per-person uploads (spec §10 v2.1). Use the same HTTP/MCP actions. Installed
+font listing, byte download and removal remain usable when the preparation worker is unavailable;
+load the worker-dependent catalog separately. Library backup/restore includes installed fonts.
+Saved letter shapes remain cuttable after font removal. Complete embedded-font installation remains
+a later feature, outside the approved M4 font scope.

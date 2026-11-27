@@ -457,3 +457,26 @@ assert.equal(vm.runInContext('model.fonts.matches',context),1);
 vm.runInContext('clearPrivate()',context);
 assert.equal(vm.runInContext('fontCatalog',context),null);
 console.log('PASS: font search covers the full catalog while bounding per-frame UI data');
+
+// A hung catalog must not hold the edit queue or hide worker-independent recovery actions.
+let installedIndex=[{id:'recoverable-font',name:'recovery.ttf'}];const catalogs=[];
+context.fetch=async(path)=>{
+ if(path==='/api/v1/fonts/installed')return {ok:true,json:async()=>({installed:installedIndex})};
+ assert.equal(path,'/api/v1/fonts');
+ return await new Promise((resolve,reject)=>catalogs.push({resolve:value=>resolve({ok:true,json:async()=>value}),reject}));
+};
+vm.runInContext("clearPrivate();model.me={principal:'font-recovery-owner'};model.pending=false",context);
+await vm.runInContext("dispatch({action:'fonts',params:{}})",context);
+assert.equal(vm.runInContext('model.pending',context),false,'Catalog lookup cannot hold removal behind a pending edit');
+assert.equal(vm.runInContext('model.fonts.installed[0].id',context),'recoverable-font');
+assert.equal(vm.runInContext('model.fonts.loading',context),true);
+installedIndex=[];
+await vm.runInContext('refreshFonts()',context);
+catalogs[0].resolve({installed:[{id:'recoverable-font'}],fonts:[],project_fonts:[{family:'obsolete'}]});
+await new Promise(r=>setImmediate(r));
+assert.equal(vm.runInContext('model.fonts.installed.length',context),0,'An old catalog cannot restore a removed font');
+catalogs[1].reject(new Error('worker unavailable'));
+await new Promise(r=>setImmediate(r));
+assert.equal(vm.runInContext('model.fonts.loading',context),false);
+assert.match(vm.runInContext('model.fonts.catalog_error',context),/still download or remove/);
+console.log('PASS: installed font recovery stays available during a hung catalog, with stale replies retired');

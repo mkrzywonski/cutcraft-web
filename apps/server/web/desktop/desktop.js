@@ -4,7 +4,7 @@ import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
-let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='';
+let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='',fontGeneration=0;
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 function csrf(){return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';}
 async function api(path,method='GET',body,signal){
@@ -195,9 +195,20 @@ function fontScope(){return `${privateEpoch}|${model.me.principal}|${model.snaps
 function filterFonts(query){
  fontQuery=query;if(!fontCatalog)return;
  const matches=fontCatalog.fonts.filter(font=>`${font.family} ${font.style}`.toLowerCase().includes(query.toLowerCase()));
- model.fonts={...fontCatalog,fonts:matches.slice(0,100),matches:matches.length};
+ model.fonts={...fontCatalog,fonts:matches.slice(0,100),matches:matches.length,query:fontQuery};
 }
-async function refreshFonts(){const scope=fontScope(),fonts=await api('/api/v1/fonts');if(scope===fontScope()){fontCatalog=fonts;filterFonts(fontQuery);}}
+async function refreshFonts(){
+ const scope=fontScope(),generation=++fontGeneration;
+ const archive=await api('/api/v1/fonts/installed');
+ if(scope!==fontScope() || generation!==fontGeneration)return;
+ fontCatalog={...archive,fonts:[],project_fonts:[],loading:true};filterFonts(fontQuery);
+ // Removal and byte downloads must work while the font parser is unavailable.
+ void api('/api/v1/fonts','GET',undefined,AbortSignal.timeout(35000)).then(fonts=>{
+  if(scope===fontScope() && generation===fontGeneration){fontCatalog={...fonts,installed:archive.installed,loading:false};filterFonts(fontQuery);}
+ }).catch(()=>{
+  if(scope===fontScope() && generation===fontGeneration){fontCatalog={...fontCatalog,loading:false,catalog_error:'Available fonts could not be checked. You can still download or remove library fonts, then refresh.'};filterFonts(fontQuery);}
+ });
+}
 async function dispatch({action,params:p}){
  if(action==='cancel-preparation'){
   const epoch=privateEpoch,owner=model.me.principal;
@@ -236,7 +247,7 @@ async function dispatch({action,params:p}){
    case 'command':{if(p.id==='view.show' && ['cut','test-cut'].includes(model.snapshot.ui.screen) && !['cut','test-cut'].includes(p.params?.screen))await cancelOwnReview();const r=await command(p.id,p.params,{incarnation:p.incarnation,revision:p.revision});model.result={value:r.value,close_dialog:p.close_dialog===true || ['materials.save','mats.save','materials.save_current'].includes(p.id)};break;}
    case 'save':{const {close_after,...save}=p;await api('/api/v1/design/save','POST',savedBody(save));if(close_after){await refresh();await command('design.close');}model.result={close_dialog:true};model.message='Saved to the library.';break;}
    case 'open':await open(p);break;
-   case 'fonts':fontQuery='';await refreshFonts();break;
+   case 'fonts':await refreshFonts();break;
    case 'font-remove':await api('/api/v1/fonts/'+encodeURIComponent(p.id),'DELETE');await refreshFonts();break;
    case 'font-download':{
     const scope=fontScope(),response=await fetch('/api/v1/fonts/'+encodeURIComponent(p.id)+'/download');

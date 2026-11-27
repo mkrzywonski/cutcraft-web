@@ -334,10 +334,10 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "fonts_list",
         title: "List available and project fonts",
-        description: "Household library fonts, bundled and system fonts, and fonts used by the open project. Library fonts are shared by everyone.",
+        description: "Household library fonts, bundled and system fonts, and fonts used by the open project. installed_only reads the archive without a preparation worker, for recovery.",
         read_only: true,
         destructive: false,
-        properties: || json!({}),
+        properties: || json!({"installed_only":{"type":"boolean","description":"List installed library fonts without starting font processing"}}),
         required: &[],
     },
     ToolSpec {
@@ -570,6 +570,9 @@ impl Tools {
             let p = crate::people::Principal::of(&caller.identity)
                 .ok_or_else(|| ApiError::new(401, "login", "Sign in first."))?;
             return match name {
+                "fonts_list" if args["installed_only"] == true => {
+                    crate::design::font_api::installed(&self.app)
+                }
                 "fonts_list" => crate::design::font_api::list(&self.app, &p).await,
                 "font_install" => {
                     let data = text(&args, "data_base64")?;

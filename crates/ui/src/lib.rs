@@ -226,6 +226,14 @@ impl Desktop {
             [r.rect.min.x, r.rect.min.y, r.rect.max.x, r.rect.max.y],
         );
     }
+    /// Keep short visible labels separate from a control's stable identity.
+    pub fn named_button(&mut self, ui: &mut Ui, label: &str, id: &str, enabled: bool) -> bool {
+        let response = ui
+            .push_id(id, |ui| ui.add_enabled(enabled, egui::Button::new(label)))
+            .inner;
+        self.record(id, &response);
+        response.clicked()
+    }
     pub fn button(&mut self, ui: &mut Ui, label: &str, enabled: bool) -> bool {
         let r = ui.add_enabled(enabled, egui::Button::new(label));
         self.record(label, &r);

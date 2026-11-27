@@ -122,15 +122,26 @@ pub fn download(id: &str) -> Result<(String, String), String> {
             if face.file_data().len() > 40 * 1024 * 1024 {
                 return Err("This font is too large to download.".into());
             }
+            let extension = if face.file_data().starts_with(b"OTTO") {
+                "otf"
+            } else if face.file_data().starts_with(b"ttcf") {
+                "ttc"
+            } else {
+                "ttf"
+            };
+            let name: String = format!("{family}-{style}")
+                .chars()
+                .take(120)
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || " -_".contains(c) {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
             return Ok((
-                if face.file_data().starts_with(b"OTTO") {
-                    "font.otf"
-                } else if face.file_data().starts_with(b"ttcf") {
-                    "font.ttc"
-                } else {
-                    "font.ttf"
-                }
-                .into(),
+                format!("{name}.{extension}"),
                 base64::engine::general_purpose::STANDARD.encode(face.file_data()),
             ));
         }

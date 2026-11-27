@@ -115,6 +115,13 @@ pub fn read_archive(dir: &Path) -> Result<Archive, String> {
     }
     let index = dir.join("index.json");
     if fs::symlink_metadata(&index).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        if fs::read_dir(dir)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_some()
+        {
+            return Err("The font index is missing. Font files have been preserved; restore the library from a complete backup.".into());
+        }
         return Ok(Archive::default());
     }
     if regular(&index)? > MAX_INDEX_BYTES {
@@ -342,6 +349,23 @@ mod tests {
         library.remove_font(&next.id).unwrap();
         assert!(library.fonts().unwrap().fonts.is_empty());
         assert!(library.changes().0 >= 3);
+    }
+    #[test]
+    fn missing_index_preserves_every_font_instead_of_treating_it_as_an_orphan() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Library::open(dir.path()).unwrap();
+        let font = library
+            .install_font("fixture.ttf".into(), b"keep these bytes", face(), None)
+            .unwrap();
+        let fonts = dir.path().join("library").join(DIRECTORY);
+        fs::remove_file(fonts.join("index.json")).unwrap();
+        assert!(recover_archive(&fonts).unwrap_err().contains("preserved"));
+        assert_eq!(
+            fs::read(fonts.join(format!("{}.ttf", font.id))).unwrap(),
+            b"keep these bytes"
+        );
+        assert!(!fonts.join("index.json").exists());
+        assert!(Library::open(dir.path()).is_err());
     }
     #[test]
     fn crash_recovery_removes_only_unpublished_fonts_and_checks_integrity() {

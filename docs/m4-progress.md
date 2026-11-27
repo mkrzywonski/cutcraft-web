@@ -46,8 +46,7 @@ paired reference screenshot review.
 
 These are required work, not exclusions or waived acceptance:
 
-- Independent review of shared library font management and backup/restore integration
-  (implemented in 0.25.0; evidence below).
+- Review closure for the font-recovery improvements following #179 (0.25.2; evidence below).
 - Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -765,3 +764,39 @@ The new paired-screenshot and independent-review reports (#176–179) are now in
 work queue: mat margins/labels, stopped/finished-cut presentation, worker-independent font
 recovery, missing-index preservation, shared Exit behavior and the listed lower-priority parity
 items. Independent review of 0.25.0 found no blocking or motion-safety issue. No hardware used.
+
+
+## 2026-11-27 — Font review fixes (0.25.2)
+
+Addresses all four findings in independent review #179. Installed font metadata, exact downloads
+and removal no longer depend on a preparation worker. The desktop loads that index first and
+fetches the available/project catalog separately, without holding the edit queue. Errors leave
+recovery controls available; old catalog replies cannot resurrect removed entries. MCP offers
+`fonts_list {"installed_only":true}` for the same worker-independent listing; normal `fonts_list`
+also retains the installed list with an explicit catalog error if worker processing fails.
+
+A missing index with existing font files now refuses recovery and preserves every byte. Valid
+indexes still permit orphan cleanup after interrupted publication. System/project font downloads
+use sanitised family/style filenames and the matching format extension. Buttons use short visible
+labels, with separate stable identities; installed rows are keyed by content id even when uploaded
+filenames match. M5's shared-font parity requirements are recorded in `docs/mobile-design.md`.
+
+Validation: fmt, native/wasm Clippy, **522 Rust tests with packaged desktop assets**, locked build,
+dependency audit, transport regressions, full desktop simulator workflow and final presentation
+browser run passed. Fault tests use a missing worker executable to prove HTTP/MCP listing,
+download and removal do not require parsing; missing-index tests prove bytes survive. Browser
+checks cover the family/style download name and byte identity, live removal, saved letter shapes,
+short-label actions and the existing desktop workflows. No real cutter used.
+
+Evidence: `/tmp/codex-m4-font-recovery-full.log`,
+`/tmp/codex-m4-font-recovery-last-native.log`,
+`/tmp/codex-m4-font-recovery-last-browser.log`; authored captures in
+`/tmp/cutcraft-desktop-check.q2P9HB` and `/tmp/cutcraft-desktop-check.wdhJDD`.
+The native-only review's 518 versus the author's 519 at 0.25.0 is explained by the
+`cfg(desktop_assets)` immutable-asset test, not a dirty-tree test (#181–182).
+
+Performance review #183 and proxy decision #184 now take priority after this fix: coalesced
+refresh/fresh-revision handling, change-only snapshot publication, browser state transfer/repaint,
+artwork settle timing and immediate cut feedback. Read the local review before implementing;
+keep steady-Ready and durable-record waits intact. Mat-editor and stopped-screen parity findings
+from #176 remain open.

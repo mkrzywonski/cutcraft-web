@@ -4297,6 +4297,12 @@ async fn library_fonts_are_shared_without_admin_rights_but_require_login() {
         send(&h.app, get("/api/v1/fonts", "cameo-pi.local")).await.0,
         StatusCode::UNAUTHORIZED
     );
+    assert_eq!(
+        send(&h.app, get("/api/v1/fonts/installed", "cameo-pi.local"))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
     let (status, result) = send(&h.app, with_session(upload(), &user)).await;
     assert_eq!(status, StatusCode::OK, "{result}");
     let id = result["font"]["id"].as_str().unwrap();
@@ -4327,4 +4333,73 @@ async fn library_fonts_are_shared_without_admin_rights_but_require_login() {
         send(&h.app, with_session(remove(), &user)).await.0,
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn installed_fonts_stay_listable_and_removable_without_a_working_parser() {
+    let mut h = harness();
+    let font = h
+        .app
+        .service
+        .library
+        .install_font(
+            "recoverable.ttf".into(),
+            include_bytes!("../../../crates/import/tests/fixtures/cutcraft-test-font.ttf"),
+            vec![cameo_pi_core::fonts::Face {
+                family: "CutCraft Fixture".into(),
+                style: "Regular".into(),
+                version: "Version 1.0".into(),
+            }],
+            None,
+        )
+        .unwrap();
+    h.app.design = Arc::new(crate::design::Sessions::new(
+        crate::design::Mode::Process(h._dir.path().join("missing-worker")),
+        h.app.service.people.clone(),
+        h.app.service.lists.clone(),
+    ));
+    let (status, archive) = send(&h.app, get("/api/v1/fonts/installed", "cameo-pi.local")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(archive["installed"][0]["id"], font.id);
+    let caller = crate::http::Caller {
+        actor: cameo_pi_core::cutter::Actor {
+            principal: "household".into(),
+            user: None,
+            client: "font-recovery-test".into(),
+        },
+        identity: crate::users::Identity::Open,
+        session: None,
+        key: None,
+    };
+    assert_eq!(
+        crate::mcp::Tools::new(h.app.clone())
+            .invoke("fonts_list", json!({"installed_only":true}), caller)
+            .await
+            .unwrap(),
+        archive
+    );
+    let (status, catalog) = send(&h.app, get("/api/v1/fonts", "cameo-pi.local")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(catalog["catalog_error"].is_string());
+    assert_eq!(catalog["installed"], archive["installed"]);
+    let response = send_raw(
+        &h.app,
+        get(
+            &format!("/api/v1/fonts/library-{}/download", font.id),
+            "cameo-pi.local",
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        send(
+            &h.app,
+            page("DELETE", &format!("/api/v1/fonts/{}", font.id), json!({}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, archive) = send(&h.app, get("/api/v1/fonts/installed", "cameo-pi.local")).await;
+    assert_eq!(archive["installed"], json!([]));
 }

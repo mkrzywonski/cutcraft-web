@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.2 — 2026-11-27
+
+- Keep installed fonts downloadable and removable when font processing fails. Font catalog loading no longer blocks those recovery actions.
+- Preserve font files and report a missing archive index instead of deleting them. Shorten Fonts dialog buttons and name font downloads by family and style.
+
+
 ## 0.25.1 — 2026-11-26
 
 - Inspect row outlines by selecting a row label with touch or keyboard, without changing whether it will be cut. Excluded rows say Not cut. Closing the group clears temporary inspection.

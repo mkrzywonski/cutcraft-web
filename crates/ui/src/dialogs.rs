@@ -46,34 +46,37 @@ if self.button(ui,"Cancel",true){done=true;}});},
                                 if self.button(ui,"Upload font…",!self.remote.pending){self.send("font-upload",json!({}));}
                                 if self.button(ui,"Refresh fonts",!self.remote.pending){self.send("fonts",json!({}));}
                             });
+                            if self.remote.fonts["loading"]==true {ui.weak("Checking available fonts… Library downloads and removal remain available.");}
+                            if let Some(error)=self.remote.fonts["catalog_error"].as_str(){ui.colored_label(egui::Color32::RED,error);}
                             let project=list(&self.remote.fonts["project_fonts"]);
                             if !project.is_empty(){ui.heading("This project's fonts");}
                             for font in project {
                                 ui.label(format!("{} · {} — {}",text(&font["family"]),text(&font["style"]),if font["available"]==true{"Available"}else{"Not on this server"}));
                                 if font["available"]==true {
-                                    if self.button(ui,&format!("Download project font {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["download_id"]}));}
-                                }else if self.button(ui,&format!("Upload missing font {}",text(&font["family"])),!self.remote.pending){self.send("font-upload",json!({}));}
+                                    if self.named_button(ui,"Download",&format!("Download project font {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["download_id"]}));}
+                                }else if self.named_button(ui,"Upload…",&format!("Upload missing font {}",text(&font["family"])),!self.remote.pending){self.send("font-upload",json!({}));}
                             }
                             ui.separator();ui.heading("Installed in the library");
                             for font in list(&self.remote.fonts["installed"]) {
-                                ui.group(|ui|{
+                                ui.push_id(text(&font["id"]),|ui|{ui.group(|ui|{
                                     ui.strong(text(&font["name"]));
                                     for face in list(&font["faces"]){ui.label(format!("{} · {}",text(&face["family"]),text(&face["style"])));}
                                     ui.horizontal_wrapped(|ui|{
-                                        if self.button(ui,&format!("Download library font {}",text(&font["name"])),!self.remote.pending){self.send("font-download",json!({"id":format!("library-{}",text(&font["id"])),"name":font["name"]}));}
-                                        if self.button(ui,&format!("Replace {}…",text(&font["name"])),!self.remote.pending){self.send("font-upload",json!({"replace":font["id"]}));}
-                                        if self.button(ui,&format!("Remove {}",text(&font["name"])),!self.remote.pending){self.open_dialog("font-remove","Remove shared font");if let Some(dialog)=&mut self.dialog{dialog.value=font.clone();}}
+                                        if self.named_button(ui,"Download",&format!("Download library font {}",text(&font["name"])),!self.remote.pending){self.send("font-download",json!({"id":format!("library-{}",text(&font["id"])),"name":font["name"]}));}
+                                        if self.named_button(ui,"Replace…",&format!("Replace {}…",text(&font["name"])),!self.remote.pending){self.send("font-upload",json!({"replace":font["id"]}));}
+                                        if self.named_button(ui,"Remove…",&format!("Remove {}",text(&font["name"])),!self.remote.pending){self.open_dialog("font-remove","Remove shared font");if let Some(dialog)=&mut self.dialog{dialog.value=font.clone();}}
                                     });
-                                });
+                                });});
                             }
                             ui.separator();ui.heading("Available fonts");
+                            if d.value["query"].is_null(){d.value["query"]=self.remote.fonts["query"].clone();}
                             let before=d.value["query"].clone();string_field(ui,"Find font",&mut d.value["query"]);
                             if before!=d.value["query"]{self.send("font-search",json!({"query":d.value["query"]}));}
                             ui.weak(format!("{} matching fonts. Showing up to 100; type to narrow the list.",self.remote.fonts["matches"].as_u64().unwrap_or(0)));
                             for font in list(&self.remote.fonts["fonts"]) {
                                 ui.horizontal_wrapped(|ui|{
                                     ui.label(format!("{} · {} ({})",text(&font["family"]),text(&font["style"]),text(&font["origin"])));
-                                    if self.button(ui,&format!("Download {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["id"]}));}
+                                    if self.named_button(ui,"Download",&format!("Download {} {}",text(&font["family"]),text(&font["style"])),!self.remote.pending){self.send("font-download",json!({"id":font["id"]}));}
                                 });
                             }
                         },

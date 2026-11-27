@@ -21,13 +21,33 @@ fn person(caller: &Caller) -> Result<Principal, ApiError> {
 fn invalid(message: impl Into<String>) -> ApiError {
     ApiError::new(422, "font", message)
 }
+/// The archive index remains readable even when a font crashes a preparation worker.
+pub fn installed(app: &App) -> Result<Value, ApiError> {
+    Ok(json!({"installed":app.service.library.fonts().map_err(invalid)?.fonts}))
+}
+pub async fn get_installed(
+    State(app): State<App>,
+    axum::Extension(caller): axum::Extension<Caller>,
+) -> Result<Response, ApiError> {
+    person(&caller)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(installed(&app)?),
+    )
+        .into_response())
+}
 pub async fn list(app: &App, p: &Principal) -> Result<Value, ApiError> {
-    match app.design.ask(p, WorkerRequest::Fonts).await? {
-        WorkerReply::Fonts { value } => Ok(value),
-        WorkerReply::Failed { message } => Err(invalid(message)),
-        _ => Err(super::unexpected()),
+    let archive = installed(app)?;
+    match app.design.ask(p, WorkerRequest::Fonts).await {
+        Ok(WorkerReply::Fonts { value }) => Ok(value),
+        Err(error) if error.status == 401 || error.status == 403 => Err(error),
+        _ => Ok(
+            json!({"installed":archive["installed"],"fonts":[],"project_fonts":[],
+            "catalog_error":"Available fonts could not be checked. You can still download or remove installed library fonts, then refresh."}),
+        ),
     }
 }
+
 pub async fn install(
     app: &App,
     p: &Principal,

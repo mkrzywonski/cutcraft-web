@@ -96,6 +96,8 @@ await click('Menu Edit');await click('Fonts…');
 await until(async()=>!(await state()).pending && (await state()).fonts?.project_fonts?.some(f=>f.family==='CutCraft Fixture' && f.available),'Project font is available');
 await sleep(300);
 
+await click('Download project font CutCraft Fixture Regular');
+await until(async()=>{try{return (await fs.readFile(`${artifacts}/CutCraft Fixture-Regular.ttf`)).equals(await fs.readFile(fontFixture));}catch{return false;}},'Project font download preserves bytes and uses family/style filename');
 await click('Download library font cutcraft-test-font.ttf');
 await until(async()=>{try{return (await fs.readFile(`${artifacts}/cutcraft-test-font.ttf`)).equals(await fs.readFile(fontFixture));}catch{return false;}},'Font download is byte-exact');
 const fontShot=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/fonts-library.png`,Buffer.from(fontShot.data,'base64'));
@@ -104,7 +106,7 @@ await fs.writeFile(replacementFont,Buffer.concat([await fs.readFile(fontFixture)
 await chooseFont('Replace cutcraft-test-font.ttf…',replacementFont);
 await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.length===1 && s.fonts.installed[0].id!==installedFont.id;},'Explicit font replacement',60000);
 await click('Remove replacement.ttf');await click('Remove font');
-await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.length===0 && !s.fonts.fonts.some(f=>f.family==='CutCraft Fixture');},'Removal rescans the live worker',60000);
+await until(async()=>{const s=await state();return !s.pending && s.fonts?.installed?.length===0 && s.fonts.loading===false && s.fonts.project_fonts.some(f=>f.family==='CutCraft Fixture' && !f.available);},'Removal rescans the live worker',60000);
 await click('Menu File');await click('Close design');await click('Close design');
 await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close authored font design');
 const savedFontDocument=await cdp('DOM.getDocument');

@@ -140,3 +140,9 @@ The library holds up to 128 font files and 256 MiB. Library backups include thes
 fonts; restore checks them before replacing the library. System and bundled fonts are excluded.
 Saved CutCraft projects keep letter shapes, so removing a font does not erase saved cut lines.
 Fonts embedded in designs are never installed automatically.
+
+
+If available-font checking fails, the Fonts dialog still lists installed library fonts. You
+can download or remove one without waiting for font processing, then refresh the catalog.
+If the font archive index is missing, CutCraft preserves the files and reports the problem;
+restore a complete library backup instead of replacing the index with an empty one.
