@@ -168,6 +168,24 @@ await until(async()=>!(await state()).snapshot.design && !(await state()).pendin
 console.log('PASS: real Advanced preparation checkbox blocks/restores cut readiness and Clear answers resets the recipe');
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[fixture]});
 await until(async()=>(await state()).snapshot.design?.cut_ready && !(await state()).pending,'Open authored design');
+const inspectLabel=(await state()).snapshot.ui.rows[0].label;
+await click('Cut '+inspectLabel);
+await until(async()=>!(await state()).pending && !(await state()).snapshot.ui.rows[0].included,'Exclude authored row');
+const inspectionRevision=(await state()).snapshot.revision;
+await until(async()=>!!await page(`CutCraft.controls()[${JSON.stringify('Inspect '+inspectLabel)}]`),'Row inspection target');
+const inspectRect=await page(`CutCraft.controls()[${JSON.stringify('Inspect '+inspectLabel)}]`);
+await cdp('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:(inspectRect[0]+inspectRect[2])/2,y:(inspectRect[1]+inspectRect[3])/2}]});
+await cdp('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+await sleep(300);
+if((await state()).snapshot.revision!==inspectionRevision || (await state()).snapshot.ui.rows[0].included)throw Error('Touch inspection changed inclusion');
+const inspected=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/touch-row-inspection.png`,Buffer.from(inspected.data,'base64'));
+await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+if((await state()).snapshot.revision!==inspectionRevision)throw Error('Keyboard focus changed inclusion');
+await click('Cut '+inspectLabel);
+await until(async()=>!(await state()).pending && (await state()).snapshot.design?.cut_ready,'Restore authored row inclusion');
+console.log('PASS: touch row inspection and keyboard focus never change inclusion or project revision');
+
 await sleep(300);
 await click('Menu Edit'); await click('Mats…'); await click('New…');
 await until(async()=>!!await page('CutCraft.controls()["Save changes"]'),'Mat editor opened');

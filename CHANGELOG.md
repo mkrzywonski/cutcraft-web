@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.1 — 2026-11-26
+
+- Inspect row outlines by selecting a row label with touch or keyboard, without changing whether it will be cut. Excluded rows say Not cut. Closing the group clears temporary inspection.
+
 ## 0.25.0 — 2026-11-26
 
 - Add the shared Fonts library: upload, exact download, explicit replacement and removal, with available-font search and fonts used by the open design. Font programs are checked in a bounded preparation worker. Library backup and restore include installed fonts; saved projects retain their letter shapes.

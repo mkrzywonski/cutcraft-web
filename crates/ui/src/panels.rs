@@ -15,6 +15,8 @@ pub const GROUPS: [&str; 10] = [
 ];
 impl Desktop {
     pub fn panel(&mut self, ui: &mut Ui) {
+        // A folded or scrolled-away row must never leave an excluded contour visible.
+        self.peek.clear();
         ui.horizontal(|ui| {
             ui.strong(if self.ready() {
                 "Ready to cut"
@@ -346,8 +348,12 @@ impl Desktop {
                 });
                 for row in data.rows {
                     let mut included = row["included"] == true;
-                    let r = ui.horizontal(|ui| {
-                        if ui.checkbox(&mut included, "").changed() {
+                    let r = ui.push_id((self.presentation_identity.clone(),row["row"].to_string()),|ui| ui.horizontal(|ui| {
+                        let checkbox=ui.checkbox(&mut included, "");
+                        let label=format!("Cut {}",text(&row["label"]));
+                        checkbox.widget_info(||egui::WidgetInfo::selected(egui::WidgetType::Checkbox,true,included,&label));
+                        self.record(&label,&checkbox);
+                        if checkbox.changed() {
                             self.command(
                                 "cut.include",
                                 json!({"row":row["row"],"include":included}),
@@ -366,7 +372,13 @@ impl Desktop {
                                 egui::StrokeKind::Inside,
                             );
                         }
-                        ui.label(text(&row["label"]));
+                        let inspect=ui.selectable_label(false,text(&row["label"]));
+                        self.record(&format!("Inspect {}",text(&row["label"])),&inspect);
+                        if inspect.clicked(){inspect.request_focus();}
+                        let focused=inspect.has_focus();
+                        inspect.on_hover_text("Inspect these outlines without changing what will be cut. Move focus away to finish.");
+                        if !included {ui.weak("Not cut");}
+
                         ui.weak(format!(
                             "{} {}, {} {}",
                             row["pieces"],
@@ -382,8 +394,9 @@ impl Desktop {
                                 "lines"
                             }
                         ));
-                    });
-                    if r.response.hovered() {
+                        focused
+                    })).inner;
+                    if ui.is_rect_visible(r.response.rect) && (r.response.hovered() || r.inner) {
                         self.peek = list(&row["items"])
                             .iter()
                             .filter_map(|v| v.as_str().map(str::to_owned))
@@ -976,6 +989,102 @@ fn message_start(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn row_frame(ctx: &egui::Context, desktop: &mut Desktop, events: Vec<egui::Event>) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(650., 500.),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| desktop.group_body(ui, "What to cut"));
+        output.textures_delta.clear();
+    }
+    #[test]
+    fn row_inspection_uses_focus_and_never_changes_inclusion() {
+        let ctx = egui::Context::default();
+        let mut desktop = Desktop::default();
+        desktop.remote.snapshot.ui.rows = vec![
+            json!({"row":{"layer":"one"},"label":"First row","included":false,"items":["first"],"pieces":1,"cut_lines":1}),
+            json!({"row":{"layer":"two"},"label":"Second row","included":false,"items":["second"],"pieces":1,"cut_lines":1}),
+        ];
+        row_frame(&ctx, &mut desktop, vec![]);
+        let r = desktop.controls["Inspect First row"];
+        let pos = egui::pos2((r[0] + r[2]) / 2., (r[1] + r[3]) / 2.);
+        row_frame(
+            &ctx,
+            &mut desktop,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+        );
+        row_frame(
+            &ctx,
+            &mut desktop,
+            vec![
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerGone,
+            ],
+        );
+        row_frame(&ctx, &mut desktop, vec![]);
+        assert_eq!(desktop.peek, vec!["first"]);
+        // Touch/pointer selection persists without hover. Tab leaves inspection, then reaches
+        // the next label without activating either inclusion checkbox.
+        for expected in [Vec::<String>::new(), vec!["second".into()]] {
+            row_frame(
+                &ctx,
+                &mut desktop,
+                vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            row_frame(
+                &ctx,
+                &mut desktop,
+                vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            assert_eq!(desktop.peek, expected);
+        }
+        assert!(desktop.intents.is_empty());
+        assert!(
+            desktop
+                .remote
+                .snapshot
+                .ui
+                .rows
+                .iter()
+                .all(|row| row["included"] == false)
+        );
+        desktop.remote.snapshot.ui.panel = json!({"open":{"What to cut":false}});
+        let mut output = ctx.run_ui(Default::default(), |ui| desktop.panel(ui));
+        output.textures_delta.clear();
+        assert!(
+            desktop.peek.is_empty(),
+            "Closing the group retires inspection"
+        );
+    }
     #[test]
     fn size_choices_follow_the_display_units() {
         let choice = json!({"decision":"confirm_size","width_mm":141.111,"height_mm":105.833});

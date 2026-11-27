@@ -743,3 +743,25 @@ Local evidence: `/tmp/codex-m4-font-verified.log`,
 `/tmp/cutcraft-desktop-check.1VlC1q` (including visually inspected `fonts-library.png`).
 Independent review, Pi resource measurements, Safari and hardware acceptance remain open.
 This does not close M4's other completion gates.
+
+
+## 2026-11-26 — Keyboard/touch row inspection (0.25.1)
+
+What to cut row labels now accept keyboard focus and touch selection. Inspection never
+changes inclusion or sends a project command. Excluded rows explicitly say Not cut; their
+faint outlines remain inspectable while the label has focus, then disappear when focus leaves,
+the group closes or the row scrolls outside the visible area. Checkboxes have named accessible
+labels independent of the inspect target. Mouse hover still works.
+
+The egui interaction regression selects an excluded row, removes hover, moves focus with Tab,
+checks both rows remain excluded with no emitted command, then closes the group and verifies
+inspection clears. The real Chromium touch check keeps the project revision unchanged and
+captures the excluded square's faint outline; `touch-row-inspection.png` was visually checked.
+Fmt, native/wasm Clippy, **520 Rust tests**, locked workspace build, dependency audit and
+the full desktop browser/simulator workflow passed. Evidence: `/tmp/codex-m4-row-full.log`
+and `/tmp/cutcraft-desktop-check.X5bIU1`.
+
+The new paired-screenshot and independent-review reports (#176–179) are now in the remaining
+work queue: mat margins/labels, stopped/finished-cut presentation, worker-independent font
+recovery, missing-index preservation, shared Exit behavior and the listed lower-priority parity
+items. Independent review of 0.25.0 found no blocking or motion-safety issue. No hardware used.
