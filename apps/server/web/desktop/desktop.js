@@ -4,7 +4,7 @@ import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
 const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
-let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='',fontGeneration=0;
+let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='',fontGeneration=0,refreshFlight=null,refreshAgain=false,snapshotFloor=null;
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
 function csrf(){return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('cpi_csrf='))?.split('=').slice(1).join('=')||'';}
 async function api(path,method='GET',body,signal){
@@ -16,9 +16,10 @@ async function api(path,method='GET',body,signal){
 }
 function request(id,params={}){return{id,params,key:key(),incarnation:model.snapshot.incarnation,revision:model.snapshot.revision};}
 async function command(id,params={},fence={}){
- const body={...request(id,params),...fence};
- try{return await api('/api/v1/design/command','POST',body);}
- catch(e){if(e instanceof TypeError){model.message='Connection lost. Checking whether your change was applied…';const answer=await api(`/api/v1/design/lookup/${body.key}`);if(answer.answer==='applied')return answer;if(answer.answer==='refused')throw new Error(answer.message);throw new Error('The change was not applied. Review the current project and try again.');}throw e;}
+ const body={...request(id,params),...Object.fromEntries(Object.entries(fence).filter(([,value])=>value!==undefined))},epoch=privateEpoch;
+ const accepted=reply=>{if(epoch===privateEpoch && body.incarnation===model.snapshot.incarnation && Number.isSafeInteger(reply.revision))snapshotFloor={incarnation:body.incarnation,revision:Math.max(snapshotFloor?.incarnation===body.incarnation?snapshotFloor.revision:0,reply.revision)};return reply;};
+ try{return accepted(await api('/api/v1/design/command','POST',body));}
+ catch(e){if(e instanceof TypeError){model.message='Connection lost. Checking whether your change was applied…';const answer=await api(`/api/v1/design/lookup/${body.key}`);if(answer.answer==='applied')return accepted(answer);if(answer.answer==='refused')throw new Error(answer.message);throw new Error('The change was not applied. Review the current project and try again.');}throw e;}
 }
 const startStorageKey=owner=>'cutcraft.pending-start.'+encodeURIComponent(owner);
 const uncertainStartMessage='Start is not confirmed. Check the cutter before trying again.';
@@ -113,19 +114,31 @@ function queueCutHistory(){
  }).finally(()=>{historyFlight=null;});
 }
 function clearPrivate(){model.cancelling=false;document.querySelector("#font-file")?.remove();
- privateEpoch++;fontCatalog=null;fontQuery='';
+ privateEpoch++;snapshotFloor=null;fontCatalog=null;fontQuery='';
  model.snapshot={protocol:PROTOCOL,incarnation:'',revision:0,materials:[]};model.geometry={id:''};model.cut_preview={};model.cut_history={};model.history_error='';model.state={};model.library={};model.uploads={};model.fonts={};model.result={};
  model.start_recovery=null;clearPicture();document.title='CutCraft';live?.close();live=null;
 }
 async function refresh(){
- if(refreshing)return;refreshing=true;
+ if(refreshing){refreshAgain=true;return refreshFlight;}
+ refreshing=true;
+ refreshFlight=(async()=>{do{refreshAgain=false;await refreshOnce();}while(refreshAgain);})()
+  .finally(()=>{refreshing=false;refreshFlight=null;});
+ return refreshFlight;
+}
+async function refreshOnce(){
+ const epoch=privateEpoch;
  const initialCopy=model.cut_preview?.copy?.id;
  try{
   const me=await api('/api/v1/me');
+  if(epoch!==privateEpoch){refreshAgain=true;return;}
   if(model.me.mode!==me.mode || model.me.principal!==me.principal)clearPrivate();
   model.me={...me,login_required:me.mode==='users'&&!me.user};
   if(model.me.login_required || me.must_change || me.mode==='locked'){clearPrivate();model.connected=true;return;}
+  const readEpoch=privateEpoch;
   const [snapshot,state]=await Promise.all([api('/api/v1/design/snapshot'),api('/api/v1/state')]);
+  if(readEpoch!==privateEpoch){refreshAgain=true;return;}
+  const floor=Math.max(snapshotFloor?.incarnation===snapshot.incarnation?snapshotFloor.revision:0,model.snapshot.incarnation===snapshot.incarnation?model.snapshot.revision:0);
+  if(snapshot.revision<floor){refreshAgain=true;return;}
   if(snapshot.protocol!==PROTOCOL)throw new Error('The server was updated. Reload this page.');
   const old=model.snapshot;
   if(old.incarnation && old.incarnation!==snapshot.incarnation)clearPrivate();
@@ -156,7 +169,7 @@ async function refresh(){
   if(!live){live=new EventSource(`/api/v1/design/live?protocol=${PROTOCOL}`);live.addEventListener('snapshot',()=>refresh());live.onerror=()=>{model.connected=false;};}
   queueStartReconciliation(state);
   queueCutHistory();
- }catch(e){const auth=e.status===401 || e.status===403;if(auth){clearPrivate();model.me.login_required=true;}model.connected=auth;model.message=e.message;}finally{refreshing=false;}
+ }catch(e){const auth=e.status===401 || e.status===403;if(auth){clearPrivate();model.me.login_required=true;}model.connected=auth;model.message=e.message;}
 }
 function requestPicture(art,request){
  const scope=presentationScope(), source=`${model.snapshot.incarnation}|${model.snapshot.design.opened_source_sha256 || model.snapshot.design.source_sha256}`;
@@ -179,7 +192,7 @@ async function pumpPicture(){
 function savedBody(params){return {...params,key:key(),incarnation:model.snapshot.incarnation,revision:model.snapshot.revision};}
 async function open(body){try{await api('/api/v1/design/open','POST',savedBody(body));model.result={close_dialog:true};}catch(e){if(e.code==='unsaved-changes'&&confirm('The current design has unsaved changes. Open this file and keep the previous work as a draft?')){await api('/api/v1/design/open','POST',savedBody({...body,replace_unsaved:true}));}else throw e;}}
 async function upload(file){if(!file)return;await execute(async()=>{const r=await fetch(`/api/v1/design/upload?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'x-cutcraft-protocol':String(PROTOCOL),'x-csrf-token':decodeURIComponent(csrf())},body:file});const result=await r.json();if(!r.ok)throw new Error(result.message);const uploaded=result.design;if(uploadMode.update){await api('/api/v1/design/update','POST',savedBody({design:uploaded.id}));}else await open({design:uploaded.id});});}
-async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{model.pending=false;await refresh();}}
+async function execute(fn){if(model.pending)return;model.pending=true;model.message='';model.result={};try{await fn();model.result_id++;}catch(e){model.message=e.message;model.result={error_code:e.code||''};model.result_id++;}finally{try{await refresh();}finally{model.pending=false;}}}
 async function cancelOwnReview(){
  const cutter=model.selectedCutter,view=model.state.cutters?.find(c=>c.id===cutter)?.view;
  const owner=model.me.principal;

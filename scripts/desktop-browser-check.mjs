@@ -17,7 +17,7 @@ function cdp(method,params={}){return new Promise((resolve,reject)=>{let id=++ne
 async function page(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
 async function state(){return await page('JSON.parse(CutCraft.state())');}
 async function until(fn,why,timeout=15000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await sleep(100);}const failureShot=await cdp('Page.captureScreenshot',{format:'png'});await fs.writeFile(`${artifacts}/failure.png`,Buffer.from(failureShot.data,'base64'));await fs.writeFile(`${artifacts}/failure-state.json`,JSON.stringify({state:await state(),fontResponses,controls:await page('CutCraft.controls()')}));throw Error(why+': '+JSON.stringify((await state()).message));}
-async function click(label){await until(async()=>!!await page(`CutCraft.controls()[${JSON.stringify(label)}]`),'Control rendered: '+label);let r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);if(!r)throw Error('No control '+label);const x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;if(y<80&&label==='Width')throw Error('Bad field');await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});await sleep(100);}
+async function click(label){if(label!=='Stop now')await until(async()=>!(await state()).pending,'Ready for '+label);await until(async()=>!!await page(`CutCraft.controls()[${JSON.stringify(label)}]`),'Control rendered: '+label);let r=await page(`CutCraft.controls()[${JSON.stringify(label)}]`);if(!r)throw Error('No control '+label);const x=(r[0]+r[2])/2,y=(r[1]+r[3])/2;if(y<80&&label==='Width')throw Error('Bad field');await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1});await sleep(100);}
 async function type(label,value){await click(label);await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65});await cdp('Input.insertText',{text:value});await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});}
 await cdp('Runtime.enable');
 await cdp('Page.enable');
@@ -429,4 +429,9 @@ await fs.writeFile(`${artifacts}/desktop-600-font24.png`,Buffer.from(narrow.data
 await click('More tools'); await click('Save');
 await until(async()=>!(await state()).pending,'Overflow Save finishes');
 console.log('PASS: 600px desktop with 24pt text keeps primary controls visible and overflow views/zoom/Save usable');
+await sleep(1500);await page('performance.clearResourceTimings()');await sleep(10000);
+const idleReads=await page("performance.getEntriesByType('resource').filter(e=>new URL(e.name).pathname==='/api/v1/design/snapshot').length");
+await fs.writeFile(`${artifacts}/idle-refresh.json`,JSON.stringify({seconds:10,snapshot_reads:idleReads}));
+if(idleReads>14)throw Error('Snapshot reads still feed a live refresh loop: '+idleReads);
+console.log(`PASS: idle snapshot reads are bounded (${idleReads} in 10 seconds)`);
 ws.close();

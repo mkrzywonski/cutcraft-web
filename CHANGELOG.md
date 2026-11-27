@@ -4,6 +4,12 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.3 — 2026-11-27
+
+- Queue a follow-up refresh when an edit finishes during an older read, reject snapshots older than accepted changes, and keep controls busy until the refreshed presentation arrives.
+- Publish live design updates only when the snapshot or progress actually changes, eliminating the idle refresh feedback loop.
+
+
 ## 0.25.2 — 2026-11-27
 
 - Keep installed fonts downloadable and removable when font processing fails. Font catalog loading no longer blocks those recovery actions.

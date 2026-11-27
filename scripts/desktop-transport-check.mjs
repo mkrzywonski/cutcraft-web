@@ -480,3 +480,32 @@ await new Promise(r=>setImmediate(r));
 assert.equal(vm.runInContext('model.fonts.loading',context),false);
 assert.match(vm.runInContext('model.fonts.catalog_error',context),/still download or remove/);
 console.log('PASS: installed font recovery stays available during a hung catalog, with stale replies retired');
+
+// An edit finishing during an older read queues a follow-up and keeps controls busy until it lands.
+context.refresh=realRefresh;
+vm.runInContext("clearPrivate();model.me={mode:'open',principal:'fresh-owner'};model.snapshot={protocol:9,incarnation:'fresh-session',revision:1,ui:{screen:'side-by-side'}};model.pending=false",context);
+const snapshotReads=[];let meReads=0;
+context.fetch=async(path)=>{
+ if(path.endsWith('/me')){meReads++;return {ok:true,json:async()=>({mode:'open',principal:'fresh-owner'})};}
+ if(path.endsWith('/state'))return {ok:true,json:async()=>({cutters:[]})};
+ if(path.endsWith('/snapshot'))return await new Promise(resolve=>snapshotReads.push(revision=>resolve({ok:true,json:async()=>({protocol:9,incarnation:'fresh-session',revision,ui:{screen:revision===1?'overlay':'side-by-side'}})})));
+ if(path.endsWith('/command'))return {ok:true,json:async()=>({answer:'applied',revision:2,value:{}})};
+ throw Error('Unexpected freshness request '+path);
+};
+const olderRefresh=vm.runInContext('refresh()',context);await new Promise(r=>setImmediate(r));
+assert.equal(snapshotReads.length,1);
+const editing=vm.runInContext("dispatch({action:'command',params:{id:'design.size',params:{width_mm:25.4}}})",context);
+await new Promise(r=>setImmediate(r));
+const coalescedA=vm.runInContext('refresh()',context),coalescedB=vm.runInContext('refresh()',context);
+assert.equal(vm.runInContext('model.pending',context),true);
+snapshotReads[0](1);await new Promise(r=>setImmediate(r));
+assert.equal(snapshotReads.length,2,'Overlapping refreshes produce exactly one follow-up');
+assert.equal(vm.runInContext('model.snapshot.ui.screen',context),'side-by-side','An older snapshot cannot replace the current presentation after an accepted command');
+assert.equal(vm.runInContext('model.pending',context),true,'Accepted edit stays busy until fresh presentation arrives');
+snapshotReads[1](2);
+await Promise.all([olderRefresh,editing,coalescedA,coalescedB]);
+assert.equal(vm.runInContext('model.snapshot.revision',context),2);
+assert.equal(vm.runInContext('model.pending',context),false);
+assert.equal(meReads,2);
+assert.equal(vm.runInContext("request('undo').revision",context),2);
+console.log('PASS: refresh requests coalesce, old revisions are rejected, and edits stay busy through the follow-up');

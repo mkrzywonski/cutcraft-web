@@ -693,12 +693,8 @@ impl Sessions {
                 id,
                 name: String::new(),
             };
-            if let Ok(WorkerReply::Snapshot(s)) =
-                self.ask(&principal, WorkerRequest::ReloadLists).await
-                && let Ok(text) = serde_json::to_string(&s)
-            {
-                session.live.send_replace(text);
-            }
+            // ask publishes a changed snapshot while holding the worker link.
+            let _ = self.ask(&principal, WorkerRequest::ReloadLists).await;
         }
     }
 
@@ -724,17 +720,27 @@ fn cache_snapshot(session: &Session, mut snapshot: cutcraft_web_protocol::Sessio
     } else {
         None
     };
+    if cached.as_ref() == Some(&snapshot) {
+        return;
+    }
     let text = serde_json::to_string(&snapshot).unwrap_or_default();
     *cached = Some(snapshot);
-    session.live.send_replace(text);
+    session.live.send_if_modified(|current| {
+        if *current == text {
+            false
+        } else {
+            *current = text;
+            true
+        }
+    });
 }
 
 fn set_phase(session: &Session, phase: Option<&str>) {
     *session.phase.lock().unwrap_or_else(|p| p.into_inner()) = phase.map(str::to_owned);
     let mut cached = session.cached.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(snapshot) = cached.as_mut() {
-        snapshot.busy = phase.map(str::to_owned);
-        snapshot.busy_key = if phase.is_some() {
+        let busy = phase.map(str::to_owned);
+        let busy_key = if phase.is_some() {
             session
                 .current_key
                 .lock()
@@ -743,9 +749,20 @@ fn set_phase(session: &Session, phase: Option<&str>) {
         } else {
             None
         };
-        session
-            .live
-            .send_replace(serde_json::to_string(snapshot).unwrap_or_default());
+        if snapshot.busy == busy && snapshot.busy_key == busy_key {
+            return;
+        }
+        snapshot.busy = busy;
+        snapshot.busy_key = busy_key;
+        let text = serde_json::to_string(snapshot).unwrap_or_default();
+        session.live.send_if_modified(|current| {
+            if *current == text {
+                false
+            } else {
+                *current = text;
+                true
+            }
+        });
     }
 }
 
@@ -1928,6 +1945,41 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn unchanged_snapshot_reads_do_not_publish_live_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = Sessions::new(
+            Mode::Thread,
+            dir.path().join("people"),
+            dir.path().join("lists"),
+        );
+        let person = principal("a");
+        let initial = snap(&sessions, &person).await;
+        let session = sessions.session(&person).unwrap();
+        let mut live = session.live.subscribe();
+        live.borrow_and_update();
+        for _ in 0..5 {
+            assert_eq!(snap(&sessions, &person).await, initial);
+            assert!(!live.has_changed().unwrap());
+        }
+        set_phase(&session, Some("Preparing…"));
+        assert!(live.has_changed().unwrap());
+        live.borrow_and_update();
+        set_phase(&session, Some("Preparing…"));
+        assert!(!live.has_changed().unwrap());
+        *session.current_key.lock().unwrap() = Some("next-request".into());
+        set_phase(&session, Some("Preparing…"));
+        assert!(live.has_changed().unwrap());
+        let progress: cutcraft_web_protocol::SessionSnapshot =
+            serde_json::from_str(&live.borrow_and_update()).unwrap();
+        assert_eq!(progress.busy_key.as_deref(), Some("next-request"));
+        set_phase(&session, None);
+        assert!(live.has_changed().unwrap());
+        live.borrow_and_update();
+        set_phase(&session, None);
+        assert!(!live.has_changed().unwrap());
+        sessions.shutdown().await.unwrap();
+    }
     #[tokio::test]
     async fn resident_budget_checkpoints_lru_and_idle_unloads_without_losing_edits() {
         let dir = tempfile::tempdir().unwrap();

@@ -800,3 +800,25 @@ refresh/fresh-revision handling, change-only snapshot publication, browser state
 artwork settle timing and immediate cut feedback. Read the local review before implementing;
 keep steady-Ready and durable-record waits intact. Mat-editor and stopped-screen parity findings
 from #176 remain open.
+
+## 2026-11-27 — Fresh revisions and quiet idle snapshots (0.25.3)
+
+Addresses performance review #183 items 1–2 and its early busy-state release. Overlapping
+refresh requests now share a flight and request a follow-up. The desktop rejects snapshots
+older than either its displayed revision or an accepted command reply, and keeps the action
+busy until refresh completes. Undefined optional fence fields no longer overwrite the current
+revision. Account changes still retire in-flight private responses.
+
+Read-only snapshot requests no longer publish identical live events. Changed preparation phases
+and request identities still publish immediately; preset reloads no longer publish twice.
+The transport regression deliberately holds an old read across an accepted edit, exercises
+multiple overlapping refresh requests and proves the next edit uses the fresh revision. A
+server watch regression verifies quiet unchanged reads and real progress notifications.
+
+Validation: fmt, native/wasm Clippy, **523 Rust tests with desktop assets**, locked build and
+dependency audit passed in `/tmp/codex-m4-refresh-full.log`. The full desktop browser/simulator
+workflow and compact-layout browser checks passed in `/tmp/codex-m4-refresh-browser.log`,
+with **9 snapshot reads in 10 idle
+seconds**. Authored captures: `/tmp/cutcraft-desktop-check.9KVdeL`. Browser interaction checks
+wait for the newly extended busy state before the next ordinary click; Stop remains independent.
+No hardware used. Canvas state transfer, artwork scheduling and cut feedback from #183 remain.
