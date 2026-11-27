@@ -480,6 +480,10 @@ picture of the visible region at the current zoom. The browser does the same:
     be measured.
 - **Security:** cameo-pi's rules apply.
   - **HTTPS** with the server's own certificate.
+    An operator-managed LAN proxy may provide the browser-facing trusted certificate and forward
+    HTTPS to the server, preserving Host, Origin, Secure cookies and unbuffered live streams.
+    See [LAN reverse proxy](reverse-proxy.md). Certificate management remains outside the app;
+    `--insecure-http` is not a production proxy mode.
   - **Login sessions,** with CSRF and Host checks.
   - **Passwords** with argon2.
   - **A strict Content Security Policy,** adding only `wasm-unsafe-eval` for the WebAssembly, with

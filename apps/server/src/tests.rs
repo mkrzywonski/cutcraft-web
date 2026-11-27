@@ -105,6 +105,80 @@ async fn only_cameo_pis_own_names_and_ip_addresses_are_answered() {
 }
 
 #[tokio::test]
+async fn https_proxy_preserves_cookie_origin_and_stream_contracts() {
+    let mut h = harness();
+    h.app.secure = true;
+    h.app.names.0.push("cutcraft.example".into());
+    let response = send_raw(&h.app, get("/api/v1/me", "cutcraft.example")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.contains("; Secure"));
+    assert!(cookie.contains("SameSite=Strict"));
+
+    let proxied = || {
+        let mut request = page("POST", "/api/v1/cutters/practice/stop", json!({}));
+        request
+            .headers_mut()
+            .insert(header::HOST, "cutcraft.example".parse().unwrap());
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, "https://cutcraft.example".parse().unwrap());
+        request
+    };
+    let (status, body) = send(&h.app, proxied()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        body["error"], "not-cutting",
+        "same-origin request reaches the simulator"
+    );
+    let mut missing_token = proxied();
+    missing_token.headers_mut().remove("x-csrf-token");
+    assert_eq!(send(&h.app, missing_token).await.1["error"], "csrf");
+    let mut cross = proxied();
+    cross
+        .headers_mut()
+        .insert(header::ORIGIN, "https://other.example".parse().unwrap());
+    cross
+        .headers_mut()
+        .insert("x-forwarded-host", "cutcraft.example".parse().unwrap());
+    assert_eq!(send(&h.app, cross).await.1["error"], "cross-origin");
+    let mut forged = get("/api/v1/me", "other.example");
+    forged
+        .headers_mut()
+        .insert("x-forwarded-host", "cutcraft.example".parse().unwrap());
+    forged
+        .headers_mut()
+        .insert("x-forwarded-proto", "https".parse().unwrap());
+    assert_eq!(
+        send(&h.app, forged).await.0,
+        StatusCode::MISDIRECTED_REQUEST
+    );
+
+    for path in ["/api/v1/events", "/api/v1/design/live?protocol=9"] {
+        let mut response = send_raw(&h.app, get(path, "cutcraft.example")).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let first = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            response.body_mut().frame(),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+        assert!(
+            !first.is_empty(),
+            "initial event is streamed without waiting for a change: {path}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_change_from_another_site_or_without_the_token_is_refused() {
     let h = harness();
     let mut cross = page("POST", "/api/v1/cutters/practice/stop", json!({}));

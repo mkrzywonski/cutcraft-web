@@ -822,3 +822,17 @@ with **9 snapshot reads in 10 idle
 seconds**. Authored captures: `/tmp/cutcraft-desktop-check.9KVdeL`. Browser interaction checks
 wait for the newly extended busy state before the next ordinary click; Stop remains independent.
 No hardware used. Canvas state transfer, artwork scheduling and cut feedback from #183 remain.
+
+## 2026-11-27 — LAN HTTPS proxy contract
+
+Decision #184 is now explicit in spec §13 and `docs/reverse-proxy.md`: an operator-managed trusted
+browser certificate, HTTPS upstream, preserved Host/Origin, Secure cookies and streaming SSE.
+The existing operator configuration already uses that shape. No production plain-HTTP mode or
+trust of arbitrary forwarded headers was added; no proxy configuration was changed or deployed.
+
+The new router regression covers the external hostname, Secure CSRF cookie, same-origin mutation,
+missing-token/cross-origin refusal, spoofed forwarded headers and first-event delivery on both
+streams. Targeted test: `/tmp/codex-m4-proxy-test.log`. Fmt, native Clippy, **524 Rust tests with
+desktop assets** and locked build pass in `/tmp/codex-m4-proxy-full.log`. The separate runtime
+checks above also pass. Actual browser-through-proxy TLS/login/cache acceptance remains an
+operator deployment check; the router test does not claim it. This batch changes tests/docs only.
