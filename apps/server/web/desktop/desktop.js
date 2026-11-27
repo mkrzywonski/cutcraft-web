@@ -2,7 +2,22 @@
 // Mutations retain the exact request through a lost reply; no optimistic project state.
 import init, {start} from '/desktop/pkg/cutcraft_ui.js';
 const PROTOCOL=9;
-const model={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
+let modelVersion=0,pictureVersion=0,repaint=null;
+const trackedObjects=new WeakMap();
+// Nested interaction state (preferences, recovery flags) also wakes the canvas. The
+// transport remains the only writer; the canvas still submits validated commands.
+function tracked(value){
+ if(!value || typeof value!=='object')return value;
+ if(trackedObjects.has(value))return trackedObjects.get(value);
+ const proxy=new Proxy(value,{
+  get:(target,key)=>tracked(Reflect.get(target,key)),
+  set:(target,key,next)=>{const changed=Reflect.set(target,key,next);if(changed){if(target===modelData && key==='picture')pictureVersion++;modelVersion++;repaint?.();}return changed;},
+  deleteProperty:(target,key)=>{const changed=Reflect.deleteProperty(target,key);if(changed){modelVersion++;repaint?.();}return changed;}
+ });
+ trackedObjects.set(value,proxy);trackedObjects.set(proxy,proxy);return proxy;
+}
+const modelData={snapshot:{protocol:PROTOCOL,incarnation:"",revision:0,materials:[]},geometry:{id:""},state:{},library:{},uploads:{},me:{},connected:false,pending:false,message:'',result:{},result_id:0,picture:'',picture_id:''};
+const model=tracked(modelData);
 try{model.preferences=JSON.parse(localStorage.getItem("cutcraft.desktop")||"{}");}catch{model.preferences={};}
 let controls={},refreshing=false,live=null,uploadMode={},pictureFlight=false,pictureWanted=null,recoveryFlight=null,historyFlight=null,privateEpoch=0,fontCatalog=null,fontQuery='',fontGeneration=0,refreshFlight=null,refreshAgain=false,snapshotFloor=null;
 const key=()=>crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -320,7 +335,7 @@ async function dispatch({action,params:p}){
 }
 const presentationScope=()=>JSON.stringify([model.me.principal,model.snapshot.incarnation,model.snapshot.design?.opened_source_sha256 || model.snapshot.design?.source_sha256]);
 let dispatchQueue=Promise.resolve();
-window.CutCraft={state:()=>JSON.stringify(model),dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='artwork' || (intent.action==='cutter'&&intent.params.action==='stop')){void dispatch(intent);}else{const scope=presentationScope();dispatchQueue=dispatchQueue.then(()=>{if(scope===presentationScope())return dispatch(intent);});}},inspect:s=>{controls=JSON.parse(s);},controls:()=>controls};
+window.CutCraft={state:()=>JSON.stringify(model),state_version:()=>modelVersion,state_update:()=>JSON.stringify({...model,picture:undefined}),picture_version:()=>pictureVersion,picture:()=>model.picture,on_change:callback=>{repaint=callback;},dispatch:s=>{const intent=JSON.parse(s);if(intent.action==='artwork' || (intent.action==='cutter'&&intent.params.action==='stop')){void dispatch(intent);}else{const scope=presentationScope();dispatchQueue=dispatchQueue.then(()=>{if(scope===presentationScope())return dispatch(intent);});}},inspect:s=>{controls=JSON.parse(s);},controls:()=>controls};
 document.querySelector('#file').addEventListener('change',e=>{void upload(e.target.files[0]);e.target.value='';});
 window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>{e.preventDefault();uploadMode={};void upload(e.dataTransfer.files[0]);});
 try{await refresh();await init();await start(document.querySelector('#cutcraft'));document.querySelector('#loading').hidden=true;setInterval(refresh,1000);}catch(e){document.querySelector('#loading').textContent=`CutCraft could not start: ${e.message}. Reload to try again.`;}

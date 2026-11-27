@@ -78,6 +78,12 @@ impl Desktop {
             .art_requested
             .as_ref()
             .is_some_and(|(_, since)| now - since >= 0.12);
+        if self.art_sent.as_ref() != Some(&request) && !settled {
+            // State updates and gestures wake the canvas; an unfinished debounce
+            // also needs its own wakeup now that idle frames are not polled.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(120));
+        }
         if self.art_sent.as_ref() != Some(&request) && (settled || self.art_sent.is_none()) {
             self.send(
                 "artwork",

@@ -4,6 +4,11 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.4 — 2026-11-27
+
+- Transfer canvas state only when it changes and transfer artwork bytes separately, avoiding full JSON serialization/parsing on every drag frame.
+- Wake the canvas for state changes, interaction, animation and pending artwork requests instead of repainting every 50 ms.
+
 ## 0.25.3 — 2026-11-27
 
 - Queue a follow-up refresh when an edit finishes during an older read, reject snapshots older than accepted changes, and keep controls busy until the refreshed presentation arrives.

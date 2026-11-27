@@ -429,9 +429,14 @@ await fs.writeFile(`${artifacts}/desktop-600-font24.png`,Buffer.from(narrow.data
 await click('More tools'); await click('Save');
 await until(async()=>!(await state()).pending,'Overflow Save finishes');
 console.log('PASS: 600px desktop with 24pt text keeps primary controls visible and overflow views/zoom/Save usable');
-await sleep(1500);await page('performance.clearResourceTimings()');await sleep(10000);
+await sleep(1500);
+await page(`performance.clearResourceTimings();window.canvasTraffic={updates:0,pictures:0,frames:0};for(const [name,count] of [['state_update','updates'],['picture','pictures'],['inspect','frames']]){const original=CutCraft[name];CutCraft[name]=(...args)=>{canvasTraffic[count]++;return original(...args);};}`);
+await sleep(10000);
 const idleReads=await page("performance.getEntriesByType('resource').filter(e=>new URL(e.name).pathname==='/api/v1/design/snapshot').length");
-await fs.writeFile(`${artifacts}/idle-refresh.json`,JSON.stringify({seconds:10,snapshot_reads:idleReads}));
+await fs.writeFile(`${artifacts}/idle-refresh.json`,JSON.stringify({seconds:10,snapshot_reads:idleReads,canvas:await page('canvasTraffic')}));
 if(idleReads>14)throw Error('Snapshot reads still feed a live refresh loop: '+idleReads);
 console.log(`PASS: idle snapshot reads are bounded (${idleReads} in 10 seconds)`);
+const traffic=await page('canvasTraffic');
+if(traffic.updates>50 || traffic.frames>100 || traffic.pictures!==0)throw Error('Idle canvas still transfers/redraws unnecessarily: '+JSON.stringify(traffic));
+console.log('PASS: idle canvas traffic '+JSON.stringify(traffic));
 ws.close();

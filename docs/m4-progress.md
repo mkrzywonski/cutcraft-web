@@ -47,12 +47,17 @@ paired reference screenshot review.
 These are required work, not exclusions or waived acceptance:
 
 - Review closure for the font-recovery improvements following #179 (0.25.2; evidence below).
-- Remaining keyboard/touch inspection and preparation/planning progress/cancellation UX.
+- Review #176–177 parity findings: mat/material editor presentation, stopped/finished cut screens,
+  shared Exit semantics, download naming and history sanitisation; closure of #179 font recovery.
+- Performance/feedback review #183 and #186: canvas handoff, artwork scheduling and immediate
+  cut feedback; uniform magenta cut lines per #187–188. Preparation/planning cancellation UX
+  and remaining keyboard/touch acceptance also remain.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
   below cover many paths but do not replace this catalogue.
-- Pi performance, Safari, hardware and release gates remain unverified and must be reported
-  separately from simulator/build evidence.
+- Pi performance was measured independently at 0.25.1 (#183); the new performance changes need
+  fresh measurements. Safari, hardware and release acceptance remain separate from simulator/build
+  evidence and must not be claimed from these checks.
 
 Do not start M5 or merge this branch as a completed M4 while these requirements remain.
 No real cutter has been moved for this implementation.
@@ -836,3 +841,23 @@ streams. Targeted test: `/tmp/codex-m4-proxy-test.log`. Fmt, native Clippy, **52
 desktop assets** and locked build pass in `/tmp/codex-m4-proxy-full.log`. The separate runtime
 checks above also pass. Actual browser-through-proxy TLS/login/cache acceptance remains an
 operator deployment check; the router test does not claim it. This batch changes tests/docs only.
+
+## 2026-11-27 — Canvas state transfer and redraw (0.25.4)
+
+Addresses #183 item 3's browser handoff. A versioned presentation model wakes egui when state
+changes, including nested preferences and Start-recovery flags. WebAssembly parses JSON only
+when that version changes; artwork bytes travel through a separate versioned channel and are
+retained across unrelated updates. Account changes clear both channels. The former unconditional
+50 ms repaint is removed; input, animations, state changes and unfinished artwork settling wake
+the canvas explicitly. This does not cache path meshes or change planning/cutting authority.
+
+The transport regression covers nested updates, stable idle versions, image separation and
+private-state clearing. The real browser exercised upload/font recovery, decisions, touch/keyboard
+inspection, zoom/pan, resize/Undo, retained-mat cuts, reload/Stop and narrow-screen controls.
+Its 10-second idle check measured **20 state transfers, 40 frames, zero image retransfers** and
+10 snapshot reads. This is workstation browser evidence, not a Pi/phone drag-FPS claim.
+
+Fmt, native/wasm Clippy, **524 Rust tests with desktop assets**, locked build, dependency audit
+and desktop plus compact-layout browser checks passed. Log: `/tmp/codex-m4-canvas-full.log`; authored captures:
+`/tmp/cutcraft-desktop-check.zfDFzl` (Overlay inspected). Remaining artwork scheduling and
+cut-feedback findings are still open; no hardware used.
