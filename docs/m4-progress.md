@@ -50,7 +50,7 @@ These are required work, not exclusions or waived acceptance:
 - Review #176–177 parity findings: mat/material editor presentation, stopped/finished cut screens,
   shared Exit semantics, download naming and history sanitisation; closure of #179 font recovery.
 - Performance/feedback review #183 and #186: canvas handoff, artwork scheduling and immediate
-  cut feedback; uniform magenta cut lines per #187–188. Preparation/planning cancellation UX
+  cut feedback. Uniform magenta cut lines per #187–188 are now implemented. Preparation/planning cancellation UX
   and remaining keyboard/touch acceptance also remain.
 - Full authored-fixture acceptance matrix and Show me cases, paired reference screenshots,
   clean-checkout packaging and independent review of exact commits. The targeted browser tests
@@ -861,3 +861,19 @@ Fmt, native/wasm Clippy, **524 Rust tests with desktop assets**, locked build, d
 and desktop plus compact-layout browser checks passed. Log: `/tmp/codex-m4-canvas-full.log`; authored captures:
 `/tmp/cutcraft-desktop-check.zfDFzl` (Overlay inspected). Remaining artwork scheduling and
 cut-feedback findings are still open; no hardware used.
+
+## 2026-11-27 — Uniform cut-line colour (0.25.5)
+
+Developer decision #187–188 replaces source-coloured strokes with the Overlay magenta in
+Side by side and Cut Preview too. The white-line underlay is removed: it looked like two paths
+although the geometry contained one. Orange highlights and thin grey excluded-row inspection
+remain, as do the row's original-colour swatch and execution-progress colours. VIEW-01 and
+intentional difference A19 record the change from 1.0.5.
+
+The real egui shape regression covers **48 combinations** of three views, two themes, white/colour
+sources and included/highlighted/excluded inspection. Each produces exactly one expected contour,
+without a halo. The browser creates its own white SVG and captures all six view/theme pairs;
+`white-contour-side-by-side-dark.png` and `white-contour-mat-light.png` were inspected.
+Fmt, native/wasm Clippy, **524 workspace tests with desktop assets**, locked build, dependency
+audit and the full desktop simulator workflow pass. Evidence: `/tmp/codex-m4-magenta-full.log`
+and `/tmp/cutcraft-desktop-check.eHuOsG`. No hardware used.

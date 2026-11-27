@@ -4,6 +4,10 @@ Each version of CutCraft-Web and what changed in it. Versions are `major.minor.p
 fixes and small changes, minor for new features, major for big changes. Raise it with
 `scripts/bump-version.sh patch|minor|major`.
 
+## 0.25.5 — 2026-11-27
+
+- Draw cut lines in the same magenta in Side by side, Overlay and Cut Preview, keeping orange highlights and thin grey excluded-row inspection. Remove the white-line halo that could look like two contours.
+
 ## 0.25.4 — 2026-11-27
 
 - Transfer canvas state only when it changes and transfer artwork bytes separately, avoiding full JSON serialization/parsing on every drag frame.

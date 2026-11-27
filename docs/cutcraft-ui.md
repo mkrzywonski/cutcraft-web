@@ -243,6 +243,11 @@ Desktop screen changes use shared `view.show`; compact pages do not change the d
 physical coordinate region at the same zoom. Overlay uses that exact transform for both layers,
 including page offset/rotation/size; independently fitting each layer is wrong. Paths remain vectors;
 source artwork re-renders off-thread for the visible region, preserving the old image while waiting.
+Included cut contours use the same magenta (RGB 220, 0, 160; 1.5 px) in the Cut lines pane,
+Overlay and Cut Preview, in light and dark themes. No light-colour halo is drawn. Source colours
+remain in the artwork and What to cut swatches. Highlighted contours are orange (3 px); inspected
+excluded contours are thin grey (1 px). This intentionally replaces the 1.0.5 source-colour strokes
+in the separate cut-line/mat views (developer decision, Zulip #187–188).
 
 **VIEW-02.** Excluded rows remain in What to cut, labelled not cut, but are absent from the cut
 lines and Overlay. Hovering an excluded row temporarily shows faint outlines; keyboard selection

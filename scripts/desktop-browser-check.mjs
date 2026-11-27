@@ -118,6 +118,23 @@ await until(async()=>!(await state()).snapshot.design && !(await state()).pendin
 console.log('PASS: missing-font upload and reprepare, project font listing, exact download, replacement, removal and saved letter shapes');
 const doc=await cdp('DOM.getDocument');
 const input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#file'});
+// White source paths must remain one visible contour, regardless of theme or view.
+const whiteDesign=`${artifacts}/white-contour.svg`;
+await fs.writeFile(whiteDesign,'<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><path fill="#ffffff" d="M20 20H50V50H20Z"/></svg>');
+await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[whiteDesign]});
+await until(async()=>!(await state()).pending && (await state()).snapshot.design?.cut_ready,'White contour is cut ready');
+for(const dark of [false,true]){
+ if(dark){await click('Menu Edit');await click('Preferences…');await click('Dark appearance');await until(async()=>!(await state()).pending && (await state()).snapshot.ui.dark,'Dark appearance saved');await click('Close dialog');}
+ for(const [label,screen] of [['Side by side','side-by-side'],['Overlay','overlay'],['Cut Preview','mat']]){
+  await click(label);await until(async()=>!(await state()).pending && (await state()).snapshot.ui.screen===screen,'White contour view '+screen);await sleep(200);
+  const shot=await cdp('Page.captureScreenshot',{format:'png'});
+  await fs.writeFile(`${artifacts}/white-contour-${screen}-${dark?'dark':'light'}.png`,Buffer.from(shot.data,'base64'));
+ }
+}
+await click('Menu Edit');await click('Preferences…');await click('Dark appearance');await until(async()=>!(await state()).pending && !(await state()).snapshot.ui.dark,'Restore light appearance');await click('Close dialog');
+await click('Side by side');await click('Menu File');await click('Close design');await click('Close design');
+await until(async()=>!(await state()).snapshot.design && !(await state()).pending,'Close white contour fixture');
+console.log('PASS: white artwork captures in all three views and both themes');
 const background=fileURLToPath(new URL('../examples/issues/08-background-rectangle.svg',import.meta.url));
 await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[background]});
 await until(async()=>{const s=await state();return s.snapshot.ui.report?.pending?.length && Object.keys(s.geometry.source_bounds_mm||{}).length && !s.pending;},'Background issue and source bounds');

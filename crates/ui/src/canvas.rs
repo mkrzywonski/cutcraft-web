@@ -502,16 +502,13 @@ impl Desktop {
                         .source_ids
                         .iter()
                         .any(|id| source_selected(&self.highlight, id));
-                    // Reference 1.0.5: source colours disappear against the same artwork.
-                    // Overlay has one contrasting cut-line colour, with explicit highlight/peek strokes.
+                    // One visible contour colour in every view; row swatches retain source colour.
                     let stroke = if highlighted {
                         Stroke::new(3., Color32::from_rgb(255, 140, 0))
                     } else if !line.included {
                         Stroke::new(1., Color32::from_gray(185))
-                    } else if self.screen() == "overlay" {
-                        Stroke::new(1.5, Color32::from_rgb(220, 0, 160))
                     } else {
-                        Stroke::new(if line.aid { 0.7 } else { 1.5 }, colour(&line.colour))
+                        Stroke::new(1.5, Color32::from_rgb(220, 0, 160))
                     };
                     let points = if mat && self.order < 1. {
                         painter.add(egui::Shape::line(
@@ -528,15 +525,6 @@ impl Desktop {
                         points
                     };
                     if points.len() > 1 {
-                        if stroke.color.r() > 220
-                            && stroke.color.g() > 220
-                            && stroke.color.b() > 220
-                        {
-                            painter.add(egui::Shape::line(
-                                points.clone(),
-                                Stroke::new(2.4, Color32::from_gray(120)),
-                            ));
-                        }
                         painter.add(egui::Shape::line(points, stroke));
                     }
                 }
@@ -1061,50 +1049,68 @@ mod tests {
     }
 
     #[test]
-    fn overlay_paths_use_reference_contrast_highlight_and_peek_strokes() {
-        let source = Color32::from_rgb(230, 126, 34);
-        for (screen, included, highlighted, expected, width) in [
-            ("overlay", true, false, Color32::from_rgb(220, 0, 160), 1.5),
-            ("overlay", true, true, Color32::from_rgb(255, 140, 0), 3.),
-            ("overlay", false, false, Color32::from_gray(185), 1.),
-            ("overlay", false, true, Color32::from_rgb(255, 140, 0), 3.),
-            ("side-by-side", true, false, source, 1.5),
-        ] {
-            let mut desktop = Desktop::default();
-            desktop.remote.snapshot.design = Some(Default::default());
-            desktop.remote.snapshot.ui.screen = screen.into();
-            desktop.remote.geometry.lines = vec![cutcraft_web_protocol::Stroke {
-                item: Some("row".into()),
-                source_ids: vec!["source/0".into()],
-                included,
-                colour: "#e67e22".into(),
-                aid: false,
-                points: vec![[0., 0.], [20., 0.], [20., 20.]],
-            }];
-            desktop.peek = vec!["row".into()];
-            if highlighted {
-                desktop.highlight = vec!["source/0".into()];
-            }
-            let ctx = egui::Context::default();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280., 900.))),
-                    ..Default::default()
-                },
-                |ui| desktop.canvas(ui),
-            );
-            output.textures_delta.clear();
-            let paths: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Path(path) if path.points.len() == 3 => Some(path),
-                    _ => None,
-                })
-                .collect();
-            assert!(!paths.is_empty(), "{screen}");
-            assert!(paths.iter().all(|path|path.stroke.width==width &&
+    fn all_views_draw_one_magenta_contour_with_distinct_highlight_and_peek() {
+        for dark in [false, true] {
+            for screen in ["side-by-side", "overlay", "mat"] {
+                for source in ["#ffffff", "#e67e22"] {
+                    for (included, highlighted, expected, width) in [
+                        (true, false, Color32::from_rgb(220, 0, 160), 1.5),
+                        (true, true, Color32::from_rgb(255, 140, 0), 3.),
+                        (false, false, Color32::from_gray(185), 1.),
+                        (false, true, Color32::from_rgb(255, 140, 0), 3.),
+                    ] {
+                        let mut desktop = Desktop::default();
+                        desktop.remote.snapshot.design = Some(Default::default());
+                        desktop.remote.snapshot.ui.screen = screen.into();
+                        desktop.remote.geometry.lines = vec![cutcraft_web_protocol::Stroke {
+                            item: Some("row".into()),
+                            source_ids: vec!["source/0".into()],
+                            included,
+                            colour: source.into(),
+                            aid: false,
+                            points: vec![[0., 0.], [20., 0.], [20., 20.]],
+                        }];
+                        desktop.remote.geometry.sheet = desktop.remote.geometry.lines.clone();
+                        desktop.peek = vec!["row".into()];
+                        if highlighted {
+                            desktop.highlight = vec!["source/0".into()];
+                        }
+                        desktop.dark = dark;
+                        let ctx = egui::Context::default();
+                        ctx.set_visuals(if dark {
+                            egui::Visuals::dark()
+                        } else {
+                            egui::Visuals::light()
+                        });
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(1280., 900.),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| desktop.canvas(ui),
+                        );
+                        output.textures_delta.clear();
+                        let paths: Vec<_> = output
+                            .shapes
+                            .iter()
+                            .filter_map(|shape| match &shape.shape {
+                                egui::Shape::Path(path) if path.points.len() == 3 => Some(path),
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(
+                            paths.len(),
+                            1,
+                            "one contour, no light-colour halo: {screen}, {source}, dark={dark}"
+                        );
+                        assert!(paths.iter().all(|path|path.stroke.width==width &&
                 matches!(path.stroke.color,egui::epaint::ColorMode::Solid(c) if c==expected)),"{screen}, included={included}, highlighted={highlighted}");
+                    }
+                }
+            }
         }
     }
 

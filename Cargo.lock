@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-pi"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "age",
  "argon2 0.5.3",
@@ -613,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-pi-core"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-device",
  "cutcraft-job",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-control"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "base64 0.22.1",
  "cutcraft-device",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-device"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-job",
  "cutcraft-path",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-import"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-job",
  "hayro-syntax",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-job"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "base64 0.22.1",
  "schemars",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-path"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-job",
  "image",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-sim"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-device",
  "cutcraft-job",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-station"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "cutcraft-device",
  "getrandom 0.3.4",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-ui"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "base64 0.22.1",
  "cutcraft-web-protocol",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "cutcraft-web-protocol"
-version = "0.25.4"
+version = "0.25.5"
 dependencies = [
  "serde",
  "serde_json",

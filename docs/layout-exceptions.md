@@ -27,6 +27,7 @@ forward through [the detailed contract](cutcraft-ui.md). “Not built yet” is 
 | A16 | Original no-CI/manual-only desktop workflow | Web development standard defines checks/CI/packaging for the new product. Old cost-saving repository setting is historical, not a UI behaviour to copy into this repo. Enabling/changing actual workflows still follows developer authorisation. | Web development standard §7; old commits82e7f93/2d55489 |
 | A17 | Desktop folds saved together with panel arrangement | Retain collapse/attention behaviour, store folds in browser and order/locks per person. Reset clears both scopes; changing browser does not reset shared arrangement. | Web-v1 §8 explicitly supersedes native1.0.3 storage scope |
 | A18 | Original standalone offline use | Core workflow needs only the home network/service, not internet or cloud login. No promise to cut/prepare with the service unreachable. | Web-v1 Architecture B; BASE-04 |
+| A19 | Source-coloured cut lines in the separate cut-line and mat views | **Approved 2026-11-27:** uniform magenta (RGB 220, 0, 160; 1.5 px) in Side by side, Overlay and Cut Preview, in both themes. Orange highlights and thin grey excluded-row inspection remain; row swatches retain source colours. No white-line halo that resembles duplicate contours. Execution-progress colours remain distinct. | Developer decision, Zulip #187–188; VIEW-01–02 |
 
 ## Deliberately removed historical approaches
 
